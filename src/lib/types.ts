@@ -407,6 +407,10 @@ export interface ImportResult {
 export interface DbConversationDetail {
   summary: DbConversationSummary
   turns: MessageTurn[]
+  /** True when another page exists before `turns[0]`. */
+  has_older_turns?: boolean
+  /** Exclusive full-transcript turn index for the next older page. */
+  older_turns_cursor?: number | null
   session_stats?: SessionStats | null
   /** See `ConversationDetail.transcript_watermark` (threaded through the DB
    *  fetch path from the same parser detail). */

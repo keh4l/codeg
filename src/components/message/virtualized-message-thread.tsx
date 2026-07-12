@@ -1,6 +1,6 @@
 "use client"
 
-import { memo, useCallback, useEffect, useMemo, useRef } from "react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { CSSProperties, ReactNode, RefObject } from "react"
 import { Virtualizer, type VirtualizerHandle } from "virtua"
 import { useStickToBottomContext } from "use-stick-to-bottom"
@@ -19,6 +19,11 @@ interface VirtualizedMessageThreadProps<T> {
   items: T[]
   /** Stable key for a given item (used as React key). */
   getItemKey: (item: T, index: number) => string
+  /**
+   * Stable identity used only to detect a prepend. Defaults to `getItemKey`;
+   * provide this when render keys include the item's changing list index.
+   */
+  getPrependAnchorKey?: (item: T, index: number) => string
   /** Render the content of one row. */
   renderItem: (item: T, index: number) => ReactNode
   /** Shown when `items` is empty. */
@@ -51,11 +56,28 @@ interface VirtualizedMessageThreadProps<T> {
    * message navigator) can drive `scrollToIndex`.
    */
   scrollApiRef?: RefObject<MessageScrollContextValue | null>
+  /** Called when the viewport reaches the leading edge. */
+  onTopReached?: () => boolean
+  /** Distance from the top that triggers `onTopReached`. @default 160 */
+  topReachedOffset?: number
+  /** Whether the requested prepend is still in flight. */
+  loadingPrepend?: boolean
+}
+
+export function shouldTriggerTopLoad(
+  previousOffset: number | null,
+  offset: number,
+  threshold: number
+): boolean {
+  return (
+    previousOffset != null && offset < previousOffset && offset <= threshold
+  )
 }
 
 function VirtualizedMessageThreadImpl<T>({
   items,
   getItemKey,
+  getPrependAnchorKey = getItemKey,
   renderItem,
   emptyState,
   itemSize,
@@ -66,9 +88,48 @@ function VirtualizedMessageThreadImpl<T>({
   contentClassName,
   contentProps,
   scrollApiRef,
+  onTopReached,
+  topReachedOffset = 160,
+  loadingPrepend = false,
 }: VirtualizedMessageThreadProps<T>) {
   const { scrollRef } = useStickToBottomContext()
   const virtualizerHandleRef = useRef<VirtualizerHandle>(null)
+  const previousScrollOffsetRef = useRef<number | null>(null)
+  const pendingPrependAnchorRef = useRef<string | null>(null)
+  const [expectingPrepend, setExpectingPrepend] = useState(false)
+
+  const firstKey = items.length > 0 ? getPrependAnchorKey(items[0], 0) : null
+
+  // Keep `shift` true from the user reaching the top through the render that
+  // actually prepends rows. Reset only after the first key changes (success) or
+  // the request settles without a prepend (failure). Permanently enabling
+  // `shift` would misclassify normal live appends as prepends.
+  useEffect(() => {
+    const anchor = pendingPrependAnchorRef.current
+    if (anchor == null || loadingPrepend) return
+    pendingPrependAnchorRef.current = null
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setExpectingPrepend(false)
+  }, [firstKey, loadingPrepend])
+
+  const handleScroll = useCallback(
+    (offset: number) => {
+      const previous = previousScrollOffsetRef.current
+      previousScrollOffsetRef.current = offset
+      // Ignore the virtualizer's initial zero-offset notification and only
+      // treat an upward movement as user intent to load history. Otherwise a
+      // cold open could race the stick-to-bottom initialization and eagerly
+      // drain every older page before the user scrolls.
+      if (shouldTriggerTopLoad(previous, offset, topReachedOffset)) {
+        const started = onTopReached?.() ?? false
+        if (started) {
+          pendingPrependAnchorRef.current = firstKey
+          setExpectingPrepend(true)
+        }
+      }
+    },
+    [firstKey, onTopReached, topReachedOffset]
+  )
 
   const scrollToIndex = useCallback<MessageScrollContextValue["scrollToIndex"]>(
     (index, opts) => {
@@ -157,6 +218,8 @@ function VirtualizedMessageThreadImpl<T>({
             scrollRef={scrollRef as unknown as RefObject<HTMLElement | null>}
             itemSize={itemSize}
             bufferSize={bufferSize}
+            shift={expectingPrepend}
+            onScroll={handleScroll}
           >
             {items.map((item, index) => (
               <div

@@ -96,6 +96,8 @@ export interface ConversationRuntimeSession {
   detail: DbConversationDetail | null
   detailLoading: boolean
   detailError: string | null
+  olderTurnsLoading: boolean
+  olderTurnsError: string | null
 
   // ACP `session/load` failed in a non-recoverable way (currently only when
   // the agent reports ResourceNotFound for the historical session_id). Set
@@ -199,6 +201,17 @@ type Action =
     }
   | {
       type: "FETCH_DETAIL_ERROR"
+      conversationId: number
+      error: string
+    }
+  | { type: "LOAD_OLDER_TURNS_START"; conversationId: number }
+  | {
+      type: "LOAD_OLDER_TURNS_SUCCESS"
+      conversationId: number
+      page: DbConversationDetail
+    }
+  | {
+      type: "LOAD_OLDER_TURNS_ERROR"
       conversationId: number
       error: string
     }
@@ -322,6 +335,8 @@ function createEmptySession(
     detail: null,
     detailLoading: false,
     detailError: null,
+    olderTurnsLoading: false,
+    olderTurnsError: null,
     acpLoadError: null,
     localTurns: [],
     backgroundTurns: [],
@@ -1026,11 +1041,36 @@ function reducer(
           ? current.backgroundTurns
           : retainedBackground
 
+      // A settled refetch always returns the newest backend page. If the user
+      // already paged farther back, retain that loaded prefix and replace only
+      // the overlapping newest page; otherwise every turn completion would
+      // collapse the transcript back to 100 rows and throw away their scroll
+      // context.
+      let nextDetail = action.detail
+      if (current.detail) {
+        const incomingKeys = new Set(
+          action.detail.turns.map((turn) => `${turn.role} ${turn.id}`)
+        )
+        const loadedPrefix = current.detail.turns.filter(
+          (turn) => !incomingKeys.has(`${turn.role} ${turn.id}`)
+        )
+        if (loadedPrefix.length > 0) {
+          nextDetail = {
+            ...action.detail,
+            turns: [...loadedPrefix, ...action.detail.turns],
+            has_older_turns: current.detail.has_older_turns,
+            older_turns_cursor: current.detail.older_turns_cursor,
+          }
+        }
+      }
+
       const nextSession: ConversationRuntimeSession = {
         ...current,
-        detail: action.detail,
+        detail: nextDetail,
         detailLoading: false,
         detailError: null,
+        olderTurnsLoading: false,
+        olderTurnsError: null,
         externalId: nextExternalId ?? current.externalId,
         sessionStats: action.detail.session_stats ?? current.sessionStats,
         backgroundTurns: nextBackgroundTurns,
@@ -1061,6 +1101,45 @@ function reducer(
         ...current,
         detailLoading: false,
         detailError: action.error,
+      }))
+
+    case "LOAD_OLDER_TURNS_START":
+      return updateSessionInState(state, action.conversationId, (current) => ({
+        ...current,
+        olderTurnsLoading: true,
+        olderTurnsError: null,
+      }))
+
+    case "LOAD_OLDER_TURNS_SUCCESS": {
+      const current = state.byConversationId.get(action.conversationId)
+      if (!current?.detail) return state
+
+      const existing = new Set(
+        current.detail.turns.map((turn) => `${turn.role} ${turn.id}`)
+      )
+      const older = action.page.turns.filter(
+        (turn) => !existing.has(`${turn.role} ${turn.id}`)
+      )
+      return updateSessionInState(state, action.conversationId, (session) => ({
+        ...session,
+        detail: session.detail
+          ? {
+              ...session.detail,
+              turns: [...older, ...session.detail.turns],
+              has_older_turns: action.page.has_older_turns ?? false,
+              older_turns_cursor: action.page.older_turns_cursor ?? null,
+            }
+          : session.detail,
+        olderTurnsLoading: false,
+        olderTurnsError: null,
+      }))
+    }
+
+    case "LOAD_OLDER_TURNS_ERROR":
+      return updateSessionInState(state, action.conversationId, (current) => ({
+        ...current,
+        olderTurnsLoading: false,
+        olderTurnsError: action.error,
       }))
 
     case "COMPLETE_TURN": {
@@ -1525,6 +1604,7 @@ function reducer(
 
 export interface RuntimeActions {
   fetchDetail: (conversationId: number) => void
+  loadOlderTurns: (conversationId: number) => boolean
   refetchDetail: (
     conversationId: number,
     options?: { preserveLive?: boolean }
@@ -1940,6 +2020,40 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>()((
       })
   }
 
+  const loadOlderTurns = (conversationId: number): boolean => {
+    const session = get().byConversationId.get(conversationId)
+    const cursor = session?.detail?.older_turns_cursor
+    if (
+      !session?.detail ||
+      session.olderTurnsLoading ||
+      session.detail.has_older_turns !== true ||
+      cursor == null
+    ) {
+      return false
+    }
+
+    const fetchId = session.dbConversationId ?? conversationId
+    dispatch({ type: "LOAD_OLDER_TURNS_START", conversationId })
+    getFolderConversation(fetchId, { beforeTurn: cursor, limit: 100 })
+      .then((page) => {
+        if (!get().byConversationId.get(conversationId)?.detail) return
+        dispatch({
+          type: "LOAD_OLDER_TURNS_SUCCESS",
+          conversationId,
+          page,
+        })
+      })
+      .catch((error: unknown) => {
+        if (!get().byConversationId.has(conversationId)) return
+        dispatch({
+          type: "LOAD_OLDER_TURNS_ERROR",
+          conversationId,
+          error: toErrorMessage(error),
+        })
+      })
+    return true
+  }
+
   const refetchDetail = (
     conversationId: number,
     options?: { preserveLive?: boolean }
@@ -2124,6 +2238,7 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>()((
 
   const actions: RuntimeActions = {
     fetchDetail,
+    loadOlderTurns,
     refetchDetail,
     syncTurnMetadata,
     completeTurn: (conversationId, liveMessage) =>

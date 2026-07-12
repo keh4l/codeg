@@ -1,4 +1,6 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use crate::app_error::AppCommandError;
 use crate::db::entities::conversation;
@@ -23,6 +25,47 @@ use crate::web::event_bridge::{
     emit_event, ConversationChange, EventEmitter, TabsChanged, CONVERSATION_CHANGED_EVENT,
     TABS_CHANGED_EVENT,
 };
+
+const DEFAULT_CONVERSATION_PAGE_SIZE: usize = 100;
+const MAX_CONVERSATION_PAGE_SIZE: usize = 200;
+const CONVERSATION_PAGE_CACHE_CAPACITY: usize = 2;
+const CONVERSATION_PAGE_CACHE_TTL: Duration = Duration::from_secs(2 * 60);
+
+struct ConversationPageCacheEntry {
+    conversation_id: i32,
+    inserted_at: Instant,
+    detail: Arc<DbConversationDetail>,
+}
+
+fn conversation_page_cache() -> &'static Mutex<VecDeque<ConversationPageCacheEntry>> {
+    static CACHE: OnceLock<Mutex<VecDeque<ConversationPageCacheEntry>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(VecDeque::new()))
+}
+
+fn get_cached_conversation_detail(conversation_id: i32) -> Option<Arc<DbConversationDetail>> {
+    let mut cache = conversation_page_cache().lock().ok()?;
+    cache.retain(|entry| entry.inserted_at.elapsed() <= CONVERSATION_PAGE_CACHE_TTL);
+    let index = cache
+        .iter()
+        .position(|entry| entry.conversation_id == conversation_id)?;
+    let entry = cache.remove(index)?;
+    let detail = Arc::clone(&entry.detail);
+    cache.push_front(entry);
+    Some(detail)
+}
+
+fn cache_conversation_detail(conversation_id: i32, detail: Arc<DbConversationDetail>) {
+    let Ok(mut cache) = conversation_page_cache().lock() else {
+        return;
+    };
+    cache.retain(|entry| entry.conversation_id != conversation_id);
+    cache.push_front(ConversationPageCacheEntry {
+        conversation_id,
+        inserted_at: Instant::now(),
+        detail,
+    });
+    cache.truncate(CONVERSATION_PAGE_CACHE_CAPACITY);
+}
 
 pub async fn list_all_conversations_core(
     conn: &sea_orm::DatabaseConnection,
@@ -616,12 +659,37 @@ pub async fn get_folder_conversation_core(
         DbConversationDetail {
             summary,
             turns,
+            has_older_turns: false,
+            older_turns_cursor: None,
             session_stats,
             transcript_watermark,
             in_flight_user_turn_id: None,
         },
         parsed_title,
     ))
+}
+
+fn paginated_conversation_detail(
+    full: &DbConversationDetail,
+    before_turn: Option<usize>,
+    limit: Option<usize>,
+) -> DbConversationDetail {
+    let total = full.turns.len();
+    let end = before_turn.unwrap_or(total).min(total);
+    let page_size = limit
+        .unwrap_or(DEFAULT_CONVERSATION_PAGE_SIZE)
+        .clamp(1, MAX_CONVERSATION_PAGE_SIZE);
+    let start = end.saturating_sub(page_size);
+
+    DbConversationDetail {
+        summary: full.summary.clone(),
+        turns: full.turns[start..end].to_vec(),
+        has_older_turns: start > 0,
+        older_turns_cursor: (start > 0).then_some(start),
+        session_stats: full.session_stats.clone(),
+        transcript_watermark: full.transcript_watermark,
+        in_flight_user_turn_id: None,
+    }
 }
 
 /// A normalized, comparable view of a user turn's renderable content. Used to
@@ -786,8 +854,37 @@ pub async fn get_folder_conversation_with_live_core(
     manager: &crate::acp::manager::ConnectionManager,
     emitter: &EventEmitter,
     conversation_id: i32,
+    before_turn: Option<usize>,
+    limit: Option<usize>,
 ) -> Result<DbConversationDetail, AppCommandError> {
-    let (mut detail, parsed_title) = get_folder_conversation_core(conn, conversation_id).await?;
+    let pagination_requested = before_turn.is_some() || limit.is_some();
+    let (mut detail, parsed_title) = if pagination_requested {
+        let (full, parsed_title) = if before_turn.is_some() {
+            if let Some(cached) = get_cached_conversation_detail(conversation_id) {
+                (cached, None)
+            } else {
+                let (full, title) = get_folder_conversation_core(conn, conversation_id).await?;
+                let full = Arc::new(full);
+                cache_conversation_detail(conversation_id, Arc::clone(&full));
+                (full, title)
+            }
+        } else {
+            // A newest-page fetch is also a freshness boundary: always reparse
+            // and replace the snapshot so live appends become visible.
+            let (full, title) = get_folder_conversation_core(conn, conversation_id).await?;
+            let full = Arc::new(full);
+            cache_conversation_detail(conversation_id, Arc::clone(&full));
+            (full, title)
+        };
+        (
+            paginated_conversation_detail(&full, before_turn, limit),
+            parsed_title,
+        )
+    } else {
+        // Older remote clients omit pagination fields. Preserve their original
+        // full-response behavior during rolling upgrades.
+        get_folder_conversation_core(conn, conversation_id).await?
+    };
 
     // Per-turn auto-title backfill. The parse `get_folder_conversation_core`
     // just did already produced the session-file title; adopt it (and broadcast
@@ -835,12 +932,16 @@ pub async fn get_folder_conversation(
     db: tauri::State<'_, AppDatabase>,
     manager: tauri::State<'_, crate::acp::manager::ConnectionManager>,
     conversation_id: i32,
+    before_turn: Option<usize>,
+    limit: Option<usize>,
 ) -> Result<DbConversationDetail, AppCommandError> {
     get_folder_conversation_with_live_core(
         &db.conn,
         &manager,
         &EventEmitter::Tauri(app),
         conversation_id,
+        before_turn,
+        limit,
     )
     .await
 }
@@ -1579,6 +1680,60 @@ mod tests {
             model: None,
             completed_at: None,
         }
+    }
+
+    fn detail_with_turn_count(count: usize) -> DbConversationDetail {
+        let turns = (0..count)
+            .map(|i| user_text_turn(&format!("turn-{i}"), "message", chrono::Utc::now()))
+            .collect();
+        DbConversationDetail {
+            summary: summary_child(1, "parent-tool", "completed"),
+            turns,
+            has_older_turns: false,
+            older_turns_cursor: None,
+            session_stats: None,
+            transcript_watermark: None,
+            in_flight_user_turn_id: None,
+        }
+    }
+
+    #[test]
+    fn conversation_pagination_returns_newest_page_then_adjacent_older_page() {
+        let full = detail_with_turn_count(250);
+        let newest = paginated_conversation_detail(&full, None, None);
+        assert_eq!(newest.turns.len(), 100);
+        assert_eq!(newest.turns.first().unwrap().id, "turn-150");
+        assert_eq!(newest.turns.last().unwrap().id, "turn-249");
+        assert!(newest.has_older_turns);
+        assert_eq!(newest.older_turns_cursor, Some(150));
+
+        let older =
+            paginated_conversation_detail(&full, newest.older_turns_cursor, None);
+        assert_eq!(older.turns.len(), 100);
+        assert_eq!(older.turns.first().unwrap().id, "turn-50");
+        assert_eq!(older.turns.last().unwrap().id, "turn-149");
+        assert_eq!(older.older_turns_cursor, Some(50));
+
+        let oldest = paginated_conversation_detail(&full, older.older_turns_cursor, None);
+        assert_eq!(oldest.turns.len(), 50);
+        assert_eq!(oldest.turns.first().unwrap().id, "turn-0");
+        assert!(!oldest.has_older_turns);
+        assert_eq!(oldest.older_turns_cursor, None);
+    }
+
+    #[test]
+    fn conversation_pagination_clamps_cursor_and_page_size() {
+        let full = detail_with_turn_count(250);
+        let oversized =
+            paginated_conversation_detail(&full, Some(usize::MAX), Some(usize::MAX));
+        assert_eq!(oversized.turns.len(), MAX_CONVERSATION_PAGE_SIZE);
+        assert_eq!(oversized.turns.first().unwrap().id, "turn-50");
+
+        let short = detail_with_turn_count(3);
+        let zero = paginated_conversation_detail(&short, None, Some(0));
+        assert_eq!(zero.turns.len(), 1);
+        assert_eq!(zero.turns[0].id, "turn-2");
+        assert_eq!(zero.older_turns_cursor, Some(2));
     }
 
     fn assistant_text_turn(

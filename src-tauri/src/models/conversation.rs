@@ -99,6 +99,12 @@ pub struct ConversationDetail {
 pub struct DbConversationDetail {
     pub summary: DbConversationSummary,
     pub turns: Vec<MessageTurn>,
+    /// Whether turns older than this page are available. The DB-backed detail
+    /// endpoint returns the newest page first and uses `older_turns_cursor` as
+    /// the exclusive end index for the next page.
+    pub has_older_turns: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub older_turns_cursor: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_stats: Option<SessionStats>,
     /// See [`ConversationDetail::transcript_watermark`] — threaded through from

@@ -139,6 +139,10 @@ type ThreadRenderItem =
 // Module-scope so the reference is stable across renders — lets the memoized
 // VirtualizedMessageThread bail out when `items` is unchanged.
 const getThreadItemKey = (item: ThreadRenderItem) => item.key
+const getThreadPrependAnchorKey = (item: ThreadRenderItem) =>
+  item.kind === "turn"
+    ? `${item.phase} ${item.group.role} ${item.group.id}`
+    : item.key
 
 // Stable empty reference so the SubAgentOverlay memo can bail out when there
 // are no delegations in the last reply.
@@ -556,6 +560,9 @@ export function MessageListView({
   const session = useConversationRuntimeStore(
     (s) => s.byConversationId.get(conversationId) ?? null
   )
+  const loadOlderTurns = useConversationRuntimeStore(
+    (s) => s.actions.loadOlderTurns
+  )
   const liveMessage = session?.liveMessage ?? null
   const timelineTurns = useConversationRuntimeStore((s) =>
     selectTimelineTurns(s, conversationId)
@@ -744,6 +751,10 @@ export function MessageListView({
         return null
     }
   }, [])
+
+  const handleTopReached = useCallback(() => {
+    return loadOlderTurns(conversationId)
+  }, [conversationId, loadOlderTurns])
 
   const emptyState = useMemo(
     () =>
@@ -936,12 +947,22 @@ export function MessageListView({
         <VirtualizedMessageThread
           items={threadItems}
           getItemKey={getThreadItemKey}
+          getPrependAnchorKey={getThreadPrependAnchorKey}
           renderItem={renderThreadItem}
           emptyState={emptyState}
           scrollApiRef={scrollApiRef}
+          onTopReached={handleTopReached}
+          loadingPrepend={session?.olderTurnsLoading ?? false}
         />
         <MessageThreadScrollButton />
       </MessageThread>
+      {session?.olderTurnsLoading && (
+        <div className="pointer-events-none absolute inset-x-0 top-2 z-10 flex justify-center">
+          <div className="rounded-full border bg-background/90 p-1.5 text-muted-foreground shadow-sm backdrop-blur">
+            <Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin" />
+          </div>
+        </div>
+      )}
       {liveMessage && connStatus === "prompting" && (
         <LiveTurnStats
           message={liveMessage}
