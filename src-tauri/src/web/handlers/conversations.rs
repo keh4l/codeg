@@ -125,6 +125,8 @@ pub async fn get_conversation(
 #[serde(rename_all = "camelCase")]
 pub struct GetFolderConversationParams {
     pub conversation_id: i32,
+    pub before_turn: Option<usize>,
+    pub limit: Option<usize>,
 }
 
 pub async fn get_folder_conversation(
@@ -138,6 +140,8 @@ pub async fn get_folder_conversation(
         &state.chat_channel_manager,
         &state.emitter,
         params.conversation_id,
+        params.before_turn,
+        params.limit,
     )
     .await?;
     Ok(Json(result))

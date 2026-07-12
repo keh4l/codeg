@@ -1332,6 +1332,8 @@ mod tests {
                 origin_cwd: None,
             },
             turns,
+            has_older_turns: false,
+            older_turns_cursor: None,
             session_stats: stats,
             transcript_watermark: None,
             in_flight_user_turn_id: None,

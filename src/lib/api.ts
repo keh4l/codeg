@@ -1726,9 +1726,14 @@ export async function importSelectedSessions(
 }
 
 export async function getFolderConversation(
-  conversationId: number
+  conversationId: number,
+  options?: { beforeTurn?: number; limit?: number }
 ): Promise<DbConversationDetail> {
-  return getTransport().call("get_folder_conversation", { conversationId })
+  return getTransport().call("get_folder_conversation", {
+    conversationId,
+    beforeTurn: options?.beforeTurn,
+    limit: options?.limit ?? 100,
+  })
 }
 
 export async function removeFolderFromHistory(path: string): Promise<void> {
