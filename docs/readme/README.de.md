@@ -40,6 +40,13 @@ Codeg (Code Generation) ist ein Multi-Agent-Coding-Workspace. Es vereint mehrere
     </td>
     <td>Vielen Dank an 随想AI中转站 für die Unterstützung dieses Projekts! 随想AI中转站 ist ein zuverlässiger und effizienter API-Relay-Anbieter mit Relay-Diensten für Claude, Codex, Gemini und mehr. Neue Konten erhalten nach der <a href="https://sui-xiang.com/register?aff=JPFCRHHBE8HE">Registrierung</a> für jedes tägliche Einchecken 0,5 ¥ Testguthaben; Aufladungen werden 1:1 gutgeschrieben – ohne Abo, Bezahlung nach Verbrauch. Mehrfach redundante Leitungen, regionsübergreifende Notfallwiederherstellung und automatisches Failover halten langlebige SSE-Verbindungen unterbrechungsfrei.</td>
   </tr>
+  <tr>
+    <td align="center" width="220">
+      <a href="https://hezu.ink/sign-up?aff=0wVz" target="_blank"><img src="../images/hezu-ink.jpg" alt="合租巴士" width="200" /></a><br/>
+      <strong><a href="https://hezu.ink/sign-up?aff=0wVz">合租巴士</a></strong>
+    </td>
+    <td>Vielen Dank an 合租巴士 für die Unterstützung dieses Projekts! 合租巴士 ist eine zuverlässige und effiziente KI-Relay-Plattform, die hochstabiles Relay für gängige Modelle wie Codex und Claude Code bietet. Das Aufladeverhältnis ist transparent (1:1), mit Codex-Ratenzuschüssen ab nur 0,08. <a href="https://hezu.ink/sign-up?aff=0wVz">Treten Sie der Gruppe über die offizielle Website bei und erhalten Sie 5 USD Testguthaben</a>.</td>
+  </tr>
 </table>
 
 > Möchten Sie Codeg-Sponsor werden? [Schreiben Sie uns gerne eine E-Mail.](mailto:itpkcn@gmail.com)
@@ -120,6 +127,8 @@ Unterstützt derzeit **shadcn/ui**-Projekt-Scaffolding, mit einem Tab-basierten 
 <summary><h2>Chat-Kanäle</h2></summary>
 
 Verbinden Sie Ihre bevorzugten Messaging-Apps — Telegram, Lark (Feishu), iLink (Weixin) und mehr — mit Ihren KI-Coding-Agenten. Erstellen Sie Aufgaben, senden Sie Folgenachrichten, genehmigen Sie Berechtigungen, setzen Sie Sitzungen fort und überwachen Sie die Aktivität direkt aus dem Chat — empfangen Sie Echtzeit-Antworten der Agenten mit Tool-Call-Details, Berechtigungsanfragen und Abschlusszusammenfassungen, ohne einen Browser zu öffnen.
+
+Telegram-Forum-Supergroups können außerdem den [Telegram topic mode](../chat-channels/telegram-topic-mode.md) verwenden, um jedes topic an eine eigene Codeg-Sitzung zu binden.
 
 ### Unterstützte Kanäle
 

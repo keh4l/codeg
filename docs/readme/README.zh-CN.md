@@ -40,6 +40,13 @@ Codeg（Code Generation）是一个多智能体编码工作台，它将多个智
     </td>
     <td>感谢随想AI中转站对本项目的赞助！随想AI中转站是一家可靠高效的 API 中继服务提供商，提供 Claude、Codex、Gemini 等的中继服务。新账户<a href="https://sui-xiang.com/register?aff=JPFCRHHBE8HE">注册</a>后每日签到就送 0.5 元测试额度，充值额度 1:1，无需订阅，按量付费。多线路冗余、跨区域容灾、自动故障切换，长链路 SSE 不中断。</td>
   </tr>
+  <tr>
+    <td align="center" width="220">
+      <a href="https://hezu.ink/sign-up?aff=0wVz" target="_blank"><img src="../images/hezu-ink.jpg" alt="合租巴士" width="200" /></a><br/>
+      <strong><a href="https://hezu.ink/sign-up?aff=0wVz">合租巴士</a></strong>
+    </td>
+    <td>感谢合租巴士对本项目的赞助！合租巴士是一家可靠高效的 AI 中转服务平台，主要提供 Codex、Claude Code 等主流模型的高稳定中转能力，充值比例透明（1:1），Codex 倍率补贴低至 0.08。<a href="https://hezu.ink/sign-up?aff=0wVz">官网进群送 5 刀体验金</a>。</td>
+  </tr>
 </table>
 
 > 想成为 Codeg 赞助商？[欢迎通过邮件与我们联系。](mailto:itpkcn@gmail.com)
@@ -120,6 +127,8 @@ Codeg（Code Generation）是一个多智能体编码工作台，它将多个智
 <summary><h2>消息渠道</h2></summary>
 
 连接你喜爱的即时通讯应用——Telegram、飞书、iLink（微信）等——到 AI 编码代理。直接在聊天中创建任务、发送后续消息、审批权限、恢复会话、监控活动。实时接收代理响应（包含工具调用详情、权限提示和完成摘要），无需打开浏览器。
+
+Telegram 论坛超级群也可以使用 [Telegram topic mode](../chat-channels/telegram-topic-mode.md)，将每个 topic 绑定到独立的 Codeg 会话。
 
 ### 支持的渠道
 
