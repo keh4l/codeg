@@ -546,6 +546,43 @@ describe("MessageInput local file upload", () => {
     inputClick.mockRestore()
   })
 
+  it("rejects an oversized uploaded image before it enters composer state", async () => {
+    const user = userEvent.setup()
+    const png = new File(["pixels"], "oversized.png", { type: "image/png" })
+    Object.defineProperty(png, "size", {
+      configurable: true,
+      value: 20_000_001,
+    })
+    const inputClick = vi
+      .spyOn(HTMLInputElement.prototype, "click")
+      .mockImplementation(function (this: HTMLInputElement) {
+        Object.defineProperty(this, "files", {
+          configurable: true,
+          value: [png],
+        })
+        this.dispatchEvent(new Event("change"))
+      })
+
+    renderInput({})
+    await user.click(
+      screen.getByRole("button", {
+        name: enMessages.Folder.chat.messageInput.addActions,
+      })
+    )
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: enMessages.Folder.chat.messageInput.attachLocalUpload,
+      })
+    )
+
+    await waitFor(() => expect(inputClick).toHaveBeenCalledOnce())
+    expect(
+      screen.getByTitle(enMessages.Folder.chat.messageInput.send)
+    ).toBeDisabled()
+    expect(uploadAttachmentMock).not.toHaveBeenCalled()
+    inputClick.mockRestore()
+  })
+
   it("keeps uploaded non-image files on the resource path", async () => {
     const user = userEvent.setup()
     const onSend = vi.fn()

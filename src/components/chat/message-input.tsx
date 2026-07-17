@@ -341,7 +341,7 @@ const TEXT_LIKE_MIME_PREFIXES = [
   "application/javascript",
   "application/typescript",
 ]
-const DRAG_DROP_IMAGE_MAX_BYTES = 20_000_000
+const IMAGE_ATTACHMENT_MAX_BYTES = 20_000_000
 
 function isTextLikeFile(file: File): boolean {
   const mime = file.type.toLowerCase()
@@ -1441,34 +1441,53 @@ export function MessageInput({
     ]
   )
 
-  const appendImageAttachments = useCallback(async (files: File[]) => {
-    if (files.length === 0) return
-    const parsed = await Promise.all(
-      files.map(async (file, index) => {
-        const mimeType =
-          file.type && file.type.startsWith("image/")
-            ? file.type
-            : (mimeTypeFromPath(file.name) ?? "image/png")
-        const base64Data = await blobToBase64(file)
-        return {
-          id: `image:${Date.now()}:${index}:${randomUUID()}`,
-          type: "image" as const,
-          data: base64Data,
-          uri: null,
-          name: file.name || `image-${Date.now()}-${index + 1}`,
-          mimeType,
-        }
-      })
-    )
-    setAttachments((prev) => [...prev, ...parsed])
-  }, [])
+  const appendImageAttachments = useCallback(
+    async (files: File[]) => {
+      if (files.length === 0) return
+      const oversized = files.filter(
+        (file) => file.size > IMAGE_ATTACHMENT_MAX_BYTES
+      )
+      const accepted = files.filter(
+        (file) => file.size <= IMAGE_ATTACHMENT_MAX_BYTES
+      )
+      if (oversized.length > 0) {
+        toast.error(
+          tAttach("attachUploadTooLarge", {
+            limit: IMAGE_ATTACHMENT_MAX_BYTES / 1_000_000,
+            names: oversized.map((file) => file.name).join(", "),
+          })
+        )
+      }
+      if (accepted.length === 0) return
+
+      const parsed = await Promise.all(
+        accepted.map(async (file, index) => {
+          const mimeType =
+            file.type && file.type.startsWith("image/")
+              ? file.type
+              : (mimeTypeFromPath(file.name) ?? "image/png")
+          const base64Data = await blobToBase64(file)
+          return {
+            id: `image:${Date.now()}:${index}:${randomUUID()}`,
+            type: "image" as const,
+            data: base64Data,
+            uri: null,
+            name: file.name || `image-${Date.now()}-${index + 1}`,
+            mimeType,
+          }
+        })
+      )
+      setAttachments((prev) => [...prev, ...parsed])
+    },
+    [tAttach]
+  )
 
   const appendImagePathAttachments = useCallback(
     async (paths: string[]) => {
       if (paths.length === 0 || !canAttachImages) return
       const settled = await Promise.allSettled(
         paths.map(async (path, index) => {
-          const data = await readFileBase64(path, DRAG_DROP_IMAGE_MAX_BYTES)
+          const data = await readFileBase64(path, IMAGE_ATTACHMENT_MAX_BYTES)
           return {
             id: `image:${Date.now()}:${index}:${randomUUID()}`,
             type: "image" as const,
