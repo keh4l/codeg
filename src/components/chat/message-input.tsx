@@ -1989,18 +1989,16 @@ export function MessageInput({
     if (disabled) return
     // Open a hidden <input type="file"> to grab File objects (browsers and
     // Tauri webviews both produce blob-style File objects from this control,
-    // never raw OS paths), then upload each one — `uploadAttachment` picks
-    // the right transport (direct fetch in web mode, IPC-proxied multipart
-    // in remote-desktop mode).
+    // never raw OS paths), then route images inline and upload resources.
     const input = document.createElement("input")
     input.type = "file"
     input.multiple = true
     input.onchange = async () => {
       const all = input.files ? Array.from(input.files) : []
-      await uploadAndAppendFiles(all)
+      await appendFilesFromInput(all)
     }
     input.click()
-  }, [disabled, uploadAndAppendFiles])
+  }, [appendFilesFromInput, disabled])
 
   const handleServerFilesSelected = useCallback(
     (paths: string[]) => {

@@ -25,6 +25,7 @@ import { emitAttachFileToSession } from "@/lib/session-attachment-events"
 const composerHandle = vi.hoisted(() => ({
   current: null as RichComposerHandle | null,
 }))
+const uploadAttachmentMock = vi.hoisted(() => vi.fn())
 vi.mock("./composer/rich-composer", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("./composer/rich-composer")>()
@@ -82,6 +83,14 @@ vi.mock("@/lib/platform", () => ({
 vi.mock("@/lib/transport", () => ({
   getActiveRemoteConnectionId: () => null,
 }))
+vi.mock("@/lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api")>()
+  return {
+    ...actual,
+    quickMessagesList: vi.fn().mockResolvedValue([]),
+    uploadAttachment: uploadAttachmentMock,
+  }
+})
 // virtua renders 0 rows under jsdom — render children directly so the large
 // (searchable + virtualized) model list is exercisable here too.
 vi.mock("virtua", async () => {
@@ -422,5 +431,107 @@ describe("MessageInput collapsed selectors popover", () => {
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: settingsLabel })).toBeNull()
     )
+  })
+})
+
+describe("MessageInput local file upload", () => {
+  afterEach(() => {
+    cleanup()
+    uploadAttachmentMock.mockReset()
+  })
+
+  it("sends an uploaded image as inline image data", async () => {
+    const user = userEvent.setup()
+    const onSend = vi.fn()
+    const png = new File(["pixels"], "outside.png", { type: "image/png" })
+    const inputClick = vi
+      .spyOn(HTMLInputElement.prototype, "click")
+      .mockImplementation(function (this: HTMLInputElement) {
+        Object.defineProperty(this, "files", {
+          configurable: true,
+          value: [png],
+        })
+        this.dispatchEvent(new Event("change"))
+      })
+
+    renderInput({ onSend })
+    await user.click(
+      screen.getByRole("button", {
+        name: enMessages.Folder.chat.messageInput.addActions,
+      })
+    )
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: enMessages.Folder.chat.messageInput.attachLocalUpload,
+      })
+    )
+
+    const send = screen.getByTitle(enMessages.Folder.chat.messageInput.send)
+    await waitFor(() => expect(send).toBeEnabled())
+    await user.click(send)
+
+    expect(onSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        blocks: [
+          expect.objectContaining({
+            type: "image",
+            mime_type: "image/png",
+            data: "cGl4ZWxz",
+          }),
+        ],
+      }),
+      null
+    )
+    expect(uploadAttachmentMock).not.toHaveBeenCalled()
+    expect(inputClick).toHaveBeenCalledOnce()
+    inputClick.mockRestore()
+  })
+
+  it("keeps uploaded non-image files on the resource path", async () => {
+    const user = userEvent.setup()
+    const onSend = vi.fn()
+    const text = new File(["notes"], "notes.txt", { type: "text/plain" })
+    uploadAttachmentMock.mockResolvedValue({ path: "/uploads/notes.txt" })
+    const inputClick = vi
+      .spyOn(HTMLInputElement.prototype, "click")
+      .mockImplementation(function (this: HTMLInputElement) {
+        Object.defineProperty(this, "files", {
+          configurable: true,
+          value: [text],
+        })
+        this.dispatchEvent(new Event("change"))
+      })
+
+    renderInput({ onSend })
+    await user.click(
+      screen.getByRole("button", {
+        name: enMessages.Folder.chat.messageInput.addActions,
+      })
+    )
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: enMessages.Folder.chat.messageInput.attachLocalUpload,
+      })
+    )
+
+    await waitFor(() =>
+      expect(uploadAttachmentMock).toHaveBeenCalledWith(text, null)
+    )
+    const send = screen.getByTitle(enMessages.Folder.chat.messageInput.send)
+    await waitFor(() => expect(send).toBeEnabled())
+    await user.click(send)
+
+    expect(onSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        blocks: [
+          expect.objectContaining({
+            type: "text",
+            text: "[notes.txt](file:///uploads/notes.txt)",
+          }),
+        ],
+      }),
+      null
+    )
+    inputClick.mockRestore()
   })
 })
