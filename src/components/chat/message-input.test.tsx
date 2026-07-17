@@ -583,6 +583,81 @@ describe("MessageInput local file upload", () => {
     inputClick.mockRestore()
   })
 
+  it("keeps successful attachments when another image read fails", async () => {
+    const user = userEvent.setup()
+    const onSend = vi.fn()
+    const good = new File(["good"], "good.png", { type: "image/png" })
+    const broken = new File(["broken"], "broken.png", {
+      type: "image/png",
+    })
+    const notes = new File(["notes"], "notes.txt", { type: "text/plain" })
+    uploadAttachmentMock.mockResolvedValue({ path: "/uploads/notes.txt" })
+    const nativeReadAsDataUrl = FileReader.prototype.readAsDataURL
+    const fileReaderSpy = vi
+      .spyOn(FileReader.prototype, "readAsDataURL")
+      .mockImplementation(function (this: FileReader, blob: Blob) {
+        if ((blob as File).name === "broken.png") {
+          queueMicrotask(() => {
+            this.onerror?.(new ProgressEvent("error"))
+          })
+          return
+        }
+        nativeReadAsDataUrl.call(this, blob)
+      })
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {})
+    const inputClick = vi
+      .spyOn(HTMLInputElement.prototype, "click")
+      .mockImplementation(function (this: HTMLInputElement) {
+        Object.defineProperty(this, "files", {
+          configurable: true,
+          value: [good, broken, notes],
+        })
+        this.dispatchEvent(new Event("change"))
+      })
+
+    renderInput({ onSend })
+    await user.click(
+      screen.getByRole("button", {
+        name: enMessages.Folder.chat.messageInput.addActions,
+      })
+    )
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: enMessages.Folder.chat.messageInput.attachLocalUpload,
+      })
+    )
+
+    await waitFor(() =>
+      expect(uploadAttachmentMock).toHaveBeenCalledWith(notes, null)
+    )
+    const send = screen.getByTitle(enMessages.Folder.chat.messageInput.send)
+    await waitFor(() => expect(send).toBeEnabled())
+    await user.click(send)
+
+    expect(onSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        blocks: expect.arrayContaining([
+          expect.objectContaining({
+            type: "image",
+            data: "Z29vZA==",
+          }),
+          expect.objectContaining({
+            type: "text",
+            text: "[notes.txt](file:///uploads/notes.txt)",
+          }),
+        ]),
+      }),
+      null
+    )
+    expect(consoleError).toHaveBeenCalledWith(
+      "[MessageInput] image attachment read failed (broken.png):",
+      expect.any(Error)
+    )
+    inputClick.mockRestore()
+    consoleError.mockRestore()
+    fileReaderSpy.mockRestore()
+  })
+
   it("keeps uploaded non-image files on the resource path", async () => {
     const user = userEvent.setup()
     const onSend = vi.fn()

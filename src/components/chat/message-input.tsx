@@ -1460,7 +1460,7 @@ export function MessageInput({
       }
       if (accepted.length === 0) return
 
-      const parsed = await Promise.all(
+      const settled = await Promise.allSettled(
         accepted.map(async (file, index) => {
           const mimeType =
             file.type && file.type.startsWith("image/")
@@ -1477,7 +1477,30 @@ export function MessageInput({
           }
         })
       )
-      setAttachments((prev) => [...prev, ...parsed])
+      const parsed: ImageInputAttachment[] = []
+      const failed: string[] = []
+      settled.forEach((result, index) => {
+        if (result.status === "fulfilled") {
+          parsed.push(result.value)
+          return
+        }
+        const name = accepted[index].name
+        failed.push(name)
+        console.error(
+          `[MessageInput] image attachment read failed (${name}):`,
+          result.reason
+        )
+      })
+      if (failed.length > 0) {
+        toast.error(
+          tAttach("attachUploadFailed", {
+            names: failed.join(", "),
+          })
+        )
+      }
+      if (parsed.length > 0) {
+        setAttachments((prev) => [...prev, ...parsed])
+      }
     },
     [tAttach]
   )
