@@ -147,6 +147,11 @@ import {
   type RichComposerHandle,
 } from "@/components/chat/composer/rich-composer"
 import {
+  mimeTypeFromPath,
+  partitionAttachmentFiles,
+  partitionAttachmentPaths,
+} from "@/components/chat/attachment-routing"
+import {
   composerLeafText,
   docToPromptBlocks,
   serializeDocToDisplayText,
@@ -247,43 +252,8 @@ interface MessageInputProps {
   onInjectConsumed?: () => void
 }
 
-const MIME_BY_EXT: Record<string, string> = {
-  txt: "text/plain",
-  md: "text/markdown",
-  json: "application/json",
-  yaml: "application/yaml",
-  yml: "application/yaml",
-  csv: "text/csv",
-  html: "text/html",
-  css: "text/css",
-  js: "text/javascript",
-  mjs: "text/javascript",
-  cjs: "text/javascript",
-  ts: "text/typescript",
-  tsx: "text/tsx",
-  jsx: "text/jsx",
-  py: "text/x-python",
-  rs: "text/rust",
-  go: "text/x-go",
-  java: "text/x-java-source",
-  xml: "application/xml",
-  toml: "application/toml",
-  pdf: "application/pdf",
-  png: "image/png",
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  gif: "image/gif",
-  webp: "image/webp",
-  svg: "image/svg+xml",
-}
-
 function fileNameFromPath(path: string): string {
   return path.split(/[/\\]/).pop() || path
-}
-
-function mimeTypeFromPath(path: string): string | null {
-  const ext = path.split(".").pop()?.toLowerCase() ?? ""
-  return MIME_BY_EXT[ext] ?? null
 }
 
 function hasDragFiles(dataTransfer: DataTransfer | null): boolean {
@@ -382,7 +352,7 @@ function isTextLikeFile(file: File): boolean {
   const ext = file.name.split(".").pop()?.toLowerCase()
   if (!ext) return false
   return Boolean(
-    MIME_BY_EXT[ext]?.startsWith("text/") ||
+    mimeTypeFromPath(file.name)?.startsWith("text/") ||
     ["json", "yaml", "yml", "xml", "toml", "md", "csv"].includes(ext)
   )
 }
@@ -1527,29 +1497,21 @@ export function MessageInput({
   )
 
   const appendPathsFromDrop = useCallback(
-    async (paths: string[]) => {
+    async (paths: string[], opts: { atCaret?: boolean } = {}) => {
       if (paths.length === 0) return
       const normalized = paths.filter(
         (path): path is string => typeof path === "string" && path.length > 0
       )
       if (normalized.length === 0) return
 
-      const imagePaths: string[] = []
-      const resourcePaths: string[] = []
-      for (const path of normalized) {
-        const mimeType = mimeTypeFromPath(path) ?? ""
-        if (canAttachImages && mimeType.startsWith("image/")) {
-          imagePaths.push(path)
-        } else {
-          resourcePaths.push(path)
-        }
-      }
+      const { images: imagePaths, resources: resourcePaths } =
+        partitionAttachmentPaths(normalized, canAttachImages)
 
       if (imagePaths.length > 0) {
         await appendImagePathAttachments(imagePaths)
       }
       if (resourcePaths.length > 0) {
-        appendResourceAttachments(resourcePaths)
+        appendResourceAttachments(resourcePaths, opts)
       }
     },
     [appendImagePathAttachments, appendResourceAttachments, canAttachImages]
@@ -1678,16 +1640,8 @@ export function MessageInput({
   const appendFilesFromInput = useCallback(
     async (files: File[]) => {
       if (files.length === 0) return
-      const imageFiles: File[] = []
-      const resourceFiles: File[] = []
-      for (const file of files) {
-        const mimeType = file.type || mimeTypeFromPath(file.name) || ""
-        if (canAttachImages && mimeType.startsWith("image/")) {
-          imageFiles.push(file)
-        } else {
-          resourceFiles.push(file)
-        }
-      }
+      const { images: imageFiles, resources: resourceFiles } =
+        partitionAttachmentFiles(files, canAttachImages)
 
       if (imageFiles.length > 0) {
         await appendImageAttachments(imageFiles)
@@ -1977,11 +1931,11 @@ export function MessageInput({
       })
       if (!selected) return
       const picked = Array.isArray(selected) ? selected : [selected]
-      appendResourceAttachments(picked.filter((item): item is string => !!item))
+      await appendPathsFromDrop(picked.filter((item): item is string => !!item))
     } catch (error) {
       console.error("[MessageInput] pick files failed:", error)
     }
-  }, [appendResourceAttachments, defaultPath, disabled])
+  }, [appendPathsFromDrop, defaultPath, disabled])
 
   const [serverFilePickerOpen, setServerFilePickerOpen] = useState(false)
 
@@ -2003,9 +1957,11 @@ export function MessageInput({
   const handleServerFilesSelected = useCallback(
     (paths: string[]) => {
       if (paths.length === 0) return
-      appendResourceAttachments(paths)
+      void appendPathsFromDrop(paths).catch((error) => {
+        console.error("[MessageInput] select server files failed:", error)
+      })
     },
-    [appendResourceAttachments]
+    [appendPathsFromDrop]
   )
 
   const loadQuickMessages = useCallback(async () => {
@@ -2183,7 +2139,9 @@ export function MessageInput({
       if (range) {
         appendFileRangeAttachment(path, range, { atCaret: true })
       } else {
-        appendResourceAttachments([path], { atCaret: true })
+        void appendPathsFromDrop([path], { atCaret: true }).catch((error) => {
+          console.error("[MessageInput] attach session file failed:", error)
+        })
       }
     }
 
@@ -2191,7 +2149,7 @@ export function MessageInput({
     return () => {
       window.removeEventListener(ATTACH_FILE_TO_SESSION_EVENT, handleAttachFile)
     }
-  }, [appendResourceAttachments, appendFileRangeAttachment, attachmentTabId])
+  }, [appendPathsFromDrop, appendFileRangeAttachment, attachmentTabId])
 
   useEffect(() => {
     if (!attachmentTabId) return

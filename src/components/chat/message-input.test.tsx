@@ -26,6 +26,11 @@ const composerHandle = vi.hoisted(() => ({
   current: null as RichComposerHandle | null,
 }))
 const uploadAttachmentMock = vi.hoisted(() => vi.fn())
+const readFileBase64Mock = vi.hoisted(() => vi.fn())
+const platformMock = vi.hoisted(() => ({
+  desktop: false,
+  openFileDialog: vi.fn(),
+}))
 vi.mock("./composer/rich-composer", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("./composer/rich-composer")>()
@@ -77,8 +82,8 @@ vi.mock("@/components/chat/conversation-context-bar", () => ({
   useConversationFolderBranchPickerVisible: () => false,
 }))
 vi.mock("@/lib/platform", () => ({
-  isDesktop: () => false,
-  openFileDialog: vi.fn(),
+  isDesktop: () => platformMock.desktop,
+  openFileDialog: platformMock.openFileDialog,
 }))
 vi.mock("@/lib/transport", () => ({
   getActiveRemoteConnectionId: () => null,
@@ -88,9 +93,37 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...actual,
     quickMessagesList: vi.fn().mockResolvedValue([]),
+    readFileBase64: readFileBase64Mock,
     uploadAttachment: uploadAttachmentMock,
   }
 })
+vi.mock("@/components/shared/server-file-browser-dialog", () => ({
+  ServerFileBrowserDialog: ({
+    open,
+    onSelect,
+  }: {
+    open: boolean
+    onSelect: (paths: string[]) => void
+  }) =>
+    open ? (
+      <button type="button" onClick={() => onSelect(["/server/outside.png"])}>
+        Select server image
+      </button>
+    ) : null,
+}))
+vi.mock("@tauri-apps/api/webview", () => ({
+  getCurrentWebview: () => ({
+    listen: vi.fn().mockResolvedValue(() => {}),
+  }),
+}))
+vi.mock("@tauri-apps/api/event", () => ({
+  TauriEvent: {
+    DRAG_ENTER: "tauri://drag-enter",
+    DRAG_OVER: "tauri://drag-over",
+    DRAG_DROP: "tauri://drag-drop",
+    DRAG_LEAVE: "tauri://drag-leave",
+  },
+}))
 // virtua renders 0 rows under jsdom — render children directly so the large
 // (searchable + virtualized) model list is exercisable here too.
 vi.mock("virtua", async () => {
@@ -533,5 +566,140 @@ describe("MessageInput local file upload", () => {
       null
     )
     inputClick.mockRestore()
+  })
+})
+
+describe("MessageInput selected image paths", () => {
+  afterEach(() => {
+    cleanup()
+    platformMock.desktop = false
+    platformMock.openFileDialog.mockReset()
+    readFileBase64Mock.mockReset()
+  })
+
+  it("reads a native-picker image as bounded inline data", async () => {
+    const user = userEvent.setup()
+    const onSend = vi.fn()
+    platformMock.desktop = true
+    platformMock.openFileDialog.mockResolvedValue([
+      "/outside/image.png",
+      "/outside/notes.txt",
+    ])
+    readFileBase64Mock.mockResolvedValue("bmF0aXZlLWltYWdl")
+
+    renderInput({ onSend })
+    await user.click(
+      screen.getByRole("button", {
+        name: enMessages.Folder.chat.messageInput.addActions,
+      })
+    )
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: enMessages.Folder.chat.messageInput.attachFiles,
+      })
+    )
+
+    await waitFor(() =>
+      expect(readFileBase64Mock).toHaveBeenCalledWith(
+        "/outside/image.png",
+        20_000_000
+      )
+    )
+    const send = screen.getByTitle(enMessages.Folder.chat.messageInput.send)
+    await waitFor(() => expect(send).toBeEnabled())
+    await user.click(send)
+
+    expect(onSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        blocks: expect.arrayContaining([
+          expect.objectContaining({
+            type: "image",
+            data: "bmF0aXZlLWltYWdl",
+          }),
+          expect.objectContaining({
+            type: "text",
+            text: "[notes.txt](file:///outside/notes.txt)",
+          }),
+        ]),
+      }),
+      null
+    )
+  })
+
+  it("routes a server-picker image through the bounded reader", async () => {
+    const user = userEvent.setup()
+    readFileBase64Mock.mockResolvedValue("c2VydmVyLWltYWdl")
+
+    renderInput({})
+    await user.click(
+      screen.getByRole("button", {
+        name: enMessages.Folder.chat.messageInput.addActions,
+      })
+    )
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: enMessages.Folder.chat.messageInput.attachServerFile,
+      })
+    )
+    await user.click(await screen.findByText("Select server image"))
+
+    await waitFor(() =>
+      expect(readFileBase64Mock).toHaveBeenCalledWith(
+        "/server/outside.png",
+        20_000_000
+      )
+    )
+  })
+
+  it("does not append an image when a selected path cannot be read", async () => {
+    const user = userEvent.setup()
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {})
+    platformMock.desktop = true
+    platformMock.openFileDialog.mockResolvedValue(["/outside/unreadable.png"])
+    readFileBase64Mock.mockRejectedValue(new Error("read denied"))
+
+    renderInput({})
+    await user.click(
+      screen.getByRole("button", {
+        name: enMessages.Folder.chat.messageInput.addActions,
+      })
+    )
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: enMessages.Folder.chat.messageInput.attachFiles,
+      })
+    )
+
+    await waitFor(() => expect(readFileBase64Mock).toHaveBeenCalledOnce())
+    expect(
+      screen.getByTitle(enMessages.Folder.chat.messageInput.send)
+    ).toBeDisabled()
+    expect(
+      screen.queryByRole("button", { name: /Remove unreadable\.png/ })
+    ).toBeNull()
+    expect(consoleError).toHaveBeenCalledWith(
+      "[MessageInput] drop image path failed (/outside/unreadable.png):",
+      expect.any(Error)
+    )
+    consoleError.mockRestore()
+  })
+
+  it("routes a whole-file session image through the bounded reader", async () => {
+    readFileBase64Mock.mockResolvedValue("c2Vzc2lvbi1pbWFnZQ==")
+    renderInput({ attachmentTabId: "tab-image" })
+
+    act(() => {
+      emitAttachFileToSession({
+        tabId: "tab-image",
+        path: "/outside/session.png",
+      })
+    })
+
+    await waitFor(() =>
+      expect(readFileBase64Mock).toHaveBeenCalledWith(
+        "/outside/session.png",
+        20_000_000
+      )
+    )
   })
 })
