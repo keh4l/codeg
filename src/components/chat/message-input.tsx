@@ -71,6 +71,7 @@ import {
 import { useShortcutSettings } from "@/hooks/use-shortcut-settings"
 import {
   readFileBase64,
+  readLocalPathForAttachment,
   quickMessagesList,
   uploadAttachment,
   uploadLocalPathToRemote,
@@ -1522,20 +1523,25 @@ export function MessageInput({
     appendPathsFromDropRef.current = appendPathsFromDrop
   }, [appendPathsFromDrop])
 
-  // Remote-workspace counterpart of `appendPathsFromDrop`. Reads each
-  // local path through Rust, ships the bytes via the upload proxy, then
-  // appends the resulting server-side paths as ResourceLinks. Failures
-  // (oversize, ENOENT, network) are reported in a single aggregated toast
-  // matching `uploadAndAppendFiles`.
+  // Remote-workspace counterpart of `appendPathsFromDrop`. Images stay as
+  // in-memory prompt blocks after the bounded local Rust read; resources use
+  // the existing upload proxy and become server-side ResourceLinks.
   const uploadPathsToRemote = useCallback(
     async (paths: string[]) => {
       const normalized = paths.filter(
         (p): p is string => typeof p === "string" && p.length > 0
       )
       if (normalized.length === 0) return
+      const { images: imagePaths, resources: resourcePaths } =
+        partitionAttachmentPaths(normalized, canAttachImages)
+      const jobs = [
+        ...imagePaths.map((path) => ({ path, image: true as const })),
+        ...resourcePaths.map((path) => ({ path, image: false as const })),
+      ]
 
       const limitMb = Math.round(UPLOAD_MAX_BYTES / (1024 * 1024))
       const succeeded: string[] = []
+      const parsedImages: ImageInputAttachment[] = []
       const failed: Array<{ name: string; reason: unknown }> = []
       const oversize: string[] = []
       const directories: string[] = []
@@ -1544,18 +1550,33 @@ export function MessageInput({
       const CONCURRENCY = 3
       let cursor = 0
       const workers = Array.from(
-        { length: Math.min(CONCURRENCY, normalized.length) },
+        { length: Math.min(CONCURRENCY, jobs.length) },
         async () => {
-          while (cursor < normalized.length) {
+          while (cursor < jobs.length) {
             const idx = cursor++
-            const path = normalized[idx]
+            const { path, image } = jobs[idx]
             const name = path.split(/[/\\]/).pop() || path
             try {
-              const r = await uploadLocalPathToRemote(
-                path,
-                attachmentTabId ?? null
-              )
-              succeeded.push(r.path)
+              if (image) {
+                const file = await readLocalPathForAttachment(path)
+                parsedImages.push({
+                  id: `image:${Date.now()}:${idx}:${randomUUID()}`,
+                  type: "image",
+                  data: file.dataBase64,
+                  uri: buildFileUri(path),
+                  name: file.fileName || name,
+                  mimeType:
+                    file.mimeType?.startsWith("image/") === true
+                      ? file.mimeType
+                      : (mimeTypeFromPath(path) ?? "image/png"),
+                })
+              } else {
+                const r = await uploadLocalPathToRemote(
+                  path,
+                  attachmentTabId ?? null
+                )
+                succeeded.push(r.path)
+              }
             } catch (error) {
               if (isEmptyAttachmentError(error)) {
                 console.warn(
@@ -1628,8 +1649,11 @@ export function MessageInput({
       if (succeeded.length > 0) {
         appendResourceAttachments(succeeded)
       }
+      if (parsedImages.length > 0) {
+        setAttachments((prev) => [...prev, ...parsedImages])
+      }
     },
-    [appendResourceAttachments, attachmentTabId, tAttach]
+    [appendResourceAttachments, attachmentTabId, canAttachImages, tAttach]
   )
 
   const uploadPathsToRemoteRef = useRef(uploadPathsToRemote)

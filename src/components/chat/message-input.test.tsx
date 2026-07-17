@@ -27,9 +27,17 @@ const composerHandle = vi.hoisted(() => ({
 }))
 const uploadAttachmentMock = vi.hoisted(() => vi.fn())
 const readFileBase64Mock = vi.hoisted(() => vi.fn())
+const readLocalPathForAttachmentMock = vi.hoisted(() => vi.fn())
+const uploadLocalPathToRemoteMock = vi.hoisted(() => vi.fn())
 const platformMock = vi.hoisted(() => ({
   desktop: false,
   openFileDialog: vi.fn(),
+}))
+const transportMock = vi.hoisted(() => ({
+  remoteId: null as string | null,
+}))
+const tauriListenerMock = vi.hoisted(() => ({
+  listeners: new Map<string, Array<(event: { payload: unknown }) => void>>(),
 }))
 vi.mock("./composer/rich-composer", async (importOriginal) => {
   const actual =
@@ -86,7 +94,7 @@ vi.mock("@/lib/platform", () => ({
   openFileDialog: platformMock.openFileDialog,
 }))
 vi.mock("@/lib/transport", () => ({
-  getActiveRemoteConnectionId: () => null,
+  getActiveRemoteConnectionId: () => transportMock.remoteId,
 }))
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>()
@@ -94,7 +102,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     quickMessagesList: vi.fn().mockResolvedValue([]),
     readFileBase64: readFileBase64Mock,
+    readLocalPathForAttachment: readLocalPathForAttachmentMock,
     uploadAttachment: uploadAttachmentMock,
+    uploadLocalPathToRemote: uploadLocalPathToRemoteMock,
   }
 })
 vi.mock("@/components/shared/server-file-browser-dialog", () => ({
@@ -113,7 +123,23 @@ vi.mock("@/components/shared/server-file-browser-dialog", () => ({
 }))
 vi.mock("@tauri-apps/api/webview", () => ({
   getCurrentWebview: () => ({
-    listen: vi.fn().mockResolvedValue(() => {}),
+    listen: vi.fn(
+      async (
+        event: string,
+        callback: (event: { payload: unknown }) => void
+      ) => {
+        const listeners = tauriListenerMock.listeners.get(event) ?? []
+        listeners.push(callback)
+        tauriListenerMock.listeners.set(event, listeners)
+        return () => {
+          const current = tauriListenerMock.listeners.get(event) ?? []
+          tauriListenerMock.listeners.set(
+            event,
+            current.filter((item) => item !== callback)
+          )
+        }
+      }
+    ),
   }),
 }))
 vi.mock("@tauri-apps/api/event", () => ({
@@ -701,5 +727,145 @@ describe("MessageInput selected image paths", () => {
         20_000_000
       )
     )
+  })
+})
+
+describe("MessageInput remote desktop paths", () => {
+  afterEach(() => {
+    cleanup()
+    platformMock.desktop = false
+    transportMock.remoteId = null
+    tauriListenerMock.listeners.clear()
+    readLocalPathForAttachmentMock.mockReset()
+    uploadLocalPathToRemoteMock.mockReset()
+  })
+
+  async function renderRemoteAndDrop(
+    paths: string[],
+    props: Partial<ComponentProps<typeof MessageInput>> = {}
+  ) {
+    platformMock.desktop = true
+    transportMock.remoteId = "remote-1"
+    tauriListenerMock.listeners.clear()
+
+    const rendered = renderInput(props)
+    const host = rendered.container.firstElementChild as HTMLElement | null
+    expect(host).not.toBeNull()
+    vi.spyOn(host!, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      top: 0,
+      right: 100,
+      bottom: 100,
+      width: 100,
+      height: 100,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+    await waitFor(() =>
+      expect(
+        tauriListenerMock.listeners.get("tauri://drag-drop")?.length
+      ).toBeGreaterThan(0)
+    )
+
+    act(() => {
+      tauriListenerMock.listeners.get("tauri://drag-drop")?.at(-1)?.({
+        payload: {
+          paths,
+          position: { x: 10, y: 10 },
+        },
+      })
+    })
+    return rendered
+  }
+
+  it("keeps remote desktop images inline and uploads only resources", async () => {
+    const onSend = vi.fn()
+    readLocalPathForAttachmentMock.mockResolvedValue({
+      fileName: "outside.png",
+      mimeType: "image/png",
+      size: 6,
+      dataBase64: "cmVtb3RlLWltYWdl",
+    })
+    uploadLocalPathToRemoteMock.mockResolvedValue({
+      path: "/uploads/notes.txt",
+    })
+
+    await renderRemoteAndDrop(["/outside/outside.png", "/outside/notes.txt"], {
+      onSend,
+    })
+
+    await waitFor(() =>
+      expect(readLocalPathForAttachmentMock).toHaveBeenCalledWith(
+        "/outside/outside.png"
+      )
+    )
+    expect(uploadLocalPathToRemoteMock).toHaveBeenCalledTimes(1)
+    expect(uploadLocalPathToRemoteMock).toHaveBeenCalledWith(
+      "/outside/notes.txt",
+      null
+    )
+
+    const send = screen.getByTitle(enMessages.Folder.chat.messageInput.send)
+    await waitFor(() => expect(send).toBeEnabled())
+    await userEvent.setup().click(send)
+    expect(onSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        blocks: expect.arrayContaining([
+          expect.objectContaining({
+            type: "image",
+            mime_type: "image/png",
+            data: "cmVtb3RlLWltYWdl",
+          }),
+          expect.objectContaining({
+            type: "text",
+            text: "[notes.txt](file:///uploads/notes.txt)",
+          }),
+        ]),
+      }),
+      null
+    )
+    expect(send).toBeDisabled()
+    await userEvent.setup().click(send)
+    expect(onSend).toHaveBeenCalledOnce()
+  })
+
+  it("removes remote image bytes from the draft", async () => {
+    readLocalPathForAttachmentMock.mockResolvedValue({
+      fileName: "outside.png",
+      mimeType: "image/png",
+      size: 6,
+      dataBase64: "cmVtb3RlLWltYWdl",
+    })
+
+    await renderRemoteAndDrop(["/outside/outside.png"])
+    const remove = await screen.findByRole("button", {
+      name: "Remove outside.png",
+    })
+    await userEvent.setup().click(remove)
+
+    expect(
+      screen.getByTitle(enMessages.Folder.chat.messageInput.send)
+    ).toBeDisabled()
+  })
+
+  it("does not upload a remote image after its local read fails", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {})
+    readLocalPathForAttachmentMock.mockRejectedValue(new Error("read denied"))
+
+    await renderRemoteAndDrop(["/outside/unreadable.png"])
+    await waitFor(() =>
+      expect(readLocalPathForAttachmentMock).toHaveBeenCalledOnce()
+    )
+
+    expect(uploadLocalPathToRemoteMock).not.toHaveBeenCalled()
+    expect(
+      screen.getByTitle(enMessages.Folder.chat.messageInput.send)
+    ).toBeDisabled()
+    expect(consoleError).toHaveBeenCalledWith(
+      "[MessageInput] remote path upload failed (unreadable.png):",
+      expect.any(Error)
+    )
+    consoleError.mockRestore()
   })
 })

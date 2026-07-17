@@ -2407,12 +2407,41 @@ export async function uploadAttachment(
   return res.json()
 }
 
+export interface LocalAttachmentFile {
+  fileName: string
+  mimeType: string | null
+  size: number
+  dataBase64: string
+}
+
+// Read a user-selected local path through the existing bounded Tauri command.
+// The Rust side accepts only regular, non-symlink files and enforces the same
+// upload size ceiling before returning bytes.
+export async function readLocalPathForAttachment(
+  path: string
+): Promise<LocalAttachmentFile> {
+  if (getActiveRemoteConnectionId() === null) {
+    throw new Error(
+      "readLocalPathForAttachment requires an active remote workspace"
+    )
+  }
+  const shell = getShellTransport()
+  const file = await shell.call<LocalAttachmentFile>(
+    "read_local_file_for_upload",
+    { path }
+  )
+  if (file.size === 0) {
+    throw new EmptyAttachmentError(file.fileName)
+  }
+  return file
+}
+
 // Upload a file picked from the desktop machine's filesystem to the remote
 // codeg-server bound to the current window. The Tauri-native drag-drop event
 // hands us OS paths (not `File` objects), so we read the bytes via Rust,
 // then reuse the same `remote_upload_attachment` channel. Only callable from
 // a window that has a remote workspace attached; non-remote callers should
-// continue to use `appendResourceAttachments` with the local path directly.
+// continue to use local path references directly.
 export async function uploadLocalPathToRemote(
   path: string,
   sessionId?: string | null
@@ -2423,19 +2452,8 @@ export async function uploadLocalPathToRemote(
       "uploadLocalPathToRemote requires an active remote workspace"
     )
   }
+  const file = await readLocalPathForAttachment(path)
   const shell = getShellTransport()
-  const file = await shell.call<{
-    fileName: string
-    mimeType: string | null
-    size: number
-    dataBase64: string
-  }>("read_local_file_for_upload", { path })
-  if (file.size === 0) {
-    // Mirror the `uploadAttachment` empty-file guard. The Rust side
-    // already read the bytes, so we've paid the cost — drop on the
-    // floor here rather than send a zero-byte multipart upstream.
-    throw new EmptyAttachmentError(file.fileName)
-  }
   return shell.call<UploadAttachmentResult>("remote_upload_attachment", {
     connectionId: remoteId,
     fileName: file.fileName,
