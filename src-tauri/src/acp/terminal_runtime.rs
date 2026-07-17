@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::process::Stdio;
+#[cfg(unix)]
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -28,6 +30,8 @@ const SIGINT_GRACE: Duration = Duration::from_millis(500);
 const SIGTERM_GRACE: Duration = Duration::from_millis(1_500);
 #[cfg(unix)]
 const SIGKILL_GRACE: Duration = Duration::from_millis(2_000);
+#[cfg(unix)]
+const DESCENDANT_LEASE_DURATION: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 pub enum TerminalRuntimeError {
@@ -67,12 +71,322 @@ struct TerminalSnapshot {
     exit_status: Option<TerminalExitStatus>,
 }
 
-struct TerminalInstance {
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ProcessGroupKey {
+    pgid: libc::pid_t,
+    generation: u64,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProcessGroupPresence {
+    Present,
+    Missing,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProcessGroupSignalResult {
+    Delivered,
+    Missing,
+}
+
+#[cfg(unix)]
+trait UnixProcessGroupBackend: Send + Sync {
+    fn probe(&self, key: ProcessGroupKey) -> Result<ProcessGroupPresence, TerminalRuntimeError>;
+
+    fn signal(
+        &self,
+        key: ProcessGroupKey,
+        signal: libc::c_int,
+    ) -> Result<ProcessGroupSignalResult, TerminalRuntimeError>;
+}
+
+#[cfg(unix)]
+struct LibcProcessGroupBackend;
+
+#[cfg(unix)]
+impl UnixProcessGroupBackend for LibcProcessGroupBackend {
+    fn probe(&self, key: ProcessGroupKey) -> Result<ProcessGroupPresence, TerminalRuntimeError> {
+        let result = unsafe { libc::kill(-key.pgid, 0) };
+        if result == 0 {
+            return Ok(ProcessGroupPresence::Present);
+        }
+
+        let err = std::io::Error::last_os_error();
+        match err.raw_os_error() {
+            Some(libc::ESRCH) => Ok(ProcessGroupPresence::Missing),
+            Some(libc::EPERM) => Ok(ProcessGroupPresence::Present),
+            _ => Err(TerminalRuntimeError::Internal(format!(
+                "failed to query terminal process group pgid={} generation={}: {err}",
+                key.pgid, key.generation
+            ))),
+        }
+    }
+
+    fn signal(
+        &self,
+        key: ProcessGroupKey,
+        signal: libc::c_int,
+    ) -> Result<ProcessGroupSignalResult, TerminalRuntimeError> {
+        let result = unsafe { libc::kill(-key.pgid, signal) };
+        if result == 0 {
+            return Ok(ProcessGroupSignalResult::Delivered);
+        }
+
+        let err = std::io::Error::last_os_error();
+        if err.raw_os_error() == Some(libc::ESRCH) {
+            return Ok(ProcessGroupSignalResult::Missing);
+        }
+        Err(TerminalRuntimeError::Internal(format!(
+            "failed to signal terminal process group pgid={} generation={} signal={signal}: {err}",
+            key.pgid, key.generation
+        )))
+    }
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UnixProcessGroupState {
+    OwnedLeaderAlive {
+        key: ProcessGroupKey,
+    },
+    OwnedDescendants {
+        key: ProcessGroupKey,
+        deadline: tokio::time::Instant,
+    },
+    Retired,
+}
+
+#[cfg(unix)]
+struct UnixProcessGroupLease {
     terminal_id: String,
     session_id: String,
     pid: u32,
+    backend: Arc<dyn UnixProcessGroupBackend>,
+    state: Mutex<UnixProcessGroupState>,
+    cleanup_gate: Mutex<()>,
+}
+
+#[cfg(unix)]
+impl UnixProcessGroupLease {
+    fn new(
+        terminal_id: String,
+        session_id: String,
+        pid: u32,
+        generation: u64,
+        backend: Arc<dyn UnixProcessGroupBackend>,
+    ) -> Result<Self, TerminalRuntimeError> {
+        let pgid = libc::pid_t::try_from(pid).map_err(|_| {
+            TerminalRuntimeError::Internal(format!("terminal pid {pid} does not fit pid_t"))
+        })?;
+        Ok(Self {
+            terminal_id,
+            session_id,
+            pid,
+            backend,
+            state: Mutex::new(UnixProcessGroupState::OwnedLeaderAlive {
+                key: ProcessGroupKey { pgid, generation },
+            }),
+            cleanup_gate: Mutex::new(()),
+        })
+    }
+
+    async fn observe_leader_exit(
+        &self,
+        observed_at: tokio::time::Instant,
+    ) -> Result<(), TerminalRuntimeError> {
+        let mut state = self.state.lock().await;
+        let UnixProcessGroupState::OwnedLeaderAlive { key } = *state else {
+            return Ok(());
+        };
+
+        match self.backend.probe(key) {
+            Ok(ProcessGroupPresence::Missing) => {
+                *state = UnixProcessGroupState::Retired;
+                tracing::info!(
+                    terminal_id = %self.terminal_id,
+                    session_id = %self.session_id,
+                    pid = self.pid,
+                    pgid = key.pgid,
+                    generation = key.generation,
+                    "[ACP] retired terminal process-group lease after leader exit"
+                );
+                Ok(())
+            }
+            Ok(ProcessGroupPresence::Present) => {
+                let deadline = observed_at + DESCENDANT_LEASE_DURATION;
+                *state = UnixProcessGroupState::OwnedDescendants { key, deadline };
+                tracing::info!(
+                    terminal_id = %self.terminal_id,
+                    session_id = %self.session_id,
+                    pid = self.pid,
+                    pgid = key.pgid,
+                    generation = key.generation,
+                    lease_ms = DESCENDANT_LEASE_DURATION.as_millis(),
+                    "[ACP] started bounded descendant process-group lease"
+                );
+                Ok(())
+            }
+            Err(err) => {
+                *state = UnixProcessGroupState::Retired;
+                Err(err)
+            }
+        }
+    }
+
+    fn active_key(
+        state: &mut UnixProcessGroupState,
+        now: tokio::time::Instant,
+    ) -> Option<(ProcessGroupKey, Option<tokio::time::Instant>)> {
+        match *state {
+            UnixProcessGroupState::OwnedLeaderAlive { key } => Some((key, None)),
+            UnixProcessGroupState::OwnedDescendants { key, deadline } if now < deadline => {
+                Some((key, Some(deadline)))
+            }
+            UnixProcessGroupState::OwnedDescendants { .. } => {
+                *state = UnixProcessGroupState::Retired;
+                None
+            }
+            UnixProcessGroupState::Retired => None,
+        }
+    }
+
+    async fn signal_active(
+        &self,
+        signal: libc::c_int,
+        stage: &'static str,
+    ) -> Result<Option<(ProcessGroupKey, Option<tokio::time::Instant>)>, TerminalRuntimeError> {
+        let mut state = self.state.lock().await;
+        let Some((key, deadline)) = Self::active_key(&mut state, tokio::time::Instant::now())
+        else {
+            return Ok(None);
+        };
+
+        match self.backend.signal(key, signal) {
+            Ok(ProcessGroupSignalResult::Delivered) => {
+                tracing::info!(
+                    terminal_id = %self.terminal_id,
+                    session_id = %self.session_id,
+                    pid = self.pid,
+                    pgid = key.pgid,
+                    generation = key.generation,
+                    signal_stage = stage,
+                    "[ACP] signalled terminal process group"
+                );
+                Ok(Some((key, deadline)))
+            }
+            Ok(ProcessGroupSignalResult::Missing) => {
+                *state = UnixProcessGroupState::Retired;
+                Ok(None)
+            }
+            Err(err) => {
+                *state = UnixProcessGroupState::Retired;
+                Err(err)
+            }
+        }
+    }
+
+    async fn probe_active(&self) -> Result<bool, TerminalRuntimeError> {
+        let mut state = self.state.lock().await;
+        let Some((key, _)) = Self::active_key(&mut state, tokio::time::Instant::now()) else {
+            return Ok(false);
+        };
+
+        match self.backend.probe(key) {
+            Ok(ProcessGroupPresence::Present) => Ok(true),
+            Ok(ProcessGroupPresence::Missing) => {
+                *state = UnixProcessGroupState::Retired;
+                Ok(false)
+            }
+            Err(err) => {
+                *state = UnixProcessGroupState::Retired;
+                Err(err)
+            }
+        }
+    }
+
+    async fn retire(&self) {
+        *self.state.lock().await = UnixProcessGroupState::Retired;
+    }
+
+    async fn cleanup_with_stages(
+        &self,
+        stages: &[(libc::c_int, &'static str, Duration)],
+        terminal: Option<&TerminalInstance>,
+    ) -> Result<(), TerminalRuntimeError> {
+        let _cleanup_guard = self.cleanup_gate.lock().await;
+        let started = std::time::Instant::now();
+        let mut last_key = None;
+
+        for &(signal, stage, grace) in stages {
+            let Some((key, descendant_deadline)) = self.signal_active(signal, stage).await? else {
+                return Ok(());
+            };
+            last_key = Some(key);
+
+            let now = tokio::time::Instant::now();
+            let stage_deadline = descendant_deadline
+                .map(|lease_deadline| (now + grace).min(lease_deadline))
+                .unwrap_or(now + grace);
+
+            loop {
+                if let Some(terminal) = terminal {
+                    terminal.refresh_exit_status().await?;
+                }
+
+                let now = tokio::time::Instant::now();
+                if !self.probe_active().await? {
+                    tracing::info!(
+                        terminal_id = %self.terminal_id,
+                        session_id = %self.session_id,
+                        pid = self.pid,
+                        pgid = key.pgid,
+                        generation = key.generation,
+                        elapsed_ms = started.elapsed().as_millis(),
+                        signal_stage = stage,
+                        "[ACP] terminal process-group lease retired"
+                    );
+                    return Ok(());
+                }
+
+                if now >= stage_deadline {
+                    break;
+                }
+                tokio::time::sleep(
+                    CHILD_EXIT_POLL_INTERVAL.min(stage_deadline.saturating_duration_since(now)),
+                )
+                .await;
+            }
+        }
+
+        self.retire().await;
+        let key = last_key.expect("non-empty terminal signal stages");
+        Err(TerminalRuntimeError::Internal(format!(
+            "terminal process group pgid={} generation={} survived SIGKILL deadline",
+            key.pgid, key.generation
+        )))
+    }
+
+    async fn cleanup(&self, terminal: &TerminalInstance) -> Result<(), TerminalRuntimeError> {
+        self.cleanup_with_stages(
+            &[
+                (libc::SIGINT, "sigint", SIGINT_GRACE),
+                (libc::SIGTERM, "sigterm", SIGTERM_GRACE),
+                (libc::SIGKILL, "sigkill", SIGKILL_GRACE),
+            ],
+            Some(terminal),
+        )
+        .await
+    }
+}
+
+struct TerminalInstance {
+    terminal_id: String,
+    session_id: String,
     #[cfg(unix)]
-    pgid: libc::pid_t,
+    process_group: UnixProcessGroupLease,
     output_limit: Option<usize>,
     child: Mutex<Option<tokio::process::Child>>,
     snapshot: Mutex<TerminalSnapshot>,
@@ -85,19 +399,24 @@ impl TerminalInstance {
         session_id: String,
         output_limit: Option<u64>,
         child: tokio::process::Child,
-        pid: u32,
+        #[cfg_attr(not(unix), allow(unused_variables))] pid: u32,
+        #[cfg(unix)] generation: u64,
+        #[cfg(unix)] process_group_backend: Arc<dyn UnixProcessGroupBackend>,
     ) -> Result<Self, TerminalRuntimeError> {
         #[cfg(unix)]
-        let pgid = libc::pid_t::try_from(pid).map_err(|_| {
-            TerminalRuntimeError::Internal(format!("terminal pid {pid} does not fit pid_t"))
-        })?;
+        let process_group = UnixProcessGroupLease::new(
+            terminal_id.clone(),
+            session_id.clone(),
+            pid,
+            generation,
+            process_group_backend,
+        )?;
 
         Ok(Self {
             terminal_id,
             session_id,
-            pid,
             #[cfg(unix)]
-            pgid,
+            process_group,
             output_limit: output_limit.and_then(|v| usize::try_from(v).ok()),
             child: Mutex::new(Some(child)),
             snapshot: Mutex::new(TerminalSnapshot::default()),
@@ -164,6 +483,12 @@ impl TerminalInstance {
         };
 
         if let Some(status) = maybe_status {
+            #[cfg(unix)]
+            let process_group_result = self
+                .process_group
+                .observe_leader_exit(tokio::time::Instant::now())
+                .await;
+
             // Drain readers BEFORE exposing exit_status. Otherwise a caller
             // polling `terminal/output` can see `exit_status = Some(...)` while
             // a grandchild process (e.g. Node spawned from a `.cmd` shim on
@@ -176,6 +501,9 @@ impl TerminalInstance {
             self.drain_readers().await;
             let mut snapshot = self.snapshot.lock().await;
             snapshot.exit_status = Some(map_exit_status(status));
+
+            #[cfg(unix)]
+            process_group_result?;
         }
 
         Ok(())
@@ -192,144 +520,11 @@ impl TerminalInstance {
     }
 
     #[cfg(unix)]
-    fn process_group_exists(&self) -> Result<bool, TerminalRuntimeError> {
-        let result = unsafe { libc::kill(-self.pgid, 0) };
-        if result == 0 {
-            return Ok(true);
-        }
-
-        let err = std::io::Error::last_os_error();
-        match err.raw_os_error() {
-            Some(libc::ESRCH) => Ok(false),
-            Some(libc::EPERM) => Ok(true),
-            _ => Err(TerminalRuntimeError::Internal(format!(
-                "failed to query terminal process group pgid={}: {err}",
-                self.pgid
-            ))),
-        }
-    }
-
-    #[cfg(unix)]
-    fn signal_process_group(
-        &self,
-        signal: libc::c_int,
-        stage: &'static str,
-    ) -> Result<(), TerminalRuntimeError> {
-        let result = unsafe { libc::kill(-self.pgid, signal) };
-        if result == 0 {
-            tracing::info!(
-                terminal_id = %self.terminal_id,
-                session_id = %self.session_id,
-                pid = self.pid,
-                pgid = self.pgid,
-                signal_stage = stage,
-                "[ACP] signalled terminal process group"
-            );
-            return Ok(());
-        }
-
-        let err = std::io::Error::last_os_error();
-        if err.raw_os_error() == Some(libc::ESRCH) {
-            return Ok(());
-        }
-        Err(TerminalRuntimeError::Internal(format!(
-            "failed to signal terminal process group pgid={} stage={stage}: {err}",
-            self.pgid
-        )))
-    }
-
-    #[cfg(unix)]
-    async fn wait_for_process_group_exit(
-        &self,
-        grace: Duration,
-    ) -> Result<bool, TerminalRuntimeError> {
-        let deadline = tokio::time::Instant::now() + grace;
-        loop {
-            self.refresh_exit_status().await?;
-            if !self.process_group_exists()? {
-                return Ok(true);
-            }
-            if tokio::time::Instant::now() >= deadline {
-                return Ok(false);
-            }
-            tokio::time::sleep(CHILD_EXIT_POLL_INTERVAL).await;
-        }
-    }
-
-    #[cfg(unix)]
     async fn kill_command(&self) -> Result<(), TerminalRuntimeError> {
-        let started = std::time::Instant::now();
         self.refresh_exit_status().await?;
-        if !self.process_group_exists()? {
-            return Ok(());
-        }
-
-        let stages = [
-            (libc::SIGINT, "sigint", SIGINT_GRACE),
-            (libc::SIGTERM, "sigterm", SIGTERM_GRACE),
-            (libc::SIGKILL, "sigkill", SIGKILL_GRACE),
-        ];
-        let mut first_error = None;
-
-        for (signal, stage, grace) in stages {
-            if let Err(err) = self.signal_process_group(signal, stage) {
-                tracing::warn!(
-                    terminal_id = %self.terminal_id,
-                    session_id = %self.session_id,
-                    pid = self.pid,
-                    pgid = self.pgid,
-                    signal_stage = stage,
-                    error = ?err,
-                    "[ACP] terminal process-group signal failed"
-                );
-                if first_error.is_none() {
-                    first_error = Some(err);
-                }
-            }
-
-            match self.wait_for_process_group_exit(grace).await {
-                Ok(true) => {
-                    let exit_status = self.snapshot.lock().await.exit_status.clone();
-                    tracing::info!(
-                        terminal_id = %self.terminal_id,
-                        session_id = %self.session_id,
-                        pid = self.pid,
-                        pgid = self.pgid,
-                        elapsed_ms = started.elapsed().as_millis(),
-                        signal_stage = stage,
-                        ?exit_status,
-                        "[ACP] terminal process group exited"
-                    );
-                    return first_error.map_or(Ok(()), Err);
-                }
-                Ok(false) => {}
-                Err(err) => {
-                    tracing::warn!(
-                        terminal_id = %self.terminal_id,
-                        session_id = %self.session_id,
-                        pid = self.pid,
-                        pgid = self.pgid,
-                        signal_stage = stage,
-                        error = ?err,
-                        "[ACP] terminal process-group exit observation failed"
-                    );
-                    if first_error.is_none() {
-                        first_error = Some(err);
-                    }
-                }
-            }
-        }
-
-        if self.process_group_exists()? {
-            return Err(first_error.unwrap_or_else(|| {
-                TerminalRuntimeError::Internal(format!(
-                    "terminal process group pgid={} survived SIGKILL deadline",
-                    self.pgid
-                ))
-            }));
-        }
-
-        first_error.map_or(Ok(()), Err)
+        let cleanup_result = self.process_group.cleanup(self).await;
+        let refresh_result = self.refresh_exit_status().await;
+        cleanup_result.and(refresh_result)
     }
 
     #[cfg(not(unix))]
@@ -360,6 +555,10 @@ impl TerminalInstance {
 
 pub struct TerminalRuntime {
     terminals: Mutex<TerminalMap>,
+    #[cfg(unix)]
+    process_group_backend: Arc<dyn UnixProcessGroupBackend>,
+    #[cfg(unix)]
+    next_process_group_generation: AtomicU64,
     /// Base environment merged into every spawned terminal command before
     /// the agent's per-request `env` is applied. This is where the codeg
     /// git credential helper (`GIT_CONFIG_*`) lives so an agent that runs
@@ -394,15 +593,38 @@ impl TerminalRuntime {
     pub fn with_base_env(base_env: BTreeMap<String, String>) -> Self {
         Self {
             terminals: Mutex::new(HashMap::new()),
+            #[cfg(unix)]
+            process_group_backend: Arc::new(LibcProcessGroupBackend),
+            #[cfg(unix)]
+            next_process_group_generation: AtomicU64::new(1),
             base_env,
             default_cwd: None,
         }
+    }
+
+    #[cfg(unix)]
+    fn allocate_process_group_generation(&self) -> Result<u64, TerminalRuntimeError> {
+        self.next_process_group_generation
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |generation| {
+                generation.checked_add(1)
+            })
+            .map_err(|_| {
+                TerminalRuntimeError::Internal(
+                    "terminal process-group generation space exhausted".to_string(),
+                )
+            })
     }
 
     /// Set the fallback working directory used when a `terminal/create` request
     /// does not specify its own `cwd`. Chainable after `with_base_env`.
     pub fn with_default_cwd(mut self, default_cwd: Option<PathBuf>) -> Self {
         self.default_cwd = default_cwd;
+        self
+    }
+
+    #[cfg(all(test, unix))]
+    fn with_process_group_backend(mut self, backend: Arc<dyn UnixProcessGroupBackend>) -> Self {
+        self.process_group_backend = backend;
         self
     }
 
@@ -480,6 +702,9 @@ impl TerminalRuntime {
             ));
         }
 
+        #[cfg(unix)]
+        let process_group_generation = self.allocate_process_group_generation()?;
+
         // Spawn the command. Try a direct exec first so a real program — one
         // resolved on PATH, an absolute path, or a relative/space-containing
         // path reachable through the request's cwd and env — runs exactly as
@@ -532,6 +757,10 @@ impl TerminalRuntime {
             Some(output_byte_limit),
             child,
             pid,
+            #[cfg(unix)]
+            process_group_generation,
+            #[cfg(unix)]
+            Arc::clone(&self.process_group_backend),
         )?);
 
         #[cfg(unix)]
@@ -540,6 +769,7 @@ impl TerminalRuntime {
             session_id = %request.session_id,
             pid,
             pgid = pid,
+            generation = process_group_generation,
             "[ACP] spawned isolated terminal process group"
         );
 
@@ -855,6 +1085,7 @@ fn decode_available_utf8(pending: &mut Vec<u8>) -> String {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
     use std::time::Instant;
 
     use kill_tree::Config;
@@ -862,6 +1093,383 @@ mod tests {
 
     fn init_test_tracing() {
         let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum BackendCall {
+        Probe(ProcessGroupKey),
+        Signal(ProcessGroupKey, libc::c_int),
+    }
+
+    #[derive(Default)]
+    struct MockProcessGroupBackend {
+        calls: std::sync::Mutex<Vec<BackendCall>>,
+        probes: std::sync::Mutex<VecDeque<ProcessGroupPresence>>,
+        signals: std::sync::Mutex<VecDeque<ProcessGroupSignalResult>>,
+    }
+
+    impl MockProcessGroupBackend {
+        fn with_probes(probes: impl IntoIterator<Item = ProcessGroupPresence>) -> Self {
+            Self {
+                probes: std::sync::Mutex::new(probes.into_iter().collect()),
+                ..Self::default()
+            }
+        }
+
+        fn with_signals(signals: impl IntoIterator<Item = ProcessGroupSignalResult>) -> Self {
+            Self {
+                signals: std::sync::Mutex::new(signals.into_iter().collect()),
+                ..Self::default()
+            }
+        }
+
+        fn calls(&self) -> Vec<BackendCall> {
+            self.calls.lock().expect("mock calls lock").clone()
+        }
+
+        fn delivered_signals(&self) -> Vec<libc::c_int> {
+            self.calls()
+                .into_iter()
+                .filter_map(|call| match call {
+                    BackendCall::Signal(_, signal) => Some(signal),
+                    BackendCall::Probe(_) => None,
+                })
+                .collect()
+        }
+
+        fn clear_calls(&self) {
+            self.calls.lock().expect("mock calls lock").clear();
+        }
+
+        fn push_probe(&self, presence: ProcessGroupPresence) {
+            self.probes
+                .lock()
+                .expect("mock probes lock")
+                .push_back(presence);
+        }
+    }
+
+    impl UnixProcessGroupBackend for MockProcessGroupBackend {
+        fn probe(
+            &self,
+            key: ProcessGroupKey,
+        ) -> Result<ProcessGroupPresence, TerminalRuntimeError> {
+            self.calls
+                .lock()
+                .expect("mock calls lock")
+                .push(BackendCall::Probe(key));
+            Ok(self
+                .probes
+                .lock()
+                .expect("mock probes lock")
+                .pop_front()
+                .unwrap_or(ProcessGroupPresence::Present))
+        }
+
+        fn signal(
+            &self,
+            key: ProcessGroupKey,
+            signal: libc::c_int,
+        ) -> Result<ProcessGroupSignalResult, TerminalRuntimeError> {
+            self.calls
+                .lock()
+                .expect("mock calls lock")
+                .push(BackendCall::Signal(key, signal));
+            Ok(self
+                .signals
+                .lock()
+                .expect("mock signals lock")
+                .pop_front()
+                .unwrap_or(ProcessGroupSignalResult::Delivered))
+        }
+    }
+
+    const TEST_PROCESS_GROUP_KEY: ProcessGroupKey = ProcessGroupKey {
+        pgid: 42_424,
+        generation: 7,
+    };
+
+    fn test_process_group_lease(
+        state: UnixProcessGroupState,
+        backend: Arc<MockProcessGroupBackend>,
+    ) -> UnixProcessGroupLease {
+        UnixProcessGroupLease {
+            terminal_id: "test-terminal".to_string(),
+            session_id: "test-session".to_string(),
+            pid: TEST_PROCESS_GROUP_KEY.pgid as u32,
+            backend,
+            state: Mutex::new(state),
+            cleanup_gate: Mutex::new(()),
+        }
+    }
+
+    fn zero_grace_stages() -> [(libc::c_int, &'static str, Duration); 3] {
+        [
+            (libc::SIGINT, "sigint", Duration::ZERO),
+            (libc::SIGTERM, "sigterm", Duration::ZERO),
+            (libc::SIGKILL, "sigkill", Duration::ZERO),
+        ]
+    }
+
+    #[tokio::test]
+    async fn leader_exit_with_descendants_starts_bounded_lease() {
+        let backend = Arc::new(MockProcessGroupBackend::default());
+        let lease = test_process_group_lease(
+            UnixProcessGroupState::OwnedLeaderAlive {
+                key: TEST_PROCESS_GROUP_KEY,
+            },
+            backend,
+        );
+        let observed_at = tokio::time::Instant::now();
+
+        lease
+            .observe_leader_exit(observed_at)
+            .await
+            .expect("observe leader exit");
+
+        assert_eq!(
+            *lease.state.lock().await,
+            UnixProcessGroupState::OwnedDescendants {
+                key: TEST_PROCESS_GROUP_KEY,
+                deadline: observed_at + DESCENDANT_LEASE_DURATION,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn leader_exit_without_descendants_retires_before_delayed_release() {
+        let backend = Arc::new(MockProcessGroupBackend::with_probes([
+            ProcessGroupPresence::Missing,
+        ]));
+        let lease = test_process_group_lease(
+            UnixProcessGroupState::OwnedLeaderAlive {
+                key: TEST_PROCESS_GROUP_KEY,
+            },
+            backend.clone(),
+        );
+        lease
+            .observe_leader_exit(tokio::time::Instant::now())
+            .await
+            .expect("observe leader exit");
+        backend.clear_calls();
+
+        lease
+            .cleanup_with_stages(&zero_grace_stages(), None)
+            .await
+            .expect("delayed cleanup");
+
+        assert!(backend.calls().is_empty());
+        assert!(backend.delivered_signals().is_empty());
+        assert_eq!(*lease.state.lock().await, UnixProcessGroupState::Retired);
+    }
+
+    #[tokio::test]
+    async fn naturally_exited_terminal_delayed_release_sends_no_group_signal() {
+        let backend = Arc::new(MockProcessGroupBackend::with_probes([
+            ProcessGroupPresence::Missing,
+        ]));
+        let runtime = TerminalRuntime::with_base_env(BTreeMap::new())
+            .with_process_group_backend(backend.clone());
+        let session_id = SessionId::new("natural-exit-delayed-release".to_string());
+        let request = CreateTerminalRequest::new(session_id.clone(), "/bin/true".to_string());
+        let response = runtime
+            .create_terminal(request)
+            .await
+            .expect("create short terminal");
+
+        runtime
+            .wait_for_terminal_exit(WaitForTerminalExitRequest::new(
+                session_id.clone(),
+                response.terminal_id,
+            ))
+            .await
+            .expect("observe natural exit");
+        backend.clear_calls();
+        tokio::time::sleep(Duration::from_millis(25)).await;
+
+        let report = runtime.release_all_for_session(session_id.0.as_ref()).await;
+
+        assert!(report.is_clean());
+        assert!(backend.calls().is_empty());
+        assert!(backend.delivered_signals().is_empty());
+    }
+
+    #[tokio::test]
+    async fn descendant_lease_release_before_deadline_can_signal_original_group() {
+        let backend = Arc::new(MockProcessGroupBackend::with_probes([
+            ProcessGroupPresence::Present,
+            ProcessGroupPresence::Present,
+            ProcessGroupPresence::Missing,
+        ]));
+        let lease = test_process_group_lease(
+            UnixProcessGroupState::OwnedDescendants {
+                key: TEST_PROCESS_GROUP_KEY,
+                deadline: tokio::time::Instant::now() + DESCENDANT_LEASE_DURATION,
+            },
+            backend.clone(),
+        );
+
+        lease
+            .cleanup_with_stages(&zero_grace_stages(), None)
+            .await
+            .expect("cleanup descendants");
+
+        assert_eq!(
+            backend.delivered_signals(),
+            vec![libc::SIGINT, libc::SIGTERM, libc::SIGKILL]
+        );
+        assert!(backend.calls().iter().all(|call| match call {
+            BackendCall::Probe(key) | BackendCall::Signal(key, _) => {
+                *key == TEST_PROCESS_GROUP_KEY
+            }
+        }));
+    }
+
+    #[tokio::test]
+    async fn expired_descendant_lease_retires_without_backend_call() {
+        let backend = Arc::new(MockProcessGroupBackend::default());
+        let lease = test_process_group_lease(
+            UnixProcessGroupState::OwnedDescendants {
+                key: TEST_PROCESS_GROUP_KEY,
+                deadline: tokio::time::Instant::now(),
+            },
+            backend.clone(),
+        );
+
+        lease
+            .cleanup_with_stages(&zero_grace_stages(), None)
+            .await
+            .expect("expire descendants lease");
+
+        assert!(backend.calls().is_empty());
+        assert_eq!(*lease.state.lock().await, UnixProcessGroupState::Retired);
+    }
+
+    #[tokio::test]
+    async fn retired_lease_ignores_simulated_pgid_reuse() {
+        let backend = Arc::new(MockProcessGroupBackend::with_probes([
+            ProcessGroupPresence::Missing,
+        ]));
+        let lease = test_process_group_lease(
+            UnixProcessGroupState::OwnedLeaderAlive {
+                key: TEST_PROCESS_GROUP_KEY,
+            },
+            backend.clone(),
+        );
+        lease
+            .observe_leader_exit(tokio::time::Instant::now())
+            .await
+            .expect("retire original group");
+        backend.clear_calls();
+        backend.push_probe(ProcessGroupPresence::Present);
+
+        lease
+            .cleanup_with_stages(&zero_grace_stages(), None)
+            .await
+            .expect("cleanup reused numeric pgid");
+
+        assert!(backend.calls().is_empty());
+        assert!(backend.delivered_signals().is_empty());
+    }
+
+    #[tokio::test]
+    async fn esrch_retires_permanently_and_repeat_cleanup_is_noop() {
+        let backend = Arc::new(MockProcessGroupBackend::with_signals([
+            ProcessGroupSignalResult::Missing,
+        ]));
+        let lease = test_process_group_lease(
+            UnixProcessGroupState::OwnedLeaderAlive {
+                key: TEST_PROCESS_GROUP_KEY,
+            },
+            backend.clone(),
+        );
+        lease
+            .cleanup_with_stages(&zero_grace_stages(), None)
+            .await
+            .expect("first cleanup");
+        let calls_after_first = backend.calls();
+
+        lease
+            .cleanup_with_stages(&zero_grace_stages(), None)
+            .await
+            .expect("repeat cleanup");
+
+        assert_eq!(backend.calls(), calls_after_first);
+        assert_eq!(*lease.state.lock().await, UnixProcessGroupState::Retired);
+    }
+
+    #[tokio::test]
+    async fn concurrent_cleanup_runs_one_signal_sequence() {
+        let backend = Arc::new(MockProcessGroupBackend::with_probes([
+            ProcessGroupPresence::Present,
+            ProcessGroupPresence::Present,
+            ProcessGroupPresence::Missing,
+        ]));
+        let lease = Arc::new(test_process_group_lease(
+            UnixProcessGroupState::OwnedLeaderAlive {
+                key: TEST_PROCESS_GROUP_KEY,
+            },
+            backend.clone(),
+        ));
+        let stages = zero_grace_stages();
+
+        let (left, right) = tokio::join!(
+            lease.cleanup_with_stages(&stages, None),
+            lease.cleanup_with_stages(&stages, None),
+        );
+
+        left.expect("left cleanup");
+        right.expect("right cleanup");
+        assert_eq!(
+            backend.delivered_signals(),
+            vec![libc::SIGINT, libc::SIGTERM, libc::SIGKILL]
+        );
+    }
+
+    #[tokio::test]
+    async fn live_leader_keeps_staged_signal_sequence() {
+        let backend = Arc::new(MockProcessGroupBackend::with_probes([
+            ProcessGroupPresence::Present,
+            ProcessGroupPresence::Present,
+            ProcessGroupPresence::Missing,
+        ]));
+        let lease = test_process_group_lease(
+            UnixProcessGroupState::OwnedLeaderAlive {
+                key: TEST_PROCESS_GROUP_KEY,
+            },
+            backend.clone(),
+        );
+
+        lease
+            .cleanup_with_stages(&zero_grace_stages(), None)
+            .await
+            .expect("cleanup live leader");
+
+        assert_eq!(
+            backend.delivered_signals(),
+            vec![libc::SIGINT, libc::SIGTERM, libc::SIGKILL]
+        );
+    }
+
+    #[tokio::test]
+    async fn leader_exit_with_live_descendants_is_not_retired_immediately() {
+        let backend = Arc::new(MockProcessGroupBackend::default());
+        let lease = test_process_group_lease(
+            UnixProcessGroupState::OwnedLeaderAlive {
+                key: TEST_PROCESS_GROUP_KEY,
+            },
+            backend,
+        );
+
+        lease
+            .observe_leader_exit(tokio::time::Instant::now())
+            .await
+            .expect("observe descendants");
+
+        assert!(matches!(
+            *lease.state.lock().await,
+            UnixProcessGroupState::OwnedDescendants { .. }
+        ));
     }
 
     async fn terminal_pid(
@@ -1202,11 +1810,16 @@ mod tests {
     /// check, run in codeg's own cwd, would shell-wrap and split the path.
     #[tokio::test]
     async fn relative_executable_with_spaces_runs_in_effective_cwd() {
+        use std::io::Write;
         use std::os::unix::fs::PermissionsExt;
 
         let dir = tempfile::tempdir().expect("temp dir");
         let exe = dir.path().join("my tool"); // space in the file name
-        std::fs::write(&exe, "#!/bin/sh\necho ran-relative\n").expect("write script");
+        let mut file = std::fs::File::create(&exe).expect("create script");
+        file.write_all(b"#!/bin/sh\necho ran-relative\n")
+            .expect("write script");
+        file.sync_all().expect("sync script before exec");
+        drop(file);
         let mut perms = std::fs::metadata(&exe).expect("metadata").permissions();
         perms.set_mode(0o755);
         std::fs::set_permissions(&exe, perms).expect("chmod");
@@ -1242,6 +1855,67 @@ mod tests {
         assert_ne!(
             child_pgid, runner_pgid,
             "child must not share the test runner process group"
+        );
+    }
+
+    #[tokio::test]
+    async fn exited_leader_keeps_short_lease_for_live_same_group_descendant() {
+        init_test_tracing();
+        let runtime = TerminalRuntime::with_base_env(BTreeMap::new());
+        let session_id = SessionId::new("exited-leader-live-descendant".to_string());
+        let (terminal_id, leader_pid) = spawn_shell(
+            &runtime,
+            &session_id,
+            "sleep 60 & child=$!; printf 'descendant=%s\\n' \"$child\"; exit 0",
+        )
+        .await;
+        let terminal = runtime
+            .find_terminal(&terminal_id, session_id.0.as_ref())
+            .await
+            .expect("terminal exists");
+        assert!(
+            wait_for_output(&terminal, "descendant=").await,
+            "shell did not report its test-owned descendant"
+        );
+        let output = terminal.snapshot().await.output;
+        let descendant_pid = output
+            .lines()
+            .find_map(|line| line.strip_prefix("descendant="))
+            .and_then(|pid| pid.parse::<u32>().ok())
+            .expect("parse descendant pid");
+
+        terminal
+            .wait_for_exit()
+            .await
+            .expect("observe direct child exit");
+        let descendant_pgid = unsafe { libc::getpgid(descendant_pid as libc::pid_t) };
+        let state_after_leader_exit = *terminal.process_group.state.lock().await;
+
+        assert_eq!(
+            descendant_pgid, leader_pid as libc::pid_t,
+            "descendant must remain in the terminal's original process group"
+        );
+        assert!(
+            pid_exists(descendant_pid),
+            "descendant must still be alive when the leader exit is observed"
+        );
+        assert!(matches!(
+            state_after_leader_exit,
+            UnixProcessGroupState::OwnedDescendants {
+                key: ProcessGroupKey { pgid, .. },
+                deadline,
+            } if pgid == leader_pid as libc::pid_t && deadline > tokio::time::Instant::now()
+        ));
+
+        let report = runtime.release_all_for_session(session_id.0.as_ref()).await;
+        if pid_exists(descendant_pid) {
+            let _ = unsafe { libc::kill(descendant_pid as libc::pid_t, libc::SIGKILL) };
+        }
+
+        assert!(report.is_clean(), "descendant cleanup should succeed");
+        assert!(
+            !pid_exists(descendant_pid),
+            "same-group descendant survived release inside its lease"
         );
     }
 
