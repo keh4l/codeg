@@ -68,11 +68,14 @@ internal generation. The lease has three states:
   signalled again by this terminal.
 
 Every state transition, process-group probe, process-group signal, and
-retirement is serialized by the same per-terminal lease-state lock. Cleanup
-holds that lock for its bounded signal sequence, so concurrent kill/release
-calls cannot start duplicate escalation sequences. The generation is carried
-through logs and the injectable backend boundary so a test can distinguish the
-original group from a later group that happens to reuse the same numeric PGID.
+retirement is serialized by the same per-terminal lease-state lock. A separate
+per-terminal cleanup gate spans the bounded escalation sequence, so concurrent
+kill/release calls cannot start duplicate sequences without holding the state
+lock across sleeps. For `OwnedDescendants`, each signal stage probes and then
+signals while holding the state lock; a missing probe retires before any signal.
+The generation is carried through logs and the injectable backend boundary so a
+test can distinguish the original group from a later group that happens to
+reuse the same numeric PGID.
 
 Codeg will signal only the negative PGID covered by a currently valid lease.
 Codeg's own process group and every other ACP terminal remain outside the
@@ -119,10 +122,13 @@ Unix cancellation targets the isolated process group in three bounded stages:
    direct child to be reaped.
 
 `ESRCH` from either a probe or signal permanently changes the lease to
-`Retired`. Lease expiry also unconditionally changes `OwnedDescendants` to
-`Retired`, without one final probe. Once retired, delayed or repeated release
-does not call the backend at all. Other signal or wait failures are recorded
-and returned as cleanup errors. No individual stage waits forever.
+`Retired`. Before every signal to `OwnedDescendants`, Codeg performs the probe
+under the same state lock; an `ESRCH` probe therefore retires before that stage
+can signal a stale numeric PGID. Lease expiry also unconditionally changes
+`OwnedDescendants` to `Retired`, without one final probe. Once retired, delayed
+or repeated release does not call the backend at all. Other signal or wait
+failures are recorded and returned as cleanup errors. No individual stage waits
+forever.
 
 After the direct child is reaped, Codeg verifies that the PGID no longer has
 members. If members briefly remain after the direct child exits, the final
@@ -147,11 +153,13 @@ The lease removes the current unbounded stale-PGID window, but it does not
 claim an impossible POSIX guarantee. POSIX exposes process groups by numeric
 PGID and provides no generation-bound atomic "probe and signal" operation. The
 last original member can exit and the PGID can theoretically be reused between
-those two syscalls. This implementation limits that residual risk to a valid,
-non-renewable five-second descendant lease and the final syscall-level race.
-Eliminating it entirely would require a Linux-only cgroup/pidfd member design
-or a supervisor process that keeps a generation anchor alive, neither of which
-is in this portable Unix change.
+the same-lock probe and its following signal syscall. This implementation
+limits that residual risk to a valid, non-renewable five-second descendant
+lease and this final syscall-level race; it does not leave a multi-second gap
+between a historical confirmation and a later naked signal. Eliminating the
+race entirely would require a Linux-only cgroup/pidfd member design or a
+supervisor process that keeps a generation anchor alive, neither of which is in
+this portable Unix change.
 
 ### Session cleanup
 
@@ -229,13 +237,15 @@ They must never signal the Cargo test runner's process group.
    its lease, and delayed release performs zero signal operations.
 7. A direct child that exits while same-group descendants remain enters
    `OwnedDescendants` with the expected generation and five-second deadline.
-8. Release inside the descendant lease can run the expected escalation against
-   the original group.
+8. Release inside the descendant lease probes then runs the expected escalation
+   against the original group.
 9. Release after the absolute lease deadline performs no probe and no signal.
 10. `ESRCH` permanently retires the lease; repeated cleanup is a backend no-op.
 11. Simulated PGID reuse after retirement receives zero signals.
 12. Concurrent release calls execute one escalation sequence.
 13. A live leader retains the SIGINT -> SIGTERM -> SIGKILL path.
+14. A descendant lease whose first cleanup probe reports `ESRCH` retires before
+    signaling; a simulated later reuse and repeat release receive zero signals.
 
 Lease and reuse tests use an injected in-memory process-group backend. The real
 Unix integration tests for process-group isolation, stubborn descendants, and

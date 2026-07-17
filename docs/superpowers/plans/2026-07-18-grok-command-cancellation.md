@@ -17,8 +17,9 @@
 - Use an exact connection-level cleanup deadline of 5 seconds.
 - Use an exact, non-renewable descendant lease of 5 seconds from observed direct-child exit; expiry retires without a final probe or signal.
 - Every Unix process-group lease has a monotonically unique internal generation.
-- Serialize lease state, probes, signals, and retirement with the same per-terminal state lock; concurrent cleanup may execute only one escalation sequence.
+- Serialize lease state, probes, signals, and retirement with the same per-terminal state lock; the cleanup gate permits only one escalation sequence without holding the state lock across waits. Every `OwnedDescendants` signal stage must probe then signal under that state lock; a probe `ESRCH` retires before the signal.
 - Treat `ESRCH` as an already-exited process group; return other signal/query failures as structured cleanup failures.
+- POSIX cannot atomically bind a probe and signal to one process-group generation. The fix removes the unbounded stale-PGID interval; the remaining risk is limited to the valid five-second descendant lease and the immediate probe-to-signal syscall race.
 - Never signal Codeg's process group, the Cargo test runner's process group, another ACP session, or a system process.
 - Logs may include connection/session/terminal IDs, PID, PGID, signal stage, elapsed time, exit code/signal, and outcome; they must not include command text, environment values, tokens, or terminal output.
 - Keep the Cancel API response schema unchanged.
