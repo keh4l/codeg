@@ -264,6 +264,33 @@ impl UnixProcessGroupLease {
             return Ok(None);
         };
 
+        // A live leader anchors its PID/PGID, but descendants only have a
+        // bounded numeric-PGID lease. Revalidate that lease immediately before
+        // every signal so an already-disappeared group is retired instead of
+        // receiving a signal after a delayed release. POSIX still permits the
+        // final probe-to-signal syscall race; both calls stay under the same
+        // terminal state lock to avoid a wider in-process race.
+        if deadline.is_some() {
+            match self.backend.probe(key) {
+                Ok(ProcessGroupPresence::Present) => {}
+                Ok(ProcessGroupPresence::Missing) => {
+                    *state = UnixProcessGroupState::Retired;
+                    return Ok(None);
+                }
+                Err(err) => {
+                    *state = UnixProcessGroupState::Retired;
+                    return Err(err);
+                }
+            }
+
+            // A synchronous backend can itself consume the final lease time.
+            // Expiry is absolute and non-renewable, so do not let a successful
+            // probe grant time for a later signal.
+            if Self::active_key(&mut state, tokio::time::Instant::now()).is_none() {
+                return Ok(None);
+            }
+        }
+
         match self.backend.signal(key, signal) {
             Ok(ProcessGroupSignalResult::Delivered) => {
                 tracing::info!(
@@ -1106,6 +1133,7 @@ mod tests {
         calls: std::sync::Mutex<Vec<BackendCall>>,
         probes: std::sync::Mutex<VecDeque<ProcessGroupPresence>>,
         signals: std::sync::Mutex<VecDeque<ProcessGroupSignalResult>>,
+        probe_delay: Option<Duration>,
     }
 
     impl MockProcessGroupBackend {
@@ -1119,6 +1147,17 @@ mod tests {
         fn with_signals(signals: impl IntoIterator<Item = ProcessGroupSignalResult>) -> Self {
             Self {
                 signals: std::sync::Mutex::new(signals.into_iter().collect()),
+                ..Self::default()
+            }
+        }
+
+        fn with_probe_delay(
+            probes: impl IntoIterator<Item = ProcessGroupPresence>,
+            probe_delay: Duration,
+        ) -> Self {
+            Self {
+                probes: std::sync::Mutex::new(probes.into_iter().collect()),
+                probe_delay: Some(probe_delay),
                 ..Self::default()
             }
         }
@@ -1158,12 +1197,16 @@ mod tests {
                 .lock()
                 .expect("mock calls lock")
                 .push(BackendCall::Probe(key));
-            Ok(self
+            let result = self
                 .probes
                 .lock()
                 .expect("mock probes lock")
                 .pop_front()
-                .unwrap_or(ProcessGroupPresence::Present))
+                .unwrap_or(ProcessGroupPresence::Present);
+            if let Some(delay) = self.probe_delay {
+                std::thread::sleep(delay);
+            }
+            Ok(result)
         }
 
         fn signal(
@@ -1299,6 +1342,9 @@ mod tests {
         let backend = Arc::new(MockProcessGroupBackend::with_probes([
             ProcessGroupPresence::Present,
             ProcessGroupPresence::Present,
+            ProcessGroupPresence::Present,
+            ProcessGroupPresence::Present,
+            ProcessGroupPresence::Present,
             ProcessGroupPresence::Missing,
         ]));
         let lease = test_process_group_lease(
@@ -1323,6 +1369,141 @@ mod tests {
                 *key == TEST_PROCESS_GROUP_KEY
             }
         }));
+    }
+
+    #[tokio::test]
+    async fn missing_descendant_group_retires_before_signal_and_ignores_later_reuse() {
+        let backend = Arc::new(MockProcessGroupBackend::with_probes([
+            ProcessGroupPresence::Missing,
+        ]));
+        let lease = test_process_group_lease(
+            UnixProcessGroupState::OwnedDescendants {
+                key: TEST_PROCESS_GROUP_KEY,
+                deadline: tokio::time::Instant::now() + DESCENDANT_LEASE_DURATION,
+            },
+            backend.clone(),
+        );
+
+        lease
+            .cleanup_with_stages(&zero_grace_stages(), None)
+            .await
+            .expect("missing descendant group cleanup");
+
+        assert_eq!(
+            backend.calls(),
+            vec![BackendCall::Probe(TEST_PROCESS_GROUP_KEY)]
+        );
+        assert!(backend.delivered_signals().is_empty());
+        assert_eq!(*lease.state.lock().await, UnixProcessGroupState::Retired);
+
+        // The original group is gone. A later owner reusing its numeric PGID
+        // must not be queried or signalled by this terminal.
+        backend.push_probe(ProcessGroupPresence::Present);
+        let calls_after_retirement = backend.calls();
+        lease
+            .cleanup_with_stages(&zero_grace_stages(), None)
+            .await
+            .expect("repeated cleanup after simulated reuse");
+
+        assert_eq!(backend.calls(), calls_after_retirement);
+        assert!(backend.delivered_signals().is_empty());
+    }
+
+    #[tokio::test]
+    async fn descendant_lease_expiry_during_probe_retires_before_signal() {
+        let backend = Arc::new(MockProcessGroupBackend::with_probe_delay(
+            [ProcessGroupPresence::Present],
+            Duration::from_millis(10),
+        ));
+        let lease = test_process_group_lease(
+            UnixProcessGroupState::OwnedDescendants {
+                key: TEST_PROCESS_GROUP_KEY,
+                deadline: tokio::time::Instant::now() + Duration::from_millis(1),
+            },
+            backend.clone(),
+        );
+
+        lease
+            .cleanup_with_stages(&zero_grace_stages(), None)
+            .await
+            .expect("expired descendant group cleanup");
+
+        assert_eq!(
+            backend.calls(),
+            vec![BackendCall::Probe(TEST_PROCESS_GROUP_KEY)]
+        );
+        assert!(backend.delivered_signals().is_empty());
+        assert_eq!(*lease.state.lock().await, UnixProcessGroupState::Retired);
+    }
+
+    #[tokio::test]
+    async fn descendant_probe_esrch_between_stages_retires_before_next_signal() {
+        let backend = Arc::new(MockProcessGroupBackend::with_probes([
+            ProcessGroupPresence::Present,
+            ProcessGroupPresence::Present,
+            ProcessGroupPresence::Missing,
+        ]));
+        let lease = test_process_group_lease(
+            UnixProcessGroupState::OwnedDescendants {
+                key: TEST_PROCESS_GROUP_KEY,
+                deadline: tokio::time::Instant::now() + DESCENDANT_LEASE_DURATION,
+            },
+            backend.clone(),
+        );
+
+        lease
+            .cleanup_with_stages(&zero_grace_stages(), None)
+            .await
+            .expect("stage cleanup");
+
+        assert_eq!(backend.delivered_signals(), vec![libc::SIGINT]);
+        assert_eq!(
+            backend.calls(),
+            vec![
+                BackendCall::Probe(TEST_PROCESS_GROUP_KEY),
+                BackendCall::Signal(TEST_PROCESS_GROUP_KEY, libc::SIGINT),
+                BackendCall::Probe(TEST_PROCESS_GROUP_KEY),
+                BackendCall::Probe(TEST_PROCESS_GROUP_KEY),
+            ]
+        );
+        assert_eq!(*lease.state.lock().await, UnixProcessGroupState::Retired);
+    }
+
+    #[tokio::test]
+    async fn descendant_signal_esrch_retires_and_repeat_cleanup_is_noop() {
+        let backend = Arc::new(MockProcessGroupBackend {
+            probes: std::sync::Mutex::new([ProcessGroupPresence::Present].into_iter().collect()),
+            signals: std::sync::Mutex::new(
+                [ProcessGroupSignalResult::Missing].into_iter().collect(),
+            ),
+            ..MockProcessGroupBackend::default()
+        });
+        let lease = test_process_group_lease(
+            UnixProcessGroupState::OwnedDescendants {
+                key: TEST_PROCESS_GROUP_KEY,
+                deadline: tokio::time::Instant::now() + DESCENDANT_LEASE_DURATION,
+            },
+            backend.clone(),
+        );
+
+        lease
+            .cleanup_with_stages(&zero_grace_stages(), None)
+            .await
+            .expect("signal ESRCH cleanup");
+        let calls_after_first_cleanup = backend.calls();
+
+        lease
+            .cleanup_with_stages(&zero_grace_stages(), None)
+            .await
+            .expect("repeated cleanup after signal ESRCH");
+
+        assert_eq!(backend.calls(), calls_after_first_cleanup);
+        assert_eq!(
+            backend.delivered_signals(),
+            vec![libc::SIGINT],
+            "the backend observed the attempted signal, but ESRCH delivered it to no group"
+        );
+        assert_eq!(*lease.state.lock().await, UnixProcessGroupState::Retired);
     }
 
     #[tokio::test]

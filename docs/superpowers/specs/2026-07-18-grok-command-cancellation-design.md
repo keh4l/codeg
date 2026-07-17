@@ -130,6 +130,11 @@ or repeated release does not call the backend at all. Other signal or wait
 failures are recorded and returned as cleanup errors. No individual stage waits
 forever.
 
+The lease deadline is rechecked after a successful descendant probe and before
+its signal. A slow backend or scheduler pause cannot use a pre-expiry probe to
+extend the lease past its absolute deadline; the only remaining timing gap is
+the unavoidable final check-to-signal POSIX syscall race.
+
 After the direct child is reaped, Codeg verifies that the PGID no longer has
 members. If members briefly remain after the direct child exits, the final
 `SIGKILL` stage still targets the group rather than only the former parent PID.
