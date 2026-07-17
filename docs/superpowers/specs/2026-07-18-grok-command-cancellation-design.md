@@ -56,10 +56,28 @@ The change does not:
 becomes the PGID before user code can create descendants. Direct-exec and
 shell-fallback commands both pass through the same configuration path.
 
-`TerminalInstance` will retain the Unix PGID alongside the child handle. Codeg
-will signal only the negative PGID belonging to that terminal. Codeg's own
-process group and every other ACP terminal remain outside the target group, so
-Stop cannot kill unrelated sessions or the server.
+`TerminalInstance` will not treat a numeric Unix PGID as permanent ownership.
+Instead it owns a stateful process-group lease backed by a monotonically unique
+internal generation. The lease has three states:
+
+- `OwnedLeaderAlive { pgid, generation }`: the direct child is still alive, so
+  its PID anchors the process-group identity and the PGID cannot be reused;
+- `OwnedDescendants { pgid, generation, deadline }`: the direct child has
+  exited, but the backend confirmed that the original group still has members;
+- `Retired`: the numeric PGID is no longer trusted and can never be queried or
+  signalled again by this terminal.
+
+Every state transition, process-group probe, process-group signal, and
+retirement is serialized by the same per-terminal lease-state lock. Cleanup
+holds that lock for its bounded signal sequence, so concurrent kill/release
+calls cannot start duplicate escalation sequences. The generation is carried
+through logs and the injectable backend boundary so a test can distinguish the
+original group from a later group that happens to reuse the same numeric PGID.
+
+Codeg will signal only the negative PGID covered by a currently valid lease.
+Codeg's own process group and every other ACP terminal remain outside the
+target group, so Stop cannot intentionally target unrelated sessions or the
+server.
 
 If process-group setup fails, `terminal/create` fails instead of launching an
 uncontained command. This is safer than silently falling back to shared-group
@@ -76,6 +94,21 @@ when Grok already has a terminal wait request in flight.
 Natural exit still drains stdout and stderr readers for the existing 200 ms
 grace period before publishing the final exit status.
 
+On Unix, observing direct-child exit also updates the group lease immediately:
+
+1. if the backend reports `ESRCH`, the lease becomes permanently `Retired`;
+2. if the backend reports that group members remain, the lease becomes
+   `OwnedDescendants` with an absolute deadline exactly five seconds after the
+   observation time.
+
+The five-second descendant lease is not renewable. It matches the existing
+connection-level Cancel deadline and contains the complete four-second signal
+budget (500 ms SIGINT + 1,500 ms SIGTERM + 2,000 ms SIGKILL) with one second for
+scheduling and reader draining. A cleanup that starts late is clipped by the
+same absolute lease deadline; expiry never grants another five seconds. Thus a
+direct child that exits naturally cannot leave a trusted bare PGID behind
+indefinitely.
+
 ### Signal escalation
 
 Unix cancellation targets the isolated process group in three bounded stages:
@@ -85,12 +118,40 @@ Unix cancellation targets the isolated process group in three bounded stages:
 3. if the group remains, send `SIGKILL`, then allow up to 2,000 ms for the
    direct child to be reaped.
 
-`ESRCH` is treated as an already-exited group. Other signal or wait failures are
-recorded and returned as cleanup errors. No individual stage waits forever.
+`ESRCH` from either a probe or signal permanently changes the lease to
+`Retired`. Lease expiry also unconditionally changes `OwnedDescendants` to
+`Retired`, without one final probe. Once retired, delayed or repeated release
+does not call the backend at all. Other signal or wait failures are recorded
+and returned as cleanup errors. No individual stage waits forever.
 
 After the direct child is reaped, Codeg verifies that the PGID no longer has
 members. If members briefly remain after the direct child exits, the final
 `SIGKILL` stage still targets the group rather than only the former parent PID.
+It is therefore incorrect to retire unconditionally merely because the leader
+exited: confirmed same-group descendants remain eligible for cleanup, but only
+inside their non-renewable five-second lease.
+
+### Unix backend and TOCTOU boundary
+
+Unix process-group operations are routed through a small injectable backend:
+
+- `probe(pgid, generation)` returns `Present` or `Missing` (`ESRCH`);
+- `signal(pgid, generation, signal)` returns `Delivered` or `Missing`
+  (`ESRCH`).
+
+The production backend uses `kill(-pgid, 0)` and
+`kill(-pgid, signal)`. Tests use an in-memory backend and never signal an
+unrelated operating-system process.
+
+The lease removes the current unbounded stale-PGID window, but it does not
+claim an impossible POSIX guarantee. POSIX exposes process groups by numeric
+PGID and provides no generation-bound atomic "probe and signal" operation. The
+last original member can exit and the PGID can theoretically be reused between
+those two syscalls. This implementation limits that residual risk to a valid,
+non-renewable five-second descendant lease and the final syscall-level race.
+Eliminating it entirely would require a Linux-only cgroup/pidfd member design
+or a supervisor process that keeps a generation anchor alive, neither of which
+is in this portable Unix change.
 
 ### Session cleanup
 
@@ -104,7 +165,9 @@ detached if this outer deadline expires, so dropping the wait does not abandon
 the child handles.
 
 Expected Unix cleanup completes inside four seconds. The extra second is an
-outer safety margin for scheduling and reader draining.
+outer safety margin for scheduling and reader draining. Descendant-lease expiry
+is checked before every probe and signal and while waiting between stages, so
+it cannot reintroduce an unbounded cleanup wait.
 
 ## Cancel and state data flow
 
@@ -162,6 +225,21 @@ They must never signal the Cargo test runner's process group.
 5. A cleanup future that exceeds the connection deadline still results in
    `TurnComplete`, `turn_in_flight == false`, no active tool calls, and a state
    that accepts the next prompt.
+6. A direct child that exits naturally with no remaining group members retires
+   its lease, and delayed release performs zero signal operations.
+7. A direct child that exits while same-group descendants remain enters
+   `OwnedDescendants` with the expected generation and five-second deadline.
+8. Release inside the descendant lease can run the expected escalation against
+   the original group.
+9. Release after the absolute lease deadline performs no probe and no signal.
+10. `ESRCH` permanently retires the lease; repeated cleanup is a backend no-op.
+11. Simulated PGID reuse after retirement receives zero signals.
+12. Concurrent release calls execute one escalation sequence.
+13. A live leader retains the SIGINT -> SIGTERM -> SIGKILL path.
+
+Lease and reuse tests use an injected in-memory process-group backend. The real
+Unix integration tests for process-group isolation, stubborn descendants, and
+other-session isolation remain in place.
 
 Tests include explicit emergency cleanup by exact descendant PID snapshot if a
 RED test times out, ensuring a deliberately failing pre-fix test cannot leave
@@ -186,6 +264,10 @@ processes behind.
   beyond the configured deadline.
 - The command and all members of its process group are gone after cancellation.
 - No process outside the terminal's PGID receives a cancellation signal.
+- A bare PGID is never trusted after lease retirement or descendant-lease
+  expiry; delayed release then performs no process-group syscall.
+- `OwnedDescendants` is non-renewable and lasts at most five seconds from the
+  observed direct-child exit.
 - A terminal wait request cannot lock out Stop.
 - The ACP session leaves Prompting, clears `turn_in_flight`, and can accept a
   subsequent prompt after cancellation.
@@ -205,7 +287,8 @@ processes behind.
   the confirmed cleanup blockage but does not introduce a separate
   high-priority cancellation channel for unrelated long-running connection
   operations.
-- PID/PGID reuse is theoretically possible after a group fully exits. Signals
-  are sent only while the tracked direct child is observed as live, and
-  `ESRCH` ends escalation, minimizing that window without adding Linux-only
-  pidfd behavior that would not cover macOS.
+- POSIX has no generation-bound atomic process-group signal. During a valid
+  descendant lease, the last original member can theoretically exit and the
+  numeric PGID can be reused between a probe and its following signal. The
+  remaining exposure is bounded to five seconds plus that syscall-level race;
+  retired or expired leases never query or signal the PGID again.
