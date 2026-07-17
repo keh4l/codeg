@@ -4,7 +4,7 @@
 
 **Goal:** Ensure a Unix ACP terminal command that ignores graceful signals cannot keep Codeg's Cancel path blocked or leave the session permanently prompting.
 
-**Architecture:** Every Unix ACP terminal command is spawned in a process group whose PGID equals its direct child PID. Terminal cancellation signals that isolated group with bounded `SIGINT`/`SIGTERM`/`SIGKILL` escalation while child observation uses short `try_wait` critical sections; session cleanup runs terminal cancellations concurrently, and the connection layer applies a five-second outer deadline before unconditionally emitting `TurnComplete`.
+**Architecture:** Every Unix ACP terminal command is spawned in a process group whose PGID equals its direct child PID. A generation-tagged process-group lease owns that numeric PGID only while the leader is alive or during a non-renewable five-second descendant deadline; an injectable backend serializes probes, signals, and permanent retirement under the lease lock. Terminal cancellation signals a valid lease with bounded `SIGINT`/`SIGTERM`/`SIGKILL` escalation while child observation uses short `try_wait` critical sections; session cleanup runs terminal cancellations concurrently, and the connection layer applies a five-second outer deadline before unconditionally emitting `TurnComplete`.
 
 **Tech Stack:** Rust 2021, Tokio process/runtime APIs, libc Unix signals, futures `join_all`, SACP terminal protocol, existing `SessionState`/`EventEmitter`, Cargo unit tests and Clippy.
 
@@ -15,6 +15,9 @@
 - Do not add a normal-command maximum runtime; only cancellation is bounded.
 - Use exact signal grace periods: `SIGINT` 500 ms, `SIGTERM` 1,500 ms, `SIGKILL` 2,000 ms.
 - Use an exact connection-level cleanup deadline of 5 seconds.
+- Use an exact, non-renewable descendant lease of 5 seconds from observed direct-child exit; expiry retires without a final probe or signal.
+- Every Unix process-group lease has a monotonically unique internal generation.
+- Serialize lease state, probes, signals, and retirement with the same per-terminal state lock; concurrent cleanup may execute only one escalation sequence.
 - Treat `ESRCH` as an already-exited process group; return other signal/query failures as structured cleanup failures.
 - Never signal Codeg's process group, the Cargo test runner's process group, another ACP session, or a system process.
 - Logs may include connection/session/terminal IDs, PID, PGID, signal stage, elapsed time, exit code/signal, and outcome; they must not include command text, environment values, tokens, or terminal output.
@@ -25,7 +28,7 @@
 
 ## File map
 
-- Modify `src-tauri/src/acp/terminal_runtime.rs`: Unix process-group containment, non-blocking child observation, staged group termination, structured/concurrent session cleanup, and OS-process regression tests.
+- Modify `src-tauri/src/acp/terminal_runtime.rs`: Unix process-group containment, generation/deadline lease state, injectable group backend, non-blocking child observation, staged group termination, structured/concurrent session cleanup, mock lease tests, and OS-process regression tests.
 - Modify `src-tauri/src/acp/connection.rs`: five-second outer cleanup deadline, detached cleanup ownership after timeout, recoverable diagnostic event, unconditional cancelled `TurnComplete`, and state-convergence regression test.
 - Do not modify `src-tauri/src/acp/session_state.rs`: its existing `TurnComplete` reducer already clears `turn_in_flight`, active tool calls, pending prompt/permission/question state, and sets `Connected`; the connection test exercises this existing behavior through `emit_with_state`.
 - Do not modify `src-tauri/src/acp/manager.rs`: its existing prompt admission gate reads `turn_in_flight`; clearing that flag through `TurnComplete` restores prompt admission.
@@ -1100,6 +1103,497 @@ Expected changed paths:
 - `src-tauri/src/acp/connection.rs`
 
 No push, merge, deployment, or production restart follows this task.
+
+---
+
+### Task 6: Replace the permanent PGID with a bounded process-group lease
+
+**Files:**
+- Modify: `src-tauri/src/acp/terminal_runtime.rs:1-710`
+- Test: `src-tauri/src/acp/terminal_runtime.rs` inline `#[cfg(all(test, unix))]` module
+- Verify unchanged: `src-tauri/src/acp/connection.rs:2203-2285,6070-6130`
+
+**Interfaces:**
+- Consumes: the existing `SIGINT_GRACE`, `SIGTERM_GRACE`, `SIGKILL_GRACE`, `CHILD_EXIT_POLL_INTERVAL`, `TerminalInstance::refresh_exit_status`, and five-second connection cleanup deadline.
+- Produces: `ProcessGroupKey`, `ProcessGroupPresence`, `ProcessGroupSignalResult`, `UnixProcessGroupBackend`, `LibcProcessGroupBackend`, `UnixProcessGroupLease`, and `UnixProcessGroupState`.
+- Invariant: once a lease becomes `Retired`, no method on that terminal may call the backend again.
+
+- [ ] **Step 1: Add the injectable-backend RED tests before production types**
+
+Add an in-memory backend inside the Unix test module. It records keys and
+signals, serves scripted probe/signal results, and can switch a numeric PGID to
+a simulated later generation without sending a real signal:
+
+```rust
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BackendCall {
+    Probe(ProcessGroupKey),
+    Signal(ProcessGroupKey, libc::c_int),
+}
+
+#[derive(Default)]
+struct MockProcessGroupBackend {
+    calls: std::sync::Mutex<Vec<BackendCall>>,
+    probes: std::sync::Mutex<VecDeque<ProcessGroupPresence>>,
+    signals: std::sync::Mutex<VecDeque<ProcessGroupSignalResult>>,
+}
+
+impl MockProcessGroupBackend {
+    fn with_probes(
+        probes: impl IntoIterator<Item = ProcessGroupPresence>,
+    ) -> Self {
+        Self {
+            probes: std::sync::Mutex::new(probes.into_iter().collect()),
+            ..Self::default()
+        }
+    }
+
+    fn with_signals(
+        signals: impl IntoIterator<Item = ProcessGroupSignalResult>,
+    ) -> Self {
+        Self {
+            signals: std::sync::Mutex::new(signals.into_iter().collect()),
+            ..Self::default()
+        }
+    }
+
+    fn calls(&self) -> Vec<BackendCall> {
+        self.calls.lock().unwrap().clone()
+    }
+
+    fn signals(&self) -> Vec<libc::c_int> {
+        self.calls()
+            .into_iter()
+            .filter_map(|call| match call {
+                BackendCall::Signal(_, signal) => Some(signal),
+                BackendCall::Probe(_) => None,
+            })
+            .collect()
+    }
+
+    fn clear_calls(&self) {
+        self.calls.lock().unwrap().clear();
+    }
+
+    fn push_probe(&self, presence: ProcessGroupPresence) {
+        self.probes.lock().unwrap().push_back(presence);
+    }
+}
+
+impl UnixProcessGroupBackend for MockProcessGroupBackend {
+    fn probe(
+        &self,
+        key: ProcessGroupKey,
+    ) -> Result<ProcessGroupPresence, TerminalRuntimeError> {
+        self.calls.lock().unwrap().push(BackendCall::Probe(key));
+        Ok(self
+            .probes
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(ProcessGroupPresence::Present))
+    }
+
+    fn signal(
+        &self,
+        key: ProcessGroupKey,
+        signal: libc::c_int,
+    ) -> Result<ProcessGroupSignalResult, TerminalRuntimeError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(BackendCall::Signal(key, signal));
+        Ok(self
+            .signals
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(ProcessGroupSignalResult::Delivered))
+    }
+}
+```
+
+Add these helpers and separate tests with exact assertions. `test_lease` builds
+the production lease directly because the inline test module can access private
+types:
+
+```rust
+const TEST_KEY: ProcessGroupKey = ProcessGroupKey {
+    pgid: 42_424,
+    generation: 7,
+};
+
+fn test_lease(
+    state: UnixProcessGroupState,
+    backend: Arc<MockProcessGroupBackend>,
+) -> UnixProcessGroupLease {
+    UnixProcessGroupLease {
+        backend,
+        state: Mutex::new(state),
+    }
+}
+
+fn zero_grace_stages() -> [(libc::c_int, &'static str, Duration); 3] {
+    [
+        (libc::SIGINT, "sigint", Duration::ZERO),
+        (libc::SIGTERM, "sigterm", Duration::ZERO),
+        (libc::SIGKILL, "sigkill", Duration::ZERO),
+    ]
+}
+
+#[tokio::test]
+async fn leader_exit_with_descendants_starts_bounded_lease() {
+    let backend = Arc::new(MockProcessGroupBackend::default());
+    let lease = test_lease(
+        UnixProcessGroupState::OwnedLeaderAlive { key: TEST_KEY },
+        backend,
+    );
+    let observed_at = tokio::time::Instant::now();
+
+    lease.observe_leader_exit(observed_at).await.unwrap();
+
+    assert_eq!(
+        *lease.state.lock().await,
+        UnixProcessGroupState::OwnedDescendants {
+            key: TEST_KEY,
+            deadline: observed_at + DESCENDANT_LEASE_DURATION,
+        }
+    );
+}
+
+#[tokio::test]
+async fn descendant_lease_release_before_deadline_can_signal_original_group() {
+    let backend = Arc::new(MockProcessGroupBackend::with_probes([
+        ProcessGroupPresence::Present,
+        ProcessGroupPresence::Present,
+        ProcessGroupPresence::Missing,
+    ]));
+    let lease = test_lease(
+        UnixProcessGroupState::OwnedDescendants {
+            key: TEST_KEY,
+            deadline: tokio::time::Instant::now() + DESCENDANT_LEASE_DURATION,
+        },
+        backend.clone(),
+    );
+
+    lease.cleanup_with_stages(&zero_grace_stages()).await.unwrap();
+
+    assert_eq!(
+        backend.signals(),
+        vec![libc::SIGINT, libc::SIGTERM, libc::SIGKILL]
+    );
+    assert!(backend.calls().iter().all(|call| match call {
+        BackendCall::Probe(key) | BackendCall::Signal(key, _) => *key == TEST_KEY,
+    }));
+}
+
+#[tokio::test]
+async fn expired_descendant_lease_retires_without_backend_call() {
+    let backend = Arc::new(MockProcessGroupBackend::default());
+    let lease = test_lease(
+        UnixProcessGroupState::OwnedDescendants {
+            key: TEST_KEY,
+            deadline: tokio::time::Instant::now(),
+        },
+        backend.clone(),
+    );
+
+    lease.cleanup_with_stages(&zero_grace_stages()).await.unwrap();
+
+    assert!(backend.calls().is_empty());
+    assert_eq!(*lease.state.lock().await, UnixProcessGroupState::Retired);
+}
+
+#[tokio::test]
+async fn retired_lease_ignores_simulated_pgid_reuse() {
+    let backend = Arc::new(MockProcessGroupBackend::with_probes([
+        ProcessGroupPresence::Missing,
+    ]));
+    let lease = test_lease(
+        UnixProcessGroupState::OwnedLeaderAlive { key: TEST_KEY },
+        backend.clone(),
+    );
+    lease
+        .observe_leader_exit(tokio::time::Instant::now())
+        .await
+        .unwrap();
+    backend.clear_calls();
+    backend.push_probe(ProcessGroupPresence::Present);
+
+    lease.cleanup_with_stages(&zero_grace_stages()).await.unwrap();
+
+    assert!(backend.calls().is_empty());
+    assert!(backend.signals().is_empty());
+}
+
+#[tokio::test]
+async fn esrch_retires_permanently_and_repeat_cleanup_is_noop() {
+    let backend = Arc::new(MockProcessGroupBackend::with_signals([
+        ProcessGroupSignalResult::Missing,
+    ]));
+    let lease = test_lease(
+        UnixProcessGroupState::OwnedLeaderAlive { key: TEST_KEY },
+        backend.clone(),
+    );
+    lease.cleanup_with_stages(&zero_grace_stages()).await.unwrap();
+    let calls_after_first = backend.calls();
+
+    lease.cleanup_with_stages(&zero_grace_stages()).await.unwrap();
+
+    assert_eq!(backend.calls(), calls_after_first);
+    assert_eq!(*lease.state.lock().await, UnixProcessGroupState::Retired);
+}
+
+#[tokio::test]
+async fn concurrent_cleanup_runs_one_signal_sequence() {
+    let backend = Arc::new(MockProcessGroupBackend::with_probes([
+        ProcessGroupPresence::Present,
+        ProcessGroupPresence::Present,
+        ProcessGroupPresence::Missing,
+    ]));
+    let lease = Arc::new(test_lease(
+        UnixProcessGroupState::OwnedLeaderAlive { key: TEST_KEY },
+        backend.clone(),
+    ));
+
+    let (left, right) = tokio::join!(
+        lease.cleanup_with_stages(&zero_grace_stages()),
+        lease.cleanup_with_stages(&zero_grace_stages()),
+    );
+
+    left.unwrap();
+    right.unwrap();
+    assert_eq!(
+        backend.signals(),
+        vec![libc::SIGINT, libc::SIGTERM, libc::SIGKILL]
+    );
+}
+
+#[tokio::test]
+async fn live_leader_keeps_staged_signal_sequence() {
+    let backend = Arc::new(MockProcessGroupBackend::with_probes([
+        ProcessGroupPresence::Present,
+        ProcessGroupPresence::Present,
+        ProcessGroupPresence::Missing,
+    ]));
+    let lease = test_lease(
+        UnixProcessGroupState::OwnedLeaderAlive { key: TEST_KEY },
+        backend.clone(),
+    );
+
+    lease.cleanup_with_stages(&zero_grace_stages()).await.unwrap();
+
+    assert_eq!(
+        backend.signals(),
+        vec![libc::SIGINT, libc::SIGTERM, libc::SIGKILL]
+    );
+}
+
+#[tokio::test]
+async fn leader_exit_with_live_descendants_is_not_retired_immediately() {
+    let backend = Arc::new(MockProcessGroupBackend::default());
+    let lease = test_lease(
+        UnixProcessGroupState::OwnedLeaderAlive { key: TEST_KEY },
+        backend,
+    );
+
+    lease
+        .observe_leader_exit(tokio::time::Instant::now())
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        *lease.state.lock().await,
+        UnixProcessGroupState::OwnedDescendants { .. }
+    ));
+}
+```
+
+The mock tests must use short zero-duration stage graces supplied to the lease
+helper, not the production 500/1500/2000 ms values. Keep the existing real Unix
+tests unchanged.
+
+- [ ] **Step 2: Run the new tests and capture RED**
+
+Run:
+
+```bash
+cd /www/gitroot/codeg-worktrees/issue-grok-command-hang/src-tauri
+cargo test --no-default-features acp::terminal_runtime::tests --lib
+```
+
+Expected: compilation fails because the lease/backend interfaces do not yet
+exist, or the new assertions fail against the permanent raw-PGID behavior. Do
+not write production code until this failure is recorded.
+
+- [ ] **Step 3: Add the minimal lease and production backend**
+
+Add these Unix-only shapes near `TerminalInstance`:
+
+```rust
+#[cfg(unix)]
+const DESCENDANT_LEASE_DURATION: Duration = Duration::from_secs(5);
+
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ProcessGroupKey {
+    pgid: libc::pid_t,
+    generation: u64,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProcessGroupPresence {
+    Present,
+    Missing,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProcessGroupSignalResult {
+    Delivered,
+    Missing,
+}
+
+#[cfg(unix)]
+trait UnixProcessGroupBackend: Send + Sync {
+    fn probe(&self, key: ProcessGroupKey)
+        -> Result<ProcessGroupPresence, TerminalRuntimeError>;
+    fn signal(
+        &self,
+        key: ProcessGroupKey,
+        signal: libc::c_int,
+    ) -> Result<ProcessGroupSignalResult, TerminalRuntimeError>;
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UnixProcessGroupState {
+    OwnedLeaderAlive { key: ProcessGroupKey },
+    OwnedDescendants {
+        key: ProcessGroupKey,
+        deadline: tokio::time::Instant,
+    },
+    Retired,
+}
+
+#[cfg(unix)]
+struct UnixProcessGroupLease {
+    backend: Arc<dyn UnixProcessGroupBackend>,
+    state: Mutex<UnixProcessGroupState>,
+}
+```
+
+`LibcProcessGroupBackend::probe` maps `kill(-pgid, 0)` success/`EPERM` to
+`Present` and `ESRCH` to `Missing`. `signal` maps success to `Delivered` and
+`ESRCH` to `Missing`; other errors remain `TerminalRuntimeError::Internal`.
+The production backend ignores the internal generation when calling libc but
+includes it in errors and logs.
+
+- [ ] **Step 4: Allocate a generation and wire leader-exit retirement**
+
+Add a Unix-only `AtomicU64` generation counter to `TerminalRuntime`, initialized
+to one. Every successful spawn obtains one generation and constructs an
+`OwnedLeaderAlive` lease for `pgid == pid`.
+
+In `refresh_exit_status`, after `try_wait` reports the direct child exit and
+before publishing the cached exit status, call:
+
+```rust
+self.process_group
+    .observe_leader_exit(tokio::time::Instant::now())
+    .await?;
+```
+
+`observe_leader_exit` performs its probe while holding the lease state lock:
+
+```rust
+match backend.probe(key)? {
+    ProcessGroupPresence::Missing => *state = UnixProcessGroupState::Retired,
+    ProcessGroupPresence::Present => {
+        *state = UnixProcessGroupState::OwnedDescendants {
+            key,
+            deadline: observed_at + DESCENDANT_LEASE_DURATION,
+        };
+    }
+}
+```
+
+If state is already `Retired`, perform no backend call. Never renew an existing
+`OwnedDescendants` deadline.
+
+- [ ] **Step 5: Move escalation behind the bounded lease lock**
+
+Replace direct `process_group_exists` and `signal_process_group` calls with one
+`UnixProcessGroupLease::cleanup` method. It acquires the lease state lock once
+for the bounded sequence, checks descendant expiry before every backend call
+and after each sleep, and uses the remaining lease time as an upper bound on
+the stage sleep.
+
+Rules inside `cleanup`:
+
+```rust
+// Retired: return immediately without backend use.
+// OwnedDescendants at/after deadline: set Retired and return immediately.
+// probe/signal Missing: set Retired and return immediately.
+// Delivered: wait only min(stage_grace, descendant_deadline - now).
+// Deadline reached while waiting: set Retired; do not perform a final probe.
+// Never replace an existing descendant deadline with now + 5 seconds.
+```
+
+Keep `TerminalInstance::kill_command` responsible for child refresh/reaping and
+sanitized logging, but make all Unix group ownership decisions and syscalls go
+through `UnixProcessGroupLease`. Because cleanup holds the state lock for the
+entire bounded sequence, two concurrent release calls cannot signal twice.
+
+- [ ] **Step 6: Run lease and real Unix terminal tests GREEN**
+
+Run:
+
+```bash
+cargo test --no-default-features acp::terminal_runtime::tests --lib -- --nocapture
+```
+
+Expected: every mock lease test and all existing real Unix process tests pass;
+the stubborn group still logs SIGINT, SIGTERM, SIGKILL and the unrelated
+session stays alive until its own cleanup.
+
+- [ ] **Step 7: Verify Cancel state convergence and full Server regression**
+
+Run serially:
+
+```bash
+cargo test --no-default-features acp::connection::tests::terminal_cleanup_timeout_still_completes_cancelled_turn --lib
+cargo test --no-default-features --bin codeg-server --lib
+cargo clippy --no-default-features --bin codeg-server --lib -- -D warnings
+```
+
+Expected: Cancel timeout test passes, full Server suite has zero failures, and
+Clippy exits zero with warnings denied.
+
+- [ ] **Step 8: Confirm Windows source path and branch scope**
+
+Inspect the diff and confirm `#[cfg(not(unix))] TerminalInstance::kill_command`
+still calls the existing `kill_tree` behavior. Then run:
+
+```bash
+git diff --check
+git status --short --branch
+git diff 0b935050..HEAD --name-status
+```
+
+Expected: implementation changes are limited to the tracked design/plan and
+`src-tauri/src/acp/terminal_runtime.rs`; `connection.rs` only changes if its
+existing Cancel test requires a test-only adjustment.
+
+- [ ] **Step 9: Commit the security fix without push or merge**
+
+```bash
+git add src-tauri/src/acp/terminal_runtime.rs
+git commit -m "fix: retire stale Unix process-group leases"
+```
+
+Do not push, merge, deploy, restart `codeg-prod`, or modify `/www/gitroot/codeg`.
 
 ---
 
