@@ -28,7 +28,9 @@ const composerHandle = vi.hoisted(() => ({
 const uploadAttachmentMock = vi.hoisted(() => vi.fn())
 const readFileBase64Mock = vi.hoisted(() => vi.fn())
 const readLocalPathForAttachmentMock = vi.hoisted(() => vi.fn())
+const readLocalImagePathForAttachmentMock = vi.hoisted(() => vi.fn())
 const uploadLocalPathToRemoteMock = vi.hoisted(() => vi.fn())
+const toastErrorMock = vi.hoisted(() => vi.fn())
 const platformMock = vi.hoisted(() => ({
   desktop: false,
   openFileDialog: vi.fn(),
@@ -102,11 +104,15 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     quickMessagesList: vi.fn().mockResolvedValue([]),
     readFileBase64: readFileBase64Mock,
+    readLocalImagePathForAttachment: readLocalImagePathForAttachmentMock,
     readLocalPathForAttachment: readLocalPathForAttachmentMock,
     uploadAttachment: uploadAttachmentMock,
     uploadLocalPathToRemote: uploadLocalPathToRemoteMock,
   }
 })
+vi.mock("sonner", () => ({
+  toast: { error: toastErrorMock, success: vi.fn() },
+}))
 vi.mock("@/components/shared/server-file-browser-dialog", () => ({
   ServerFileBrowserDialog: ({
     open,
@@ -848,8 +854,10 @@ describe("MessageInput remote desktop paths", () => {
     platformMock.desktop = false
     transportMock.remoteId = null
     tauriListenerMock.listeners.clear()
+    readLocalImagePathForAttachmentMock.mockReset()
     readLocalPathForAttachmentMock.mockReset()
     uploadLocalPathToRemoteMock.mockReset()
+    toastErrorMock.mockReset()
   })
 
   async function renderRemoteAndDrop(
@@ -893,10 +901,10 @@ describe("MessageInput remote desktop paths", () => {
 
   it("keeps remote desktop images inline and uploads only resources", async () => {
     const onSend = vi.fn()
-    readLocalPathForAttachmentMock.mockResolvedValue({
+    readLocalImagePathForAttachmentMock.mockResolvedValue({
       fileName: "outside.png",
       mimeType: "image/png",
-      size: 6,
+      size: 10_000_000,
       dataBase64: "cmVtb3RlLWltYWdl",
     })
     uploadLocalPathToRemoteMock.mockResolvedValue({
@@ -908,10 +916,11 @@ describe("MessageInput remote desktop paths", () => {
     })
 
     await waitFor(() =>
-      expect(readLocalPathForAttachmentMock).toHaveBeenCalledWith(
+      expect(readLocalImagePathForAttachmentMock).toHaveBeenCalledWith(
         "/outside/outside.png"
       )
     )
+    expect(readLocalPathForAttachmentMock).not.toHaveBeenCalled()
     expect(uploadLocalPathToRemoteMock).toHaveBeenCalledTimes(1)
     expect(uploadLocalPathToRemoteMock).toHaveBeenCalledWith(
       "/outside/notes.txt",
@@ -943,7 +952,7 @@ describe("MessageInput remote desktop paths", () => {
   })
 
   it("removes remote image bytes from the draft", async () => {
-    readLocalPathForAttachmentMock.mockResolvedValue({
+    readLocalImagePathForAttachmentMock.mockResolvedValue({
       fileName: "outside.png",
       mimeType: "image/png",
       size: 6,
@@ -963,11 +972,13 @@ describe("MessageInput remote desktop paths", () => {
 
   it("does not upload a remote image after its local read fails", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {})
-    readLocalPathForAttachmentMock.mockRejectedValue(new Error("read denied"))
+    readLocalImagePathForAttachmentMock.mockRejectedValue(
+      new Error("read denied")
+    )
 
     await renderRemoteAndDrop(["/outside/unreadable.png"])
     await waitFor(() =>
-      expect(readLocalPathForAttachmentMock).toHaveBeenCalledOnce()
+      expect(readLocalImagePathForAttachmentMock).toHaveBeenCalledOnce()
     )
 
     expect(uploadLocalPathToRemoteMock).not.toHaveBeenCalled()
@@ -979,5 +990,29 @@ describe("MessageInput remote desktop paths", () => {
       expect.any(Error)
     )
     consoleError.mockRestore()
+  })
+
+  it("shows separate 20 MB image and 2 MB resource limits", async () => {
+    const tooLarge = (limit: number) => ({
+      code: "io_error",
+      message: "Local file exceeds the size limit",
+      i18n_key: "errors.upload.tooLarge",
+      i18n_params: { limit: String(limit) },
+    })
+    readLocalImagePathForAttachmentMock.mockRejectedValue(tooLarge(20_000_000))
+    uploadLocalPathToRemoteMock.mockRejectedValue(tooLarge(2 * 1024 * 1024))
+
+    await renderRemoteAndDrop([
+      "/outside/oversize.png",
+      "/outside/oversize.txt",
+    ])
+
+    await waitFor(() => expect(toastErrorMock).toHaveBeenCalledTimes(2))
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      "oversize.png exceeds the 20MB upload limit and was skipped."
+    )
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      "oversize.txt exceeds the 2MB upload limit and was skipped."
+    )
   })
 })

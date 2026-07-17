@@ -71,7 +71,7 @@ import {
 import { useShortcutSettings } from "@/hooks/use-shortcut-settings"
 import {
   readFileBase64,
-  readLocalPathForAttachment,
+  readLocalImagePathForAttachment,
   quickMessagesList,
   uploadAttachment,
   uploadLocalPathToRemote,
@@ -1581,11 +1581,12 @@ export function MessageInput({
         ...resourcePaths.map((path) => ({ path, image: false as const })),
       ]
 
-      const limitMb = Math.round(UPLOAD_MAX_BYTES / (1024 * 1024))
+      const uploadLimitMb = Math.round(UPLOAD_MAX_BYTES / (1024 * 1024))
       const succeeded: string[] = []
       const parsedImages: ImageInputAttachment[] = []
       const failed: Array<{ name: string; reason: unknown }> = []
-      const oversize: string[] = []
+      const oversizedImages: string[] = []
+      const oversizedResources: string[] = []
       const directories: string[] = []
       const quotaRejected: string[] = []
 
@@ -1600,7 +1601,7 @@ export function MessageInput({
             const name = path.split(/[/\\]/).pop() || path
             try {
               if (image) {
-                const file = await readLocalPathForAttachment(path)
+                const file = await readLocalImagePathForAttachment(path)
                 parsedImages.push({
                   id: `image:${Date.now()}:${idx}:${randomUUID()}`,
                   type: "image",
@@ -1635,7 +1636,8 @@ export function MessageInput({
               const appError = extractAppCommandError(error)
               const i18nKey = appError?.i18n_key ?? null
               if (i18nKey === UPLOAD_I18N_KEY_TOO_LARGE) {
-                oversize.push(name)
+                if (image) oversizedImages.push(name)
+                else oversizedResources.push(name)
               } else if (i18nKey === UPLOAD_I18N_KEY_NOT_A_FILE) {
                 // Dragging a directory or a special file (FIFO, device
                 // node) lands here. The Rust guard short-circuits before
@@ -1653,11 +1655,19 @@ export function MessageInput({
       )
       await Promise.all(workers)
 
-      if (oversize.length > 0) {
+      if (oversizedImages.length > 0) {
         toast.error(
           tAttach("attachUploadTooLarge", {
-            limit: limitMb,
-            names: oversize.join(", "),
+            limit: IMAGE_ATTACHMENT_MAX_BYTES / 1_000_000,
+            names: oversizedImages.join(", "),
+          })
+        )
+      }
+      if (oversizedResources.length > 0) {
+        toast.error(
+          tAttach("attachUploadTooLarge", {
+            limit: uploadLimitMb,
+            names: oversizedResources.join(", "),
           })
         )
       }

@@ -2414,26 +2414,35 @@ export interface LocalAttachmentFile {
   dataBase64: string
 }
 
-// Read a user-selected local path through the existing bounded Tauri command.
-// The Rust side accepts only regular, non-symlink files and enforces the same
-// upload size ceiling before returning bytes.
-export async function readLocalPathForAttachment(
-  path: string
+async function readBoundedLocalAttachment(
+  path: string,
+  command: "read_local_file_for_upload" | "read_local_image_for_attachment"
 ): Promise<LocalAttachmentFile> {
   if (getActiveRemoteConnectionId() === null) {
     throw new Error(
-      "readLocalPathForAttachment requires an active remote workspace"
+      "Reading a local attachment requires an active remote workspace"
     )
   }
   const shell = getShellTransport()
-  const file = await shell.call<LocalAttachmentFile>(
-    "read_local_file_for_upload",
-    { path }
-  )
+  const file = await shell.call<LocalAttachmentFile>(command, { path })
   if (file.size === 0) {
     throw new EmptyAttachmentError(file.fileName)
   }
   return file
+}
+
+// Ordinary remote uploads stay on the 2 MiB Rust-enforced reader.
+export async function readLocalPathForAttachment(
+  path: string
+): Promise<LocalAttachmentFile> {
+  return readBoundedLocalAttachment(path, "read_local_file_for_upload")
+}
+
+// Remote image paths use the separate 20,000,000-byte Rust-enforced reader.
+export async function readLocalImagePathForAttachment(
+  path: string
+): Promise<LocalAttachmentFile> {
+  return readBoundedLocalAttachment(path, "read_local_image_for_attachment")
 }
 
 // Upload a file picked from the desktop machine's filesystem to the remote
