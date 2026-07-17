@@ -21,6 +21,13 @@ const DEFAULT_OUTPUT_BYTE_LIMIT: u64 = 1_000_000;
 /// inherit the pipe handle and keep it open long after the direct child
 /// exits, turning `wait_for_exit` into a silent hang.
 const READER_DRAIN_GRACE: Duration = Duration::from_millis(200);
+const CHILD_EXIT_POLL_INTERVAL: Duration = Duration::from_millis(25);
+#[cfg(unix)]
+const SIGINT_GRACE: Duration = Duration::from_millis(500);
+#[cfg(unix)]
+const SIGTERM_GRACE: Duration = Duration::from_millis(1_500);
+#[cfg(unix)]
+const SIGKILL_GRACE: Duration = Duration::from_millis(2_000);
 
 #[derive(Debug)]
 pub enum TerminalRuntimeError {
@@ -37,6 +44,21 @@ impl TerminalRuntimeError {
     }
 }
 
+#[derive(Debug, Default)]
+pub(crate) struct TerminalCleanupReport {
+    failures: Vec<(String, String)>,
+}
+
+impl TerminalCleanupReport {
+    pub(crate) fn is_clean(&self) -> bool {
+        self.failures.is_empty()
+    }
+
+    pub(crate) fn failure_count(&self) -> usize {
+        self.failures.len()
+    }
+}
+
 #[derive(Debug, Default, Clone)]
 struct TerminalSnapshot {
     output: String,
@@ -46,7 +68,11 @@ struct TerminalSnapshot {
 }
 
 struct TerminalInstance {
+    terminal_id: String,
     session_id: String,
+    pid: u32,
+    #[cfg(unix)]
+    pgid: libc::pid_t,
     output_limit: Option<usize>,
     child: Mutex<Option<tokio::process::Child>>,
     snapshot: Mutex<TerminalSnapshot>,
@@ -54,14 +80,29 @@ struct TerminalInstance {
 }
 
 impl TerminalInstance {
-    fn new(session_id: String, output_limit: Option<u64>, child: tokio::process::Child) -> Self {
-        Self {
+    fn new(
+        terminal_id: String,
+        session_id: String,
+        output_limit: Option<u64>,
+        child: tokio::process::Child,
+        pid: u32,
+    ) -> Result<Self, TerminalRuntimeError> {
+        #[cfg(unix)]
+        let pgid = libc::pid_t::try_from(pid).map_err(|_| {
+            TerminalRuntimeError::Internal(format!("terminal pid {pid} does not fit pid_t"))
+        })?;
+
+        Ok(Self {
+            terminal_id,
             session_id,
+            pid,
+            #[cfg(unix)]
+            pgid,
             output_limit: output_limit.and_then(|v| usize::try_from(v).ok()),
             child: Mutex::new(Some(child)),
             snapshot: Mutex::new(TerminalSnapshot::default()),
             reader_handles: Mutex::new(Vec::new()),
-        }
+        })
     }
 
     /// Wait briefly for stdout/stderr reader tasks to finish; abort any that
@@ -141,70 +182,175 @@ impl TerminalInstance {
     }
 
     async fn wait_for_exit(&self) -> Result<TerminalExitStatus, TerminalRuntimeError> {
-        self.refresh_exit_status().await?;
-        let cached_exit = self.snapshot.lock().await.exit_status.clone();
-        if let Some(exit_status) = cached_exit {
-            self.drain_readers().await;
-            return Ok(exit_status);
+        loop {
+            self.refresh_exit_status().await?;
+            if let Some(exit_status) = self.snapshot.lock().await.exit_status.clone() {
+                return Ok(exit_status);
+            }
+            tokio::time::sleep(CHILD_EXIT_POLL_INTERVAL).await;
         }
-
-        let exit_status = {
-            let mut child_guard = self.child.lock().await;
-            let Some(child) = child_guard.as_mut() else {
-                return Err(TerminalRuntimeError::Internal(
-                    "terminal process missing while waiting for exit".to_string(),
-                ));
-            };
-            let status = child.wait().await.map_err(|err| {
-                TerminalRuntimeError::Internal(format!(
-                    "failed waiting for terminal process to exit: {err}"
-                ))
-            })?;
-            *child_guard = None;
-            map_exit_status(status)
-        };
-
-        self.drain_readers().await;
-
-        let mut snapshot = self.snapshot.lock().await;
-        snapshot.exit_status = Some(exit_status.clone());
-        Ok(exit_status)
     }
 
-    async fn kill_command(&self) -> Result<(), TerminalRuntimeError> {
-        self.refresh_exit_status().await?;
-        let already_exited = self.snapshot.lock().await.exit_status.is_some();
-        if already_exited {
-            self.drain_readers().await;
+    #[cfg(unix)]
+    fn process_group_exists(&self) -> Result<bool, TerminalRuntimeError> {
+        let result = unsafe { libc::kill(-self.pgid, 0) };
+        if result == 0 {
+            return Ok(true);
+        }
+
+        let err = std::io::Error::last_os_error();
+        match err.raw_os_error() {
+            Some(libc::ESRCH) => Ok(false),
+            Some(libc::EPERM) => Ok(true),
+            _ => Err(TerminalRuntimeError::Internal(format!(
+                "failed to query terminal process group pgid={}: {err}",
+                self.pgid
+            ))),
+        }
+    }
+
+    #[cfg(unix)]
+    fn signal_process_group(
+        &self,
+        signal: libc::c_int,
+        stage: &'static str,
+    ) -> Result<(), TerminalRuntimeError> {
+        let result = unsafe { libc::kill(-self.pgid, signal) };
+        if result == 0 {
+            tracing::info!(
+                terminal_id = %self.terminal_id,
+                session_id = %self.session_id,
+                pid = self.pid,
+                pgid = self.pgid,
+                signal_stage = stage,
+                "[ACP] signalled terminal process group"
+            );
             return Ok(());
         }
 
-        let exit_status = {
-            let mut child_guard = self.child.lock().await;
-            let Some(child) = child_guard.as_mut() else {
-                return Ok(());
-            };
+        let err = std::io::Error::last_os_error();
+        if err.raw_os_error() == Some(libc::ESRCH) {
+            return Ok(());
+        }
+        Err(TerminalRuntimeError::Internal(format!(
+            "failed to signal terminal process group pgid={} stage={stage}: {err}",
+            self.pgid
+        )))
+    }
 
-            if let Some(pid) = child.id() {
-                if let Err(err) = kill_tree::tokio::kill_tree(pid).await {
-                    tracing::error!("[ACP] kill_tree failed for pid {pid}: {err}");
+    #[cfg(unix)]
+    async fn wait_for_process_group_exit(
+        &self,
+        grace: Duration,
+    ) -> Result<bool, TerminalRuntimeError> {
+        let deadline = tokio::time::Instant::now() + grace;
+        loop {
+            self.refresh_exit_status().await?;
+            if !self.process_group_exists()? {
+                return Ok(true);
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Ok(false);
+            }
+            tokio::time::sleep(CHILD_EXIT_POLL_INTERVAL).await;
+        }
+    }
+
+    #[cfg(unix)]
+    async fn kill_command(&self) -> Result<(), TerminalRuntimeError> {
+        let started = std::time::Instant::now();
+        self.refresh_exit_status().await?;
+        if !self.process_group_exists()? {
+            return Ok(());
+        }
+
+        let stages = [
+            (libc::SIGINT, "sigint", SIGINT_GRACE),
+            (libc::SIGTERM, "sigterm", SIGTERM_GRACE),
+            (libc::SIGKILL, "sigkill", SIGKILL_GRACE),
+        ];
+        let mut first_error = None;
+
+        for (signal, stage, grace) in stages {
+            if let Err(err) = self.signal_process_group(signal, stage) {
+                tracing::warn!(
+                    terminal_id = %self.terminal_id,
+                    session_id = %self.session_id,
+                    pid = self.pid,
+                    pgid = self.pgid,
+                    signal_stage = stage,
+                    error = ?err,
+                    "[ACP] terminal process-group signal failed"
+                );
+                if first_error.is_none() {
+                    first_error = Some(err);
                 }
             }
 
-            let status = child.wait().await.map_err(|err| {
+            match self.wait_for_process_group_exit(grace).await {
+                Ok(true) => {
+                    let exit_status = self.snapshot.lock().await.exit_status.clone();
+                    tracing::info!(
+                        terminal_id = %self.terminal_id,
+                        session_id = %self.session_id,
+                        pid = self.pid,
+                        pgid = self.pgid,
+                        elapsed_ms = started.elapsed().as_millis(),
+                        signal_stage = stage,
+                        ?exit_status,
+                        "[ACP] terminal process group exited"
+                    );
+                    return first_error.map_or(Ok(()), Err);
+                }
+                Ok(false) => {}
+                Err(err) => {
+                    tracing::warn!(
+                        terminal_id = %self.terminal_id,
+                        session_id = %self.session_id,
+                        pid = self.pid,
+                        pgid = self.pgid,
+                        signal_stage = stage,
+                        error = ?err,
+                        "[ACP] terminal process-group exit observation failed"
+                    );
+                    if first_error.is_none() {
+                        first_error = Some(err);
+                    }
+                }
+            }
+        }
+
+        if self.process_group_exists()? {
+            return Err(first_error.unwrap_or_else(|| {
                 TerminalRuntimeError::Internal(format!(
-                    "failed to wait for killed terminal process: {err}"
+                    "terminal process group pgid={} survived SIGKILL deadline",
+                    self.pgid
                 ))
-            })?;
-            *child_guard = None;
-            map_exit_status(status)
-        };
+            }));
+        }
 
-        self.drain_readers().await;
+        first_error.map_or(Ok(()), Err)
+    }
 
-        let mut snapshot = self.snapshot.lock().await;
-        snapshot.exit_status = Some(exit_status);
-        Ok(())
+    #[cfg(not(unix))]
+    async fn kill_command(&self) -> Result<(), TerminalRuntimeError> {
+        self.refresh_exit_status().await?;
+        if self.snapshot.lock().await.exit_status.is_some() {
+            return Ok(());
+        }
+
+        let pid = self
+            .child
+            .lock()
+            .await
+            .as_ref()
+            .and_then(tokio::process::Child::id);
+        if let Some(pid) = pid {
+            if let Err(err) = kill_tree::tokio::kill_tree(pid).await {
+                tracing::error!("[ACP] kill_tree failed for pid {pid}: {err}");
+            }
+        }
+        self.wait_for_exit().await.map(|_| ())
     }
 
     async fn snapshot(&self) -> TerminalSnapshot {
@@ -300,6 +446,11 @@ impl TerminalRuntime {
         for env_var in &request.env {
             command.env(&env_var.name, &env_var.value);
         }
+
+        #[cfg(unix)]
+        {
+            command.process_group(0);
+        }
     }
 
     pub async fn create_terminal(
@@ -368,15 +519,29 @@ impl TerminalRuntime {
             }
         };
 
+        let pid = child.id().ok_or_else(|| {
+            TerminalRuntimeError::Internal("spawned terminal has no process id".to_string())
+        })?;
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
 
         let terminal_id = format!("term_{}", uuid::Uuid::new_v4().simple());
         let terminal = Arc::new(TerminalInstance::new(
+            terminal_id.clone(),
             request.session_id.to_string(),
             Some(output_byte_limit),
             child,
-        ));
+            pid,
+        )?);
+
+        #[cfg(unix)]
+        tracing::info!(
+            terminal_id = %terminal_id,
+            session_id = %request.session_id,
+            pid,
+            pgid = pid,
+            "[ACP] spawned isolated terminal process group"
+        );
 
         let mut handles: Vec<JoinHandle<()>> = Vec::new();
         if let Some(reader) = stdout {
@@ -508,7 +673,7 @@ impl TerminalRuntime {
         Ok(ReleaseTerminalResponse::new())
     }
 
-    pub async fn release_all_for_session(&self, session_id: &str) {
+    pub(crate) async fn release_all_for_session(&self, session_id: &str) -> TerminalCleanupReport {
         let removed = {
             let mut terminals = self.terminals.lock().await;
             let ids: Vec<String> = terminals
@@ -526,11 +691,28 @@ impl TerminalRuntime {
             removed
         };
 
-        for terminal in removed {
-            if let Err(err) = terminal.kill_command().await {
-                tracing::error!("[ACP] Failed to release terminal during cleanup: {err:?}");
-            }
-        }
+        let results = futures::future::join_all(removed.into_iter().map(|terminal| async move {
+            let terminal_id = terminal.terminal_id.clone();
+            (terminal_id, terminal.kill_command().await)
+        }))
+        .await;
+
+        let failures = results
+            .into_iter()
+            .filter_map(|(terminal_id, result)| {
+                result.err().map(|err| {
+                    tracing::error!(
+                        terminal_id = %terminal_id,
+                        session_id,
+                        error = ?err,
+                        "[ACP] terminal session cleanup failed"
+                    );
+                    (terminal_id, format!("{err:?}"))
+                })
+            })
+            .collect();
+
+        TerminalCleanupReport { failures }
     }
 
     async fn find_terminal(
@@ -673,7 +855,85 @@ fn decode_available_utf8(pending: &mut Vec<u8>) -> String {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use std::time::Instant;
+
+    use kill_tree::Config;
     use sacp::schema::{EnvVariable, SessionId, WaitForTerminalExitRequest};
+
+    fn init_test_tracing() {
+        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    }
+
+    async fn terminal_pid(
+        runtime: &TerminalRuntime,
+        session_id: &SessionId,
+        terminal_id: &str,
+    ) -> u32 {
+        let terminal = runtime
+            .find_terminal(terminal_id, session_id.0.as_ref())
+            .await
+            .expect("test terminal exists");
+        let pid = terminal
+            .child
+            .lock()
+            .await
+            .as_ref()
+            .and_then(tokio::process::Child::id)
+            .expect("test terminal has a direct child pid");
+        pid
+    }
+
+    fn pid_exists(pid: u32) -> bool {
+        let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        if result == 0 {
+            return true;
+        }
+        std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+    }
+
+    async fn emergency_kill_exact_tree(pid: u32, terminal: &Arc<TerminalInstance>) {
+        let pid = pid as libc::pid_t;
+        let _ = unsafe { libc::kill(pid, libc::SIGSTOP) };
+        let config = Config {
+            signal: "SIGKILL".to_string(),
+            include_target: true,
+        };
+        let _ = kill_tree::tokio::kill_tree_with_config(pid as u32, &config).await;
+        let _ = unsafe { libc::kill(pid, libc::SIGKILL) };
+        let _ = tokio::time::timeout(Duration::from_secs(1), terminal.wait_for_exit()).await;
+        for _ in 0..100 {
+            if !pid_exists(pid as u32) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    async fn spawn_shell(
+        runtime: &TerminalRuntime,
+        session_id: &SessionId,
+        script: &str,
+    ) -> (String, u32) {
+        let mut request = CreateTerminalRequest::new(session_id.clone(), "/bin/sh".to_string());
+        request.args = vec!["-c".into(), script.into()];
+        let response = runtime
+            .create_terminal(request)
+            .await
+            .expect("create test terminal");
+        let terminal_id = response.terminal_id.to_string();
+        let pid = terminal_pid(runtime, session_id, &terminal_id).await;
+        (terminal_id, pid)
+    }
+
+    async fn wait_for_output(terminal: &Arc<TerminalInstance>, needle: &str) -> bool {
+        for _ in 0..100 {
+            if terminal.snapshot().await.output.contains(needle) {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        false
+    }
 
     /// Regression: when an ACP agent calls `terminal/create` (e.g. to run
     /// `git push`), the runtime's base env — populated by the connection
@@ -830,8 +1090,7 @@ mod tests {
 
         // Genuine shell operators must evaluate, not be passed as literal args.
         let session_id = SessionId::new("shell-ops".to_string());
-        let request =
-            CreateTerminalRequest::new(session_id.clone(), "true && echo OK".to_string());
+        let request = CreateTerminalRequest::new(session_id.clone(), "true && echo OK".to_string());
         let output = run_and_capture(&runtime, &session_id, request).await;
         assert!(
             output.contains("OK"),
@@ -866,8 +1125,7 @@ mod tests {
         let runtime = TerminalRuntime::with_base_env(BTreeMap::new());
 
         let session_id = SessionId::new("direct-exec".to_string());
-        let mut request =
-            CreateTerminalRequest::new(session_id.clone(), "/bin/echo".to_string());
+        let mut request = CreateTerminalRequest::new(session_id.clone(), "/bin/echo".to_string());
         request.args = vec!["hello world".into()];
         let output = run_and_capture(&runtime, &session_id, request).await;
         assert!(
@@ -963,6 +1221,124 @@ mod tests {
         assert!(
             output.contains("ran-relative"),
             "relative space-containing exe was not run in the effective cwd; got:\n{output}"
+        );
+    }
+
+    #[tokio::test]
+    async fn unix_terminal_isolated_in_own_process_group() {
+        init_test_tracing();
+        let runtime = TerminalRuntime::with_base_env(BTreeMap::new());
+        let session_id = SessionId::new("pgid-isolation".to_string());
+        let (_terminal_id, pid) = spawn_shell(&runtime, &session_id, "sleep 60").await;
+
+        let child_pgid = unsafe { libc::getpgid(pid as libc::pid_t) };
+        let runner_pgid = unsafe { libc::getpgrp() };
+        runtime.release_all_for_session(session_id.0.as_ref()).await;
+
+        assert_eq!(
+            child_pgid, pid as libc::pid_t,
+            "child must lead its own process group"
+        );
+        assert_ne!(
+            child_pgid, runner_pgid,
+            "child must not share the test runner process group"
+        );
+    }
+
+    #[tokio::test]
+    async fn session_cleanup_kills_stubborn_group_without_touching_other_session() {
+        init_test_tracing();
+        let runtime = TerminalRuntime::with_base_env(BTreeMap::new());
+        let victim_session = SessionId::new("stubborn-victim".to_string());
+        let other_session = SessionId::new("unrelated-session".to_string());
+        let (victim_terminal_id, victim_pid) = spawn_shell(
+            &runtime,
+            &victim_session,
+            "trap '' INT TERM; printf 'ready\\n'; while :; do sleep 60 & wait $!; done",
+        )
+        .await;
+        let victim_terminal = runtime
+            .find_terminal(&victim_terminal_id, victim_session.0.as_ref())
+            .await
+            .expect("victim terminal exists");
+        if !wait_for_output(&victim_terminal, "ready\n").await {
+            emergency_kill_exact_tree(victim_pid, &victim_terminal).await;
+            panic!("stubborn shell did not install signal traps in time");
+        }
+        let (_other_terminal, other_pid) =
+            spawn_shell(&runtime, &other_session, "while :; do sleep 60; done").await;
+
+        let started = Instant::now();
+        let cleanup = tokio::time::timeout(
+            Duration::from_secs(5),
+            runtime.release_all_for_session(victim_session.0.as_ref()),
+        )
+        .await;
+
+        if cleanup.is_err() {
+            emergency_kill_exact_tree(victim_pid, &victim_terminal).await;
+        }
+        let other_still_alive = pid_exists(other_pid);
+        runtime
+            .release_all_for_session(other_session.0.as_ref())
+            .await;
+
+        assert!(
+            cleanup.is_ok(),
+            "stubborn terminal cleanup exceeded five seconds"
+        );
+        assert!(
+            !pid_exists(victim_pid),
+            "victim direct child survived cleanup"
+        );
+        assert!(
+            other_still_alive,
+            "cleanup signalled a terminal from another session"
+        );
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn in_flight_wait_does_not_block_session_cleanup() {
+        init_test_tracing();
+        let runtime = Arc::new(TerminalRuntime::with_base_env(BTreeMap::new()));
+        let session_id = SessionId::new("wait-does-not-lock-cancel".to_string());
+        let (terminal_id, pid) = spawn_shell(&runtime, &session_id, "sleep 60").await;
+        let terminal = runtime
+            .find_terminal(&terminal_id, session_id.0.as_ref())
+            .await
+            .expect("terminal exists");
+
+        let waiter_runtime = Arc::clone(&runtime);
+        let waiter_session = session_id.clone();
+        let waiter_terminal = terminal_id.clone();
+        let wait_task = tokio::spawn(async move {
+            waiter_runtime
+                .wait_for_terminal_exit(WaitForTerminalExitRequest::new(
+                    waiter_session,
+                    waiter_terminal,
+                ))
+                .await
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let cleanup = tokio::time::timeout(
+            Duration::from_secs(5),
+            runtime.release_all_for_session(session_id.0.as_ref()),
+        )
+        .await;
+        if cleanup.is_err() {
+            emergency_kill_exact_tree(pid, &terminal).await;
+        }
+        let wait_result = tokio::time::timeout(Duration::from_secs(1), wait_task).await;
+
+        assert!(
+            cleanup.is_ok(),
+            "terminal wait held the child mutex across cancellation"
+        );
+        assert!(
+            wait_result.is_ok(),
+            "terminal wait did not observe cancellation exit"
         );
     }
 }
