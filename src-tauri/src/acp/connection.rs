@@ -1654,20 +1654,32 @@ async fn apply_and_emit_session_config_options(
     emit_session_config_options_values(state, emitter, agent_type, updated).await;
 }
 
+fn effective_prompt_capabilities(
+    agent_type: AgentType,
+    capabilities: &sacp::schema::PromptCapabilities,
+) -> PromptCapabilitiesInfo {
+    PromptCapabilitiesInfo {
+        // Grok 0.2.101/0.2.102 advertises `image=false`, but its ACP
+        // `session/prompt` accepts ImageContent and forwards the bytes to the
+        // model. Treat that known adapter mismatch as image-capable so the UI
+        // does not degrade explicit images into unreadable file links.
+        image: capabilities.image || matches!(agent_type, AgentType::Grok),
+        audio: capabilities.audio,
+        embedded_context: capabilities.embedded_context,
+    }
+}
+
 async fn emit_prompt_capabilities(
     state: &Arc<RwLock<SessionState>>,
     emitter: &EventEmitter,
+    agent_type: AgentType,
     capabilities: &sacp::schema::PromptCapabilities,
 ) {
     emit_with_state(
         state,
         emitter,
         AcpEvent::PromptCapabilities {
-            prompt_capabilities: PromptCapabilitiesInfo {
-                image: capabilities.image,
-                audio: capabilities.audio,
-                embedded_context: capabilities.embedded_context,
-            },
+            prompt_capabilities: effective_prompt_capabilities(agent_type, capabilities),
         },
     )
     .await;
@@ -2424,9 +2436,18 @@ async fn run_connection(
                     return Err(sacp::util::internal_error(INIT_TIMEOUT_SENTINEL));
                 }
             };
+            if matches!(agent_type, AgentType::Grok)
+                && !init_resp.agent_capabilities.prompt_capabilities.image
+            {
+                tracing::warn!(
+                    "[ACP][Grok] overriding advertised promptCapabilities.image=false; \
+                     current Grok ACP accepts inline ImageContent"
+                );
+            }
             emit_prompt_capabilities(
                 &state,
                 &emitter_clone,
+                agent_type,
                 &init_resp.agent_capabilities.prompt_capabilities,
             )
             .await;
@@ -5960,6 +5981,21 @@ async fn emit_conversation_update(
 mod tests {
     use super::*;
     use sacp::schema::Diff;
+
+    #[test]
+    fn grok_effective_prompt_capabilities_include_verified_image_support() {
+        let advertised = sacp::schema::PromptCapabilities::new().embedded_context(true);
+
+        let grok = effective_prompt_capabilities(AgentType::Grok, &advertised);
+        assert!(grok.image);
+        assert!(!grok.audio);
+        assert!(grok.embedded_context);
+
+        let claude = effective_prompt_capabilities(AgentType::ClaudeCode, &advertised);
+        assert!(!claude.image);
+        assert!(!claude.audio);
+        assert!(claude.embedded_context);
+    }
 
     fn diff_content(path: &str, old: Option<&str>, new: &str) -> ToolCallContent {
         let mut d = Diff::new(path, new);

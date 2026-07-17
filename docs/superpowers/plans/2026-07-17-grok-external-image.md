@@ -14,6 +14,11 @@ entry through it, and read remote-desktop local image paths through the existing
 bounded local Tauri command without uploading them. Non-images and agents without
 image capability retain their current resource/upload behavior.
 
+**Validation amendment:** Live Grok 0.2.102 ACP validation showed that Grok
+advertises `promptCapabilities.image=false` but successfully consumes inline
+`ImageContent` without filesystem requests. Normalize Grok's effective image
+capability in the ACP adapter; keep every other agent's advertised value.
+
 **Tech Stack:** React 19, TypeScript strict mode, Vitest, Testing Library, Tauri
 transport helpers, Rust filesystem regression tests.
 

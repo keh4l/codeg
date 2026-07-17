@@ -26,10 +26,18 @@ Grok can see.
 
 All user-facing attachment entry points use the same image classification rule:
 prefer `File.type`, then fall back to the existing filename-extension MIME map.
-When the connected agent advertises `promptCapabilities.image`, an image is
-converted to the existing `ImageInputAttachment` representation. Non-images and
-images for agents without image capability retain the current resource/upload
-behavior.
+When the connected agent has effective image capability, an image is converted
+to the existing `ImageInputAttachment` representation. Non-images and images
+for agents without image capability retain the current resource/upload behavior.
+
+### Grok capability compatibility
+
+Live ACP validation with Grok 0.2.102 found that it advertises
+`promptCapabilities.image=false` while successfully accepting `ImageContent`,
+reading its base64 payload, and making no filesystem request. Codeg therefore
+normalizes the effective image capability to true for Grok only. Other agents
+continue to follow their advertised value exactly. This is an adapter protocol
+compatibility correction, not a filesystem permission bypass.
 
 The following paths are covered:
 
@@ -82,7 +90,7 @@ not migrated or deleted.
 - Reject oversized native-path images through the bounded reader without
   falling back to a path-only image attachment.
 - Do not silently convert an image to a Markdown link when image encoding fails.
-- Keep current behavior when the agent does not advertise image capability.
+- Keep current behavior when an agent has no effective image capability.
 
 ## Regression tests
 
@@ -107,5 +115,5 @@ failure.
   `fs/read_text_file`.
 - Migrating historical uploaded attachments.
 - Changing attachment limits for non-image files.
-- Adding Grok-only protocol branches; the fix follows advertised ACP image
-  capability and applies consistently to every image-capable agent.
+- Adding broad per-agent capability bypasses beyond the evidence-backed Grok
+  image compatibility correction.
