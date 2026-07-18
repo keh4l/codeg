@@ -1189,6 +1189,7 @@
         "removeFolderFailed": "Falha ao remover pasta: {message}",
         "reorderFoldersFailed": "Falha ao reordenar pastas: {message}",
         "changeFolderColorFailed": "Falha ao alterar a cor: {message}",
+        "setFolderAliasFailed": "Falha ao definir o alias: {message}",
         "changeFolderDefaultAgentFailed": "Falha ao definir agente padrão: {message}"
       },
       "statsLabel": "{folders} pastas · {convos} conversas",
@@ -1220,6 +1221,11 @@
         "defaultAgentNone": "Sem padrão (usar global)",
         "agentUnavailableSuffix": "(indisponível)",
         "loadingAgents": "Carregando agentes…",
+        "setAlias": "Definir alias…",
+        "setAliasTitle": "Definir alias da pasta",
+        "setAliasPlaceholder": "Insira um alias (deixe vazio para limpar)",
+        "setAliasSave": "Salvar",
+        "setAliasCancel": "Cancelar",
         "removeFromWorkspace": "Remover do espaço de trabalho"
       },
       "manageConversations": {
@@ -1289,10 +1295,12 @@
         "system": "Sistema",
         "toolResult": "Resultado",
         "toolError": "Erro"
-      }
+      },
+      "moreActions": "Mais ações"
     },
     "sessionDetails": {
       "menuLabel": "Detalhes da sessão",
+      "noActiveSession": "Nenhuma sessão ativa",
       "title": "Detalhes da sessão",
       "subtitle": "Metadados da sessão e uso de tokens",
       "fieldTitle": "Título",
@@ -1434,7 +1442,8 @@
       "preview": "Visualizar",
       "editSource": "Editar fonte",
       "maximize": "Maximizar",
-      "restore": "Restaurar"
+      "restore": "Restaurar",
+      "emptyDirectory": "Pasta vazia"
     },
     "terminal": {
       "rename": "Renomear",
@@ -1866,6 +1875,7 @@
         "addToVcsFailed": "Falha ao adicionar ao VCS",
         "loadBranchesFailed": "Falha ao carregar branches",
         "renameFailed": "Falha ao renomear",
+        "moveFailed": "Falha ao mover",
         "deleteFailed": "Falha ao excluir",
         "rolledBack": "{name} revertido",
         "rollbackFailed": "Falha ao reverter",
@@ -3266,7 +3276,7 @@
       "deleteConfirm": "Excluir o pet \"{name}\"? Será removido do disco.",
       "summon": "Invocar janela do pet",
       "openCodexHelp": "Pets do Codex precisam estar em ~/.codex/pets/. Nenhum encontrado.",
-      "specRequirement": "O sprite precisa ser PNG ou WebP 1536x1872 com transparência.",
+      "specRequirement": "O sprite precisa ter 1536px de largura e altura múltipla de 208px (ex.: 1872 ou 2288), em PNG ou WebP com transparência.",
       "form": {
         "id": "ID do pet",
         "idHelp": "Minúsculas, dígitos, '-' e '_'. Máx 64 caracteres.",

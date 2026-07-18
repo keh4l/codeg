@@ -1189,6 +1189,7 @@
         "removeFolderFailed": "Ordner konnte nicht entfernt werden: {message}",
         "reorderFoldersFailed": "Ordner konnten nicht neu sortiert werden: {message}",
         "changeFolderColorFailed": "Farbe konnte nicht geändert werden: {message}",
+        "setFolderAliasFailed": "Alias konnte nicht festgelegt werden: {message}",
         "changeFolderDefaultAgentFailed": "Standard-Agent konnte nicht gesetzt werden: {message}"
       },
       "statsLabel": "{folders} Ordner · {convos} Konversationen",
@@ -1220,6 +1221,11 @@
         "defaultAgentNone": "Kein Standard (global verwenden)",
         "agentUnavailableSuffix": "(nicht verfügbar)",
         "loadingAgents": "Agenten werden geladen…",
+        "setAlias": "Alias festlegen…",
+        "setAliasTitle": "Ordner-Alias festlegen",
+        "setAliasPlaceholder": "Alias eingeben (zum Entfernen leer lassen)",
+        "setAliasSave": "Speichern",
+        "setAliasCancel": "Abbrechen",
         "removeFromWorkspace": "Aus Arbeitsbereich entfernen"
       },
       "manageConversations": {
@@ -1289,10 +1295,12 @@
         "system": "System",
         "toolResult": "Ergebnis",
         "toolError": "Fehler"
-      }
+      },
+      "moreActions": "Weitere Aktionen"
     },
     "sessionDetails": {
       "menuLabel": "Sitzungsdetails",
+      "noActiveSession": "Keine aktive Sitzung",
       "title": "Sitzungsdetails",
       "subtitle": "Sitzungsmetadaten und Token-Nutzung",
       "fieldTitle": "Titel",
@@ -1434,7 +1442,8 @@
       "preview": "Vorschau",
       "editSource": "Quelle bearbeiten",
       "maximize": "Maximieren",
-      "restore": "Wiederherstellen"
+      "restore": "Wiederherstellen",
+      "emptyDirectory": "Leerer Ordner"
     },
     "terminal": {
       "rename": "Umbenennen",
@@ -1866,6 +1875,7 @@
         "addToVcsFailed": "Hinzufügen zu VCS fehlgeschlagen",
         "loadBranchesFailed": "Branches konnten nicht geladen werden",
         "renameFailed": "Umbenennen fehlgeschlagen",
+        "moveFailed": "Verschieben fehlgeschlagen",
         "deleteFailed": "Löschen fehlgeschlagen",
         "rolledBack": "{name} zurückgesetzt",
         "rollbackFailed": "Zurücksetzen fehlgeschlagen",
@@ -3266,7 +3276,7 @@
       "deleteConfirm": "Pet „{name}\" löschen? Auch von der Festplatte entfernt.",
       "summon": "Pet-Fenster aufrufen",
       "openCodexHelp": "Codex-Pets müssen in ~/.codex/pets/ liegen. Nichts gefunden.",
-      "specRequirement": "Sprite-Sheet muss 1536x1872 PNG oder WebP mit Transparenz sein.",
+      "specRequirement": "Sprite-Sheet muss 1536px breit sein, mit einer Höhe als Vielfaches von 208px (z. B. 1872 oder 2288), als PNG oder WebP mit Transparenz.",
       "form": {
         "id": "Pet-ID",
         "idHelp": "Kleinbuchstaben, Ziffern, '-' und '_'. Max 64 Zeichen.",

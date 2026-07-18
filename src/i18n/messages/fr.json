@@ -1189,6 +1189,7 @@
         "removeFolderFailed": "Échec de la suppression du dossier : {message}",
         "reorderFoldersFailed": "Échec du réordonnancement des dossiers : {message}",
         "changeFolderColorFailed": "Échec du changement de couleur : {message}",
+        "setFolderAliasFailed": "Échec de la définition de l'alias : {message}",
         "changeFolderDefaultAgentFailed": "Échec de la définition de l'agent par défaut : {message}"
       },
       "statsLabel": "{folders} dossiers · {convos} conversations",
@@ -1220,6 +1221,11 @@
         "defaultAgentNone": "Aucun (utiliser la valeur globale)",
         "agentUnavailableSuffix": "(indisponible)",
         "loadingAgents": "Chargement des agents…",
+        "setAlias": "Définir un alias…",
+        "setAliasTitle": "Définir l'alias du dossier",
+        "setAliasPlaceholder": "Saisir un alias (laisser vide pour effacer)",
+        "setAliasSave": "Enregistrer",
+        "setAliasCancel": "Annuler",
         "removeFromWorkspace": "Retirer de l'espace de travail"
       },
       "manageConversations": {
@@ -1289,10 +1295,12 @@
         "system": "Système",
         "toolResult": "Résultat",
         "toolError": "Erreur"
-      }
+      },
+      "moreActions": "Plus d’actions"
     },
     "sessionDetails": {
       "menuLabel": "Détails de la session",
+      "noActiveSession": "Aucune session active",
       "title": "Détails de la session",
       "subtitle": "Métadonnées de la session et utilisation des tokens",
       "fieldTitle": "Titre",
@@ -1434,7 +1442,8 @@
       "preview": "Aperçu",
       "editSource": "Modifier la source",
       "maximize": "Agrandir",
-      "restore": "Restaurer"
+      "restore": "Restaurer",
+      "emptyDirectory": "Dossier vide"
     },
     "terminal": {
       "rename": "Renommer",
@@ -1866,6 +1875,7 @@
         "addToVcsFailed": "Échec de l'ajout au VCS",
         "loadBranchesFailed": "Échec du chargement des branches",
         "renameFailed": "Échec du renommage",
+        "moveFailed": "Échec du déplacement",
         "deleteFailed": "Échec de la suppression",
         "rolledBack": "{name} annulé",
         "rollbackFailed": "Échec de l'annulation",
@@ -3266,7 +3276,7 @@
       "deleteConfirm": "Supprimer la mascotte « {name} » ? Elle sera retirée du disque.",
       "summon": "Invoquer la fenêtre de la mascotte",
       "openCodexHelp": "Les mascottes Codex doivent être dans ~/.codex/pets/. Aucune trouvée.",
-      "specRequirement": "Le sprite doit être un PNG/WebP 1536x1872 avec transparence.",
+      "specRequirement": "Le sprite doit faire 1536px de large avec une hauteur multiple de 208px (par ex. 1872 ou 2288), en PNG/WebP avec transparence.",
       "form": {
         "id": "ID mascotte",
         "idHelp": "Lettres minuscules, chiffres, '-' et '_'. Max 64 caractères.",

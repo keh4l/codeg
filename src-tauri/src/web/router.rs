@@ -188,6 +188,10 @@ pub fn build_router(
             post(handlers::folders::update_folder_color),
         )
         .route(
+            "/update_folder_alias",
+            post(handlers::folders::update_folder_alias),
+        )
+        .route(
             "/update_folder_default_agent",
             post(handlers::folders::update_folder_default_agent),
         )
@@ -357,6 +361,10 @@ pub fn build_router(
         .route(
             "/rename_file_tree_entry",
             post(handlers::files::rename_file_tree_entry),
+        )
+        .route(
+            "/move_file_tree_entry",
+            post(handlers::files::move_file_tree_entry),
         )
         .route(
             "/delete_file_tree_entry",

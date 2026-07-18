@@ -1189,6 +1189,7 @@
         "removeFolderFailed": "フォルダの削除に失敗しました: {message}",
         "reorderFoldersFailed": "フォルダの並べ替えに失敗しました: {message}",
         "changeFolderColorFailed": "色の変更に失敗しました: {message}",
+        "setFolderAliasFailed": "エイリアスの設定に失敗しました: {message}",
         "changeFolderDefaultAgentFailed": "デフォルトエージェントの設定に失敗しました: {message}"
       },
       "statsLabel": "{folders} フォルダ · {convos} 会話",
@@ -1220,6 +1221,11 @@
         "defaultAgentNone": "設定なし（グローバルを使用）",
         "agentUnavailableSuffix": "（利用不可）",
         "loadingAgents": "エージェントを読み込み中…",
+        "setAlias": "エイリアスを設定…",
+        "setAliasTitle": "フォルダーのエイリアスを設定",
+        "setAliasPlaceholder": "エイリアスを入力（空欄でクリア）",
+        "setAliasSave": "保存",
+        "setAliasCancel": "キャンセル",
         "removeFromWorkspace": "ワークスペースから削除"
       },
       "manageConversations": {
@@ -1289,10 +1295,12 @@
         "system": "システム",
         "toolResult": "結果",
         "toolError": "エラー"
-      }
+      },
+      "moreActions": "その他の操作"
     },
     "sessionDetails": {
       "menuLabel": "セッション詳細",
+      "noActiveSession": "アクティブなセッションがありません",
       "title": "セッション詳細",
       "subtitle": "セッションのメタデータとトークン使用量",
       "fieldTitle": "タイトル",
@@ -1434,7 +1442,8 @@
       "preview": "プレビュー",
       "editSource": "ソースを編集",
       "maximize": "最大化",
-      "restore": "元に戻す"
+      "restore": "元に戻す",
+      "emptyDirectory": "空のフォルダー"
     },
     "terminal": {
       "rename": "名前を変更",
@@ -1866,6 +1875,7 @@
         "addToVcsFailed": "VCS への追加に失敗しました",
         "loadBranchesFailed": "ブランチの読み込みに失敗しました",
         "renameFailed": "名前の変更に失敗しました",
+        "moveFailed": "移動に失敗しました",
         "deleteFailed": "削除に失敗しました",
         "rolledBack": "{name} をロールバックしました",
         "rollbackFailed": "ロールバックに失敗しました",
@@ -3266,7 +3276,7 @@
       "deleteConfirm": "ペット「{name}」を削除しますか?ディスクからも削除されます。",
       "summon": "ペットウィンドウを呼び出す",
       "openCodexHelp": "Codex ペットは ~/.codex/pets/ 配下に配置する必要があります。見つかりません。",
-      "specRequirement": "スプライトシートは 1536x1872 ピクセル、透過 PNG / WebP 形式である必要があります。",
+      "specRequirement": "スプライトシートは幅 1536 ピクセル、高さは 208 ピクセルの倍数（例: 1872 または 2288）で、透過 PNG / WebP 形式である必要があります。",
       "form": {
         "id": "ペット ID",
         "idHelp": "英小文字、数字、'-'、'_' のみ。最大 64 文字。",

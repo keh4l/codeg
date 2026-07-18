@@ -680,7 +680,15 @@ mod tauri_app {
                         .title("Codeg")
                         .inner_size(1260.0, 860.0)
                         .min_inner_size(400.0, 600.0);
-                    if let Ok(w) = windows::apply_platform_window_style(builder).build() {
+                    let builder = windows::apply_platform_window_style(builder);
+                    // The workspace title bar is taller than the shared default
+                    // (it hosts the tab strips), so nudge the native macOS
+                    // traffic lights down to stay vertically centred.
+                    #[cfg(target_os = "macos")]
+                    let builder = builder.traffic_light_position(
+                        windows::workspace_window_traffic_light_position(),
+                    );
+                    if let Ok(w) = builder.build() {
                         windows::post_window_setup(&w);
                     }
                 }
@@ -895,6 +903,7 @@ mod tauri_app {
                 folders::remove_folder_from_workspace,
                 folders::reorder_folders,
                 folders::update_folder_color,
+                folders::update_folder_alias,
                 folders::update_folder_default_agent,
                 folders::add_folder_to_history,
                 folders::remove_folder_from_history,
@@ -959,6 +968,7 @@ mod tauri_app {
                 folders::save_file_content,
                 folders::save_file_copy,
                 folders::rename_file_tree_entry,
+                folders::move_file_tree_entry,
                 folders::delete_file_tree_entry,
                 folders::create_file_tree_entry,
                 folders::git_log,
