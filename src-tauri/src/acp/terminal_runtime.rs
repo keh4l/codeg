@@ -409,15 +409,29 @@ impl UnixProcessGroupLease {
     }
 }
 
+#[cfg(all(test, unix))]
+#[derive(Clone)]
+struct ExitObservationBarrier {
+    reached: Arc<tokio::sync::Barrier>,
+    resume: Arc<tokio::sync::Barrier>,
+}
+
 struct TerminalInstance {
     terminal_id: String,
     session_id: String,
     #[cfg(unix)]
     process_group: UnixProcessGroupLease,
+    /// Serializes observing a direct-child exit with the corresponding Unix
+    /// process-group lease transition. A cleanup must not see an absent child
+    /// while the lease still describes a live leader.
+    #[cfg(unix)]
+    leader_exit_observation_gate: Mutex<()>,
     output_limit: Option<usize>,
     child: Mutex<Option<tokio::process::Child>>,
     snapshot: Mutex<TerminalSnapshot>,
     reader_handles: Mutex<Vec<JoinHandle<()>>>,
+    #[cfg(all(test, unix))]
+    exit_observation_barrier: std::sync::Mutex<Option<ExitObservationBarrier>>,
 }
 
 impl TerminalInstance {
@@ -444,11 +458,36 @@ impl TerminalInstance {
             session_id,
             #[cfg(unix)]
             process_group,
+            #[cfg(unix)]
+            leader_exit_observation_gate: Mutex::new(()),
             output_limit: output_limit.and_then(|v| usize::try_from(v).ok()),
             child: Mutex::new(Some(child)),
             snapshot: Mutex::new(TerminalSnapshot::default()),
             reader_handles: Mutex::new(Vec::new()),
+            #[cfg(all(test, unix))]
+            exit_observation_barrier: std::sync::Mutex::new(None),
         })
+    }
+
+    #[cfg(all(test, unix))]
+    fn install_exit_observation_barrier(&self, barrier: ExitObservationBarrier) {
+        *self
+            .exit_observation_barrier
+            .lock()
+            .expect("exit observation barrier lock") = Some(barrier);
+    }
+
+    #[cfg(all(test, unix))]
+    async fn pause_after_reap_before_lease_observation(&self) {
+        let barrier = self
+            .exit_observation_barrier
+            .lock()
+            .expect("exit observation barrier lock")
+            .clone();
+        if let Some(barrier) = barrier {
+            barrier.reached.wait().await;
+            barrier.resume.wait().await;
+        }
     }
 
     /// Wait briefly for stdout/stderr reader tasks to finish; abort any that
@@ -489,6 +528,43 @@ impl TerminalInstance {
             }
         }
 
+        #[cfg(unix)]
+        let (maybe_status, process_group_result) = {
+            let _observation_guard = self.leader_exit_observation_gate.lock().await;
+            let mut child_guard = self.child.lock().await;
+            if let Some(child) = child_guard.as_mut() {
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        // Do not make the child absent visible until the group
+                        // lease has either become bounded descendants or has
+                        // retired. The child mutex is released before the
+                        // async lease observation.
+                        drop(child_guard);
+
+                        #[cfg(all(test, unix))]
+                        self.pause_after_reap_before_lease_observation().await;
+
+                        let process_group_result = self
+                            .process_group
+                            .observe_leader_exit(tokio::time::Instant::now())
+                            .await;
+
+                        *self.child.lock().await = None;
+                        (Some(status), process_group_result)
+                    }
+                    Ok(None) => (None, Ok(())),
+                    Err(err) => {
+                        return Err(TerminalRuntimeError::Internal(format!(
+                            "failed to query terminal exit status: {err}"
+                        )))
+                    }
+                }
+            } else {
+                (None, Ok(()))
+            }
+        };
+
+        #[cfg(not(unix))]
         let maybe_status = {
             let mut child_guard = self.child.lock().await;
             if let Some(child) = child_guard.as_mut() {
@@ -510,12 +586,6 @@ impl TerminalInstance {
         };
 
         if let Some(status) = maybe_status {
-            #[cfg(unix)]
-            let process_group_result = self
-                .process_group
-                .observe_leader_exit(tokio::time::Instant::now())
-                .await;
-
             // Drain readers BEFORE exposing exit_status. Otherwise a caller
             // polling `terminal/output` can see `exit_status = Some(...)` while
             // a grandchild process (e.g. Node spawned from a `.cmd` shim on
@@ -1134,6 +1204,7 @@ mod tests {
         probes: std::sync::Mutex<VecDeque<ProcessGroupPresence>>,
         signals: std::sync::Mutex<VecDeque<ProcessGroupSignalResult>>,
         probe_delay: Option<Duration>,
+        call_tx: Option<tokio::sync::mpsc::UnboundedSender<BackendCall>>,
     }
 
     impl MockProcessGroupBackend {
@@ -1159,6 +1230,24 @@ mod tests {
                 probes: std::sync::Mutex::new(probes.into_iter().collect()),
                 probe_delay: Some(probe_delay),
                 ..Self::default()
+            }
+        }
+
+        fn with_call_tx(
+            mut self,
+            call_tx: tokio::sync::mpsc::UnboundedSender<BackendCall>,
+        ) -> Self {
+            self.call_tx = Some(call_tx);
+            self
+        }
+
+        fn record_call(&self, call: BackendCall) {
+            self.calls
+                .lock()
+                .expect("mock calls lock")
+                .push(call.clone());
+            if let Some(call_tx) = &self.call_tx {
+                let _ = call_tx.send(call);
             }
         }
 
@@ -1193,10 +1282,7 @@ mod tests {
             &self,
             key: ProcessGroupKey,
         ) -> Result<ProcessGroupPresence, TerminalRuntimeError> {
-            self.calls
-                .lock()
-                .expect("mock calls lock")
-                .push(BackendCall::Probe(key));
+            self.record_call(BackendCall::Probe(key));
             let result = self
                 .probes
                 .lock()
@@ -1214,10 +1300,7 @@ mod tests {
             key: ProcessGroupKey,
             signal: libc::c_int,
         ) -> Result<ProcessGroupSignalResult, TerminalRuntimeError> {
-            self.calls
-                .lock()
-                .expect("mock calls lock")
-                .push(BackendCall::Signal(key, signal));
+            self.record_call(BackendCall::Signal(key, signal));
             Ok(self
                 .signals
                 .lock()
@@ -1334,6 +1417,85 @@ mod tests {
 
         assert!(report.is_clean());
         assert!(backend.calls().is_empty());
+        assert!(backend.delivered_signals().is_empty());
+    }
+
+    #[tokio::test]
+    async fn concurrent_cleanup_never_signals_after_reap_before_lease_observation() {
+        let (call_tx, mut call_rx) = tokio::sync::mpsc::unbounded_channel();
+        let backend = Arc::new(
+            MockProcessGroupBackend::with_probes([ProcessGroupPresence::Missing])
+                .with_call_tx(call_tx),
+        );
+        let runtime = TerminalRuntime::with_base_env(BTreeMap::new())
+            .with_process_group_backend(backend.clone());
+        let session_id = SessionId::new("reap-before-lease-observation".to_string());
+        let response = runtime
+            .create_terminal(CreateTerminalRequest::new(
+                session_id.clone(),
+                "/bin/true".to_string(),
+            ))
+            .await
+            .expect("create short terminal");
+        let terminal = runtime
+            .find_terminal(&response.terminal_id.to_string(), session_id.0.as_ref())
+            .await
+            .expect("find test terminal");
+        let barrier = ExitObservationBarrier {
+            reached: Arc::new(tokio::sync::Barrier::new(2)),
+            resume: Arc::new(tokio::sync::Barrier::new(2)),
+        };
+        terminal.install_exit_observation_barrier(barrier.clone());
+
+        let refresh_terminal = terminal.clone();
+        let refresh = tokio::spawn(async move {
+            loop {
+                refresh_terminal.refresh_exit_status().await?;
+                if refresh_terminal.snapshot.lock().await.exit_status.is_some() {
+                    return Ok::<(), TerminalRuntimeError>(());
+                }
+                tokio::time::sleep(CHILD_EXIT_POLL_INTERVAL).await;
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(1), barrier.reached.wait())
+            .await
+            .expect("direct child did not reach controlled reap observation");
+        let leader_key = match *terminal.process_group.state.lock().await {
+            UnixProcessGroupState::OwnedLeaderAlive { key } => key,
+            other => panic!("lease changed before the controlled observation point: {other:?}"),
+        };
+        assert!(
+            terminal.child.lock().await.is_some(),
+            "child must not become absent before the lease observation commits"
+        );
+
+        let cleanup_terminal = terminal.clone();
+        let cleanup = tokio::spawn(async move { cleanup_terminal.kill_command().await });
+        let early_call = tokio::time::timeout(Duration::from_millis(50), call_rx.recv()).await;
+        assert!(
+            early_call.is_err(),
+            "cleanup signalled or probed while leader exit observation was paused: {early_call:?}"
+        );
+
+        tokio::time::timeout(Duration::from_secs(1), barrier.resume.wait())
+            .await
+            .expect("controlled reap observation did not resume");
+        refresh.await.expect("join refresh").expect("refresh exit");
+        cleanup.await.expect("join cleanup").expect("cleanup exit");
+
+        assert_eq!(backend.calls(), vec![BackendCall::Probe(leader_key)]);
+        assert!(backend.delivered_signals().is_empty());
+        assert_eq!(
+            *terminal.process_group.state.lock().await,
+            UnixProcessGroupState::Retired
+        );
+
+        // A later user of the same numeric PGID remains outside this terminal's
+        // retired lease and receives no further backend operation.
+        backend.push_probe(ProcessGroupPresence::Present);
+        let calls_after_retirement = backend.calls();
+        terminal.kill_command().await.expect("repeated cleanup");
+        assert_eq!(backend.calls(), calls_after_retirement);
         assert!(backend.delivered_signals().is_empty());
     }
 

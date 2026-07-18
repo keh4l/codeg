@@ -77,6 +77,15 @@ The generation is carried through logs and the injectable backend boundary so a
 test can distinguish the original group from a later group that happens to
 reuse the same numeric PGID.
 
+On Unix, `TerminalInstance` also serializes direct-child exit observation with
+a per-terminal observation gate. Its observation transaction is
+`try_wait(Some) -> observe/transition process-group lease -> child=None`.
+The child mutex is never held across the async observation, but no competing
+cleanup can finish its own exit refresh and enter group cleanup while that
+transaction is in progress. Consequently cleanup cannot treat a reaped leader
+as `OwnedLeaderAlive` and signal its bare PGID without the descendant probe and
+deadline checks.
+
 Codeg will signal only the negative PGID covered by a currently valid lease.
 Codeg's own process group and every other ACP terminal remain outside the
 target group, so Stop cannot intentionally target unrelated sessions or the
