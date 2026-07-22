@@ -52,6 +52,8 @@ import {
 } from "@/contexts/workspace-context"
 import { RemoteConnectionGate } from "@/contexts/remote-connection-context"
 import { UpdateProvider } from "@/components/providers/update-provider"
+import { useWorkspaceBackground, useZoomLevel } from "@/hooks/use-appearance"
+import { FILL_MODE_STYLE } from "@/lib/workspace-background"
 import { TabBar } from "@/components/tabs/tab-bar"
 import { TerminalPanel } from "@/components/terminal/terminal-panel"
 import { AuxPanel } from "@/components/layout/aux-panel"
@@ -262,14 +264,16 @@ function WorkspaceContent({ children }: { children: React.ReactNode }) {
   const { isOpen: sidebarOpen } = useSidebarContext()
   const { isOpen: auxOpen } = useAuxPanelContext()
   const { isMac, isWindows, isLinux } = usePlatform()
+  const { zoomLevel } = useZoomLevel()
   const hasConvTabs = useTabStore((s) => s.tabs.length > 0)
   const winLinuxControls = isDesktop() && (isWindows || isLinux)
   // The window chrome (toggle/remote left, terminal/aux/settings right) now
   // lives in fixed corner overlays (see FolderLayoutShell) that never move on
   // panel toggles. Each edge column just reserves the overlay's width so its
-  // tabs never render underneath.
-  const leftReserve = leftChromeReserve(isMac && isDesktop())
-  const rightReserve = rightChromeReserve(winLinuxControls)
+  // tabs never render underneath. The reserve scales with the app zoom so it
+  // tracks the rem-sized overlay buttons (which grow with zoom).
+  const leftReserve = leftChromeReserve(isMac && isDesktop(), zoomLevel)
+  const rightReserve = rightChromeReserve(winLinuxControls, zoomLevel)
   // A middle column reserves the right overlay only when it (not the aux panel)
   // is the window's right edge: the file column in fusion, else conversation.
   const convReservesRight = !auxOpen && mode === "conversation"
@@ -300,7 +304,13 @@ function WorkspaceContent({ children }: { children: React.ReactNode }) {
             <section
               className={cn(
                 "flex h-full min-h-0 flex-col overflow-hidden",
-                mode === "conversation" && "absolute inset-0 z-30 bg-background"
+                mode === "conversation" &&
+                  "absolute inset-0 z-30 bg-background ws-transparent-bg",
+                // Covered by the files-maximized overlay: stop painting so it
+                // can't show through the now-translucent overlay. `invisible`
+                // (visibility:hidden), not display:none, keeps mount + box size
+                // intact so the stick-to-bottom scroll doesn't reset.
+                filesMaximized && "invisible"
               )}
               inert={filesMaximized || undefined}
             >
@@ -311,31 +321,36 @@ function WorkspaceContent({ children }: { children: React.ReactNode }) {
                   header + tiles render inside {children}, directly below.
                   `bg-muted` shades the strip like a browser tab bar (matching
                   the bottom StatusBar) — the active tab (bg-background) reads as
-                  a white tab seated on it, with reverse bottom corners. */}
-              <div className="flex h-10 shrink-0 items-stretch bg-muted">
+                  a white tab seated on it, with reverse bottom corners. With a
+                  workspace background image on, the strip + every tab go
+                  transparent (reveal the image); a hairline bottom border
+                  (ws-strip-line) runs under the reserves and inactive tabs while
+                  the active tab omits it and the border arches over its top
+                  (the active browser-tab-item's `::after`) instead. */}
+              <div className="flex h-10 shrink-0 items-stretch bg-muted ws-transparent-bg">
                 {!sidebarOpen && (
                   <div
                     data-tauri-drag-region
-                    className="h-full shrink-0"
+                    className="h-full shrink-0 ws-strip-line"
                     style={{ width: leftReserve }}
                   />
                 )}
                 <div className="flex min-w-0 flex-1 items-stretch">
                   {hasConvTabs ? (
-                    <TabBar embedded />
+                    <TabBar />
                   ) : (
                     // No tabs → TabBar renders null; keep a drag region so the
                     // empty bar can still move the window.
                     <div
                       data-tauri-drag-region
-                      className="h-full min-w-0 flex-1"
+                      className="h-full min-w-0 flex-1 ws-strip-line"
                     />
                   )}
                 </div>
                 {convReservesRight && (
                   <div
                     data-tauri-drag-region
-                    className="h-full shrink-0"
+                    className="h-full shrink-0 ws-strip-line"
                     style={{ width: rightReserve }}
                   />
                 )}
@@ -383,7 +398,12 @@ function WorkspaceContent({ children }: { children: React.ReactNode }) {
             <section
               className={cn(
                 "flex h-full min-h-0 flex-col overflow-hidden",
-                filesMaximized && "absolute inset-0 z-30 bg-background"
+                filesMaximized &&
+                  "absolute inset-0 z-30 bg-background ws-transparent-bg",
+                // Covered by the conversation overlay in conversation mode: hide
+                // from paint (keep mount + layout) so it can't show through the
+                // translucent overlay.
+                mode === "conversation" && "invisible"
               )}
               aria-hidden={mode === "conversation"}
             >
@@ -393,22 +413,26 @@ function WorkspaceContent({ children }: { children: React.ReactNode }) {
                   live in FileWorkspaceHeader below, above every
                   FileWorkspacePanel render branch. `bg-muted` shades the strip
                   like a browser tab bar (matches the conversation column and the
-                  bottom StatusBar). */}
-              <div className="flex h-10 shrink-0 items-stretch bg-muted">
+                  bottom StatusBar). With a workspace background image on, the
+                  strip + every tab go transparent (reveal the image) and a
+                  hairline bottom border (ws-strip-line) sits under the reserves
+                  and inactive tabs, arching over the active tab (the active
+                  browser-tab-item's `::after`) — same as the conversation column. */}
+              <div className="flex h-10 shrink-0 items-stretch bg-muted ws-transparent-bg">
                 {fileReservesLeft && (
                   <div
                     data-tauri-drag-region
-                    className="h-full shrink-0"
+                    className="h-full shrink-0 ws-strip-line"
                     style={{ width: leftReserve }}
                   />
                 )}
                 <div className="flex min-w-0 flex-1 items-stretch">
-                  <FileWorkspaceTabBar embedded />
+                  <FileWorkspaceTabBar />
                 </div>
                 {fileReservesRight && (
                   <div
                     data-tauri-drag-region
-                    className="h-full shrink-0"
+                    className="h-full shrink-0 ws-strip-line"
                     style={{ width: rightReserve }}
                   />
                 )}
@@ -430,7 +454,7 @@ function WorkspaceContent({ children }: { children: React.ReactNode }) {
         </ResizablePanelGroup>
       </div>
       {!isConversations ? (
-        <div className="absolute inset-0 z-40 flex flex-col bg-background">
+        <div className="absolute inset-0 z-40 flex flex-col ws-surface">
           {/* Reserve the fixed window-chrome overlays' h-10 corner strip so
               route content (e.g. the Automations enable switch at the top-right)
               never renders beneath them. The strip is a window-drag region. */}
@@ -455,15 +479,19 @@ function MobileWorkspaceContent({ children }: { children: React.ReactNode }) {
     <div className="relative h-full min-h-0 overflow-hidden">
       <div className="h-full min-h-0" inert={!isConversations || undefined}>
         {showConversation ? (
+          // Mobile mirrors the desktop chrome: no tab strip — the conversation
+          // detail header (folder › title) renders inside {children}, and tabs
+          // are navigated from the sidebar (single active conversation at a time).
           <section className="flex h-full min-h-0 flex-col overflow-hidden">
-            <TabBar />
             <div className="relative flex-1 min-h-0 overflow-hidden">
               {children}
             </div>
           </section>
         ) : (
+          // File view: the shared FileWorkspaceHeader (folder › file breadcrumb)
+          // replaces the file tab strip, matching the desktop file column.
           <section className="flex h-full min-h-0 flex-col overflow-hidden">
-            <FileWorkspaceTabBar />
+            <FileWorkspaceHeader />
             <div className="flex-1 min-h-0 overflow-hidden">
               <FileWorkspacePanel />
             </div>
@@ -471,7 +499,7 @@ function MobileWorkspaceContent({ children }: { children: React.ReactNode }) {
         )}
       </div>
       {!isConversations ? (
-        <div className="absolute inset-0 z-40 bg-background">
+        <div className="absolute inset-0 z-40 ws-surface">
           <WorkbenchRoutePage />
         </div>
       ) : null}
@@ -887,7 +915,7 @@ function FolderWorkspaceShell({ children }: { children: React.ReactNode }) {
               it closes, but the panel keeps a shrinking width for the 240ms
               slide — an un-backed wrapper would show the root `bg-background`
               (white) through that gap. */}
-          <div className="h-full min-h-0 overflow-hidden bg-sidebar">
+          <div className="h-full min-h-0 overflow-hidden ws-surface-sidebar">
             <Sidebar />
           </div>
         </ResizablePanel>
@@ -968,12 +996,14 @@ function FolderWorkspaceShell({ children }: { children: React.ReactNode }) {
           minSize={auxOpen ? auxSizeRange.minSize : 0}
           maxSize={auxOpen ? auxSizeRange.maxSize : 0}
         >
-          {/* `bg-muted` on the wrapper matches the aux panel's top strip (and
-              the neighbouring file strip) so the collapse never flashes white:
-              AuxPanel `return null`s the instant it closes while the panel keeps
-              a shrinking width for the 240ms slide, and an un-backed wrapper
-              would show the root `bg-background` (white) through that gap. */}
-          <div className="h-full min-h-0 overflow-hidden bg-muted">
+          {/* Transparent canvas so the right column reads like the middle
+              conversation area (its own frosted chrome — the aux toolbar — sits
+              on top): with a background image on, the file tree shows the image
+              through instead of a second frosted layer over the toolbar. The
+              paired `bg-background` is the off-state (image disabled): equivalent
+              to the old opaque wrapper, so the 240ms collapse slide still never
+              flashes white while AuxPanel `return null`s. */}
+          <div className="h-full min-h-0 overflow-hidden bg-background ws-transparent-bg">
             <AuxPanel />
           </div>
         </ResizablePanel>
@@ -986,9 +1016,47 @@ function FolderLayoutShell({ children }: { children: React.ReactNode }) {
   const isMobile = useIsMobile()
   const { isWindows, isLinux } = usePlatform()
   const winLinuxControls = isDesktop() && (isWindows || isLinux)
+  const {
+    workspaceBgEnabled,
+    workspaceBgImageUrl,
+    workspaceBgMaskOpacity,
+    workspaceBgImageBlur,
+    workspaceBgFillMode,
+  } = useWorkspaceBackground()
+  const showBackground = workspaceBgEnabled && workspaceBgImageUrl !== null
+  const fillStyle = FILL_MODE_STYLE[workspaceBgFillMode]
 
   return (
     <div className="fixed inset-0 flex flex-col overflow-hidden bg-background text-foreground pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
+      {/* 用户背景图片：铺在整个工作区底层。根 div 是 fixed，已建立层叠上下文，故
+          -z-10 绘于自身 bg-background 之上、所有流内容之下。遮罩是朝 --background 的
+          面纱（明暗自适配），保证内容可读；结构性面板的半透明由 globals.css 的
+          [data-workspace-bg] 规则处理，不在此。 */}
+      {showBackground && (
+        <>
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 -z-10 bg-center"
+            style={{
+              backgroundImage: `url("${workspaceBgImageUrl}")`,
+              backgroundSize: fillStyle.size,
+              backgroundRepeat: fillStyle.repeat,
+              filter: workspaceBgImageBlur
+                ? `blur(${workspaceBgImageBlur}px)`
+                : undefined,
+            }}
+          />
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 -z-10"
+            style={{
+              backgroundColor: `color-mix(in oklch, var(--background) ${Math.round(
+                workspaceBgMaskOpacity * 100
+              )}%, transparent)`,
+            }}
+          />
+        </>
+      )}
       {/* Global shortcuts + the search / remote-directory dialogs (formerly
           owned by the full-width FolderTitleBar). Mounted on both platforms. */}
       <WorkspaceChromeController />

@@ -21,8 +21,7 @@ import {
   updateConversationTitle,
 } from "@/lib/api"
 import { formatConversationTitle } from "@/lib/conversation-title"
-import { formatFolderLabelWithAlias } from "@/lib/folder-display"
-import { FolderAliasLabel } from "@/components/conversations/folder-alias-label"
+import { ConversationHeaderFolderPicker } from "@/components/chat/conversation-context-bar"
 import { useAppWorkspaceStore } from "@/stores/app-workspace-store"
 import { useTabActions } from "@/contexts/tab-context"
 import { useConversationLocate } from "@/contexts/conversation-locate-context"
@@ -75,11 +74,6 @@ interface ConversationDetailHeaderProps {
   runtimeConversationId: number | null
   folderId: number
   folderPath: string | undefined
-  /** Owning folder's raw name, shown as a breadcrumb left of the title. */
-  folderName: string | null
-  /** Owning folder's user-set alias, or null. When set the breadcrumb renders
-   *  `alias [ name ]` via {@link FolderAliasLabel}. */
-  folderAlias: string | null
   title: string
   status: ConversationStatus | undefined
 }
@@ -104,8 +98,6 @@ export const ConversationDetailHeader = memo(function ConversationDetailHeader({
   runtimeConversationId,
   folderId,
   folderPath,
-  folderName,
-  folderAlias,
   title,
   status,
 }: ConversationDetailHeaderProps) {
@@ -247,29 +239,19 @@ export const ConversationDetailHeader = memo(function ConversationDetailHeader({
   }, [conversationId, runtimeConversationId, runtimeId])
 
   return (
+    // Transparent (no surface class): the title header reads as part of the
+    // message canvas below it rather than as a frosted chrome band. With a
+    // workspace background image on, the tab strip above it is transparent too,
+    // so the whole top of the column reveals the canvas.
     <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/50 px-3">
       <div className="flex min-w-0 flex-1 items-center gap-1.5">
-        {folderName && (
-          <>
-            <span
-              className="max-w-[10rem] shrink-0 truncate text-sm text-muted-foreground"
-              title={formatFolderLabelWithAlias({
-                name: folderName,
-                alias: folderAlias,
-              })}
-            >
-              <FolderAliasLabel
-                name={folderName}
-                alias={folderAlias}
-                bracketClassName="text-foreground/80"
-              />
-            </span>
-            <ChevronRight
-              className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50"
-              aria-hidden
-            />
-          </>
-        )}
+        {/* Folder selector — replaces the old folder-name breadcrumb. Switches
+            folders for a draft; a static chip for a bound conversation. */}
+        <ConversationHeaderFolderPicker tabId={tabId} />
+        <ChevronRight
+          className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50"
+          aria-hidden
+        />
         <span className="truncate text-sm text-foreground/90" title={title}>
           {displayTitle}
         </span>

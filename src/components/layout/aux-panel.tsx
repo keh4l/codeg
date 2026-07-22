@@ -17,6 +17,7 @@ import { useActiveFolder } from "@/contexts/active-folder-context"
 import { useIsActiveChatMode } from "@/hooks/use-is-active-chat-mode"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { usePlatform } from "@/hooks/use-platform"
+import { useZoomLevel } from "@/hooks/use-appearance"
 import { isDesktop } from "@/lib/platform"
 import { rightChromeReserve } from "@/lib/window-chrome"
 import { cn } from "@/lib/utils"
@@ -118,6 +119,7 @@ export function AuxPanel() {
   const isChatMode = useIsActiveChatMode()
   const isMobile = useIsMobile()
   const { isWindows, isLinux } = usePlatform()
+  const { zoomLevel } = useZoomLevel()
   const [mountedTabs, setMountedTabs] = useState<Set<AuxPanelTab>>(
     () => new Set(LAZY_TABS.filter((tab) => tab === activeTab))
   )
@@ -179,7 +181,7 @@ export function AuxPanel() {
   // a dropdown. Only relevant to the desktop layout (mobile is a full-width
   // Sheet), and only when there's more than the lone Session Details tab.
   const winLinuxControls = isDesktop() && (isWindows || isLinux)
-  const rightReserve = rightChromeReserve(winLinuxControls)
+  const rightReserve = rightChromeReserve(winLinuxControls, zoomLevel)
   const collapsed =
     !isMobile &&
     showFolderTabs &&
@@ -272,7 +274,9 @@ export function AuxPanel() {
       ref={asideRef}
       className={cn(
         "group/aux-panel flex h-full min-h-0 flex-col overflow-hidden text-sidebar-foreground select-none",
-        isMobile ? "bg-sidebar" : "bg-background"
+        // 桌面态背景交给 workspace 的 ws-surface wrapper，让背景图透出（未启用时
+        // wrapper 等价 bg-background，零回归）；移动态是抽屉，保持不透明。
+        isMobile ? "bg-sidebar" : ""
       )}
     >
       <Tabs
@@ -284,7 +288,7 @@ export function AuxPanel() {
           // Mobile (Sheet): unchanged — full-width underline tabs + a divider.
           <TabsList
             variant="line"
-            className="h-10 w-full shrink-0 justify-start border-b border-border px-3 group-data-horizontal/tabs:h-10"
+            className="h-10 w-full shrink-0 justify-start border-b border-border ws-chrome-border px-3 group-data-horizontal/tabs:h-10"
           >
             {renderTabTriggers(false)}
             {/* Trailing drag region lets the empty part of the tab row move
@@ -307,11 +311,18 @@ export function AuxPanel() {
           // TabsContent's aria-labelledby still resolves the panel's name from
           // the directly-referenced hidden trigger, so it stays labelled without
           // showing a pointless single-tab control.
-          <div className="flex h-10 shrink-0 items-center gap-2 bg-muted pl-3 pr-2">
-            {/* `bg-muted` matches the conversation/file strips + bottom
-                StatusBar. The segmented track then needs a recessed groove
+          <div className="flex h-10 shrink-0 items-center gap-2 bg-muted ws-transparent-bg ws-strip-line pl-3 pr-2">
+            {/* Off-image `bg-muted` matches the conversation/file strips +
+                bottom StatusBar. With a workspace background image on, the
+                composition-family pair `ws-transparent-bg ws-strip-line` makes
+                this top strip go transparent (revealing the real background
+                like the column body / conversation + file tab strips do,
+                instead of the old frosted `ws-surface-muted`) and draws a
+                hairline bottom border to separate it from the tab content —
+                both are `[data-workspace-bg="on"]`-gated, so off-image is
+                unchanged. The segmented track then needs a recessed groove
                 (`bg-foreground/[0.06]`) instead of the old `bg-muted/60`, which
-                would vanish against the now-muted strip; the active trigger
+                would vanish against the muted strip; the active trigger
                 (bg-background) still reads as a raised white pill. */}
             {collapsed && renderCollapsedPicker()}
             {/* When collapsed we keep the TabsList mounted but `hidden`

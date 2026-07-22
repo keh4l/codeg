@@ -113,11 +113,7 @@ import {
   type AttachFileToSessionDetail,
   type AppendTextToSessionDetail,
 } from "@/lib/session-attachment-events"
-import {
-  ConversationContextBar,
-  ConversationFolderBranchPicker,
-  useConversationFolderBranchPickerVisible,
-} from "@/components/chat/conversation-context-bar"
+import { ConversationContextBar } from "@/components/chat/conversation-context-bar"
 import { InlineModeSelector } from "@/components/chat/mode-selector"
 import { InlineSessionConfigSelector } from "@/components/chat/session-config-selector"
 import { ModelOptionPicker } from "@/components/chat/model-option-picker"
@@ -184,10 +180,11 @@ import {
   type ReferenceGroupLabels,
 } from "@/components/chat/composer/use-reference-search"
 import type { MentionUiLabels } from "@/components/chat/composer/suggestion/types"
-import type {
-  ImageInputAttachment,
-  InputAttachment,
-  ResourceInputAttachment,
+import {
+  imageAttachmentToPromptBlock,
+  type ImageInputAttachment,
+  type InputAttachment,
+  type ResourceInputAttachment,
 } from "./message-input-attachments"
 
 /**
@@ -588,15 +585,16 @@ export function MessageInput({
   // Bridge so the early `onChange` handler can call the editor-driven slash
   // detection that is defined further down (after the slash state).
   const detectSlashTriggerRef = useRef<(() => void) | null>(null)
-  const canAttachImages = promptCapabilities.image
-
-  useEffect(() => {
-    if (isActive && !disabled && !isPrompting) {
-      requestAnimationFrame(() => {
-        editorRef.current?.focus()
-      })
-    }
-  }, [isActive, disabled, isPrompting])
+  // Route pasted / dropped / picked images to the top thumbnail strip whenever
+  // the agent can receive them in ANY form — either as a native ACP image block
+  // (`image`) or as an embedded resource blob (`embedded_context`, e.g. Grok,
+  // which advertises `image: false` but `embeddedContext: true`). Without the
+  // `embedded_context` arm, Grok's images fell through to the generic
+  // file-resource path and rendered as an inline badge instead of a thumbnail.
+  // `buildDraft` still picks the wire encoding per-capability, so the sent
+  // payload is unchanged for each agent — this only unifies the presentation.
+  const canAttachImages =
+    promptCapabilities.image || promptCapabilities.embedded_context
 
   useEffect(() => {
     disabledRef.current = disabled
@@ -783,6 +781,25 @@ export function MessageInput({
     hydrateFromBlocks,
   ])
 
+  // Focus the composer the moment the editor exists and this tab is active, so
+  // the caret lands as soon as the chat opens — without waiting for the ACP
+  // connection to come up. The editor is always editable (RichComposer receives
+  // no `disabled`; sends are gated in `handleSend`, not editability), so the old
+  // `!disabled` gate only postponed the caret until "connected" for no real
+  // reason. Deliberately NOT keyed on `disabled`: once focus lands on open, a
+  // later connect (disabled → false) must never re-run this and yank focus back.
+  // Keyed on `composerReady` because `immediatelyRender: false` builds the
+  // editor a tick after mount (mirrors the hydration effect's gate). Ordered
+  // after that hydration effect so this rAF runs after its setContent, landing
+  // the caret at the end of a restored draft rather than before it.
+  useEffect(() => {
+    if (isActive && composerReady && !isPrompting) {
+      requestAnimationFrame(() => {
+        editorRef.current?.focus()
+      })
+    }
+  }, [isActive, composerReady, isPrompting])
+
   // Re-hydrate when the user (re)edits a *different* queue item after the
   // initial mount hydration above. Keyed on the item id (not display text) so
   // switching between two items with identical text still reloads.
@@ -920,9 +937,6 @@ export function MessageInput({
   const hasAnySelector =
     showConfigLoading || hasConfigOptions || showModeLoading || showModeSelector
   const hasInlineSelectors = hasConfigOptions || showModeSelector
-  const hasFolderBranchPicker =
-    useConversationFolderBranchPickerVisible(attachmentTabId)
-  const folderBranchPickerAttached = hasFolderBranchPicker
   const imageAttachments = useMemo(
     () =>
       attachments.filter(
@@ -2464,14 +2478,14 @@ export function MessageInput({
     if (blocks.length === 0 && attachments.length === 0) return null
 
     // `attachments` holds only images now — files live inline as badges above.
+    // The wire encoding is capability-driven (native `image` block vs embedded
+    // `resource` blob) so an agent that advertises `image: false` but
+    // `embedded_context: true` (e.g. Grok) still receives the bytes it accepts.
     for (const attachment of attachments) {
       if (attachment.type === "image") {
-        blocks.push({
-          type: "image",
-          data: attachment.data,
-          mime_type: attachment.mimeType,
-          uri: attachment.uri,
-        })
+        blocks.push(
+          imageAttachmentToPromptBlock(attachment, promptCapabilities)
+        )
       }
     }
 
@@ -2479,7 +2493,7 @@ export function MessageInput({
       displayProse ||
       `Attached ${attachments.length} attachment${attachments.length > 1 ? "s" : ""}`
     return { blocks, displayText }
-  }, [attachments, skillPrefix])
+  }, [attachments, skillPrefix, promptCapabilities])
 
   // Clear the editor + attachments after a send / enqueue / save.
   const resetComposer = useCallback(() => {
@@ -3007,16 +3021,10 @@ export function MessageInput({
           </div>
         </div>
       )}
-      <div
-        className={cn(
-          folderBranchPickerAttached
-            ? "overflow-hidden rounded-xl transition-colors"
-            : "contents",
-          folderBranchPickerAttached &&
-            showDragActive &&
-            "ring-1 ring-primary/40"
-        )}
-      >
+      {/* Layout-neutral group (`display:contents`): it once clipped the attached
+          mobile folder/branch row, which is retired, so it just wraps the
+          composer's context menu without affecting layout. */}
+      <div className="contents">
         <ContextMenu onOpenChange={handleContextMenuOpenChange}>
           {/* Disabled in non-secure web (no async clipboard read) so the native
               context menu — whose Paste still works over the editor text — is
@@ -3029,12 +3037,21 @@ export function MessageInput({
                 // blank areas (padding, the dead space below a short message, the
                 // action-bar gaps) so the whole input reads as clickable-to-type;
                 // interactive controls re-assert their own cursor (see globals.css).
-                "codeg-composer-chrome @container relative flex flex-col rounded-xl border border-input bg-transparent transition-colors",
-                // Standard focus ring — always shown when the composer is
-                // focused (the plain default input style).
-                folderBranchPickerAttached
-                  ? "bg-background focus-within:border-ring focus-within:ring-[3px] focus-within:ring-inset focus-within:ring-ring/50"
-                  : "focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50",
+                // Resting border uses `border-foreground/20` (a touch darker than
+                // the default `border-input`, which is near-invisible at rest and
+                // vanishes over a workspace background image); it adapts per theme
+                // (dark ink in light mode, light ink in dark) and stays legible.
+                // Focus still swaps to `border-ring` below. `bg-background
+                // ws-transparent-bg`: opaque surface normally, but with a
+                // workspace-bg image the composer goes transparent to reveal the
+                // real image like the rest of the canvas (no frosted treatment) —
+                // the border stays. The surface lives on the composer itself —
+                // the old below-composer folder/branch row that used to wrap it
+                // is gone.
+                "codeg-composer-chrome @container relative flex flex-col rounded-xl border border-foreground/20 bg-background ws-transparent-bg transition-colors",
+                // Standard focus ring — always shown when the composer is focused
+                // (the plain default input style).
+                "focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50",
                 // Active session, tiled across multiple sessions: a gradient
                 // flows around the border to mark which tile is active — but ONLY
                 // while the composer itself is not focused. Focusing it hides the
@@ -3042,9 +3059,7 @@ export function MessageInput({
                 // A lone/non-tiled session (showActiveFlow=false) and inactive
                 // tiles show the plain default border.
                 showActiveFlow && "codeg-composer-flow",
-                !folderBranchPickerAttached &&
-                  showDragActive &&
-                  "ring-1 ring-primary/40",
+                showDragActive && "ring-1 ring-primary/40",
                 className
               )}
             >
@@ -3587,21 +3602,6 @@ export function MessageInput({
             </ContextMenuSub>
           </ContextMenuContent>
         </ContextMenu>
-        {hasFolderBranchPicker && (
-          // `pl-2` mirrors the action bar's `px-2` so this row lines up with the
-          // composer above. Kept on the rem scale (no px literals) so it tracks
-          // UI zoom; the folder icon then aligns with the centered "+" icon
-          // because both buttons add the same 1px transparent border (paired
-          // with the picker buttons' `px-1.5`).
-          <div
-            className={cn(
-              "flex items-center gap-1 pl-2 text-xs text-muted-foreground",
-              folderBranchPickerAttached ? "rounded-b-xl pt-1 pr-2" : "mt-1.5"
-            )}
-          >
-            <ConversationFolderBranchPicker tabId={attachmentTabId} />
-          </div>
-        )}
       </div>
       <ImagePreviewDialog
         src={
