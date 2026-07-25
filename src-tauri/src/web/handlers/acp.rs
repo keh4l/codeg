@@ -8,8 +8,8 @@ use crate::acp::error::AcpError;
 use crate::acp::opencode_plugins::PluginCheckSummary;
 use crate::acp::preflight::PreflightResult;
 use crate::acp::types::{
-    AcpAgentInfo, AcpAgentStatus, AgentSkillContent, AgentSkillLayout, AgentSkillScope,
-    AgentSkillsListResult, ConnectionInfo, ForkResultInfo,
+    AcpAgentInfo, AcpAgentStatus, AgentDiagnosticsReport, AgentSkillContent, AgentSkillLayout,
+    AgentSkillScope, AgentSkillsListResult, ConnectionInfo, ForkResultInfo,
 };
 use crate::app_error::{AppCommandError, AppErrorCode};
 use crate::app_state::AppState;
@@ -38,6 +38,24 @@ pub async fn acp_list_agents(
 ) -> Result<Json<Vec<AcpAgentInfo>>, AppCommandError> {
     let db = &state.db;
     let result = acp_commands::acp_list_agents_core(db)
+        .await
+        .map_err(|e| AppCommandError::task_execution_failed(e.to_string()))?;
+    Ok(Json(result))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcpEnvDiagnosticsParams {
+    #[serde(default)]
+    pub agent_type: Option<AgentType>,
+}
+
+pub async fn acp_env_diagnostics(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<AcpEnvDiagnosticsParams>,
+) -> Result<Json<AgentDiagnosticsReport>, AppCommandError> {
+    let db = &state.db;
+    let result = acp_commands::acp_env_diagnostics_core(db, params.agent_type)
         .await
         .map_err(|e| AppCommandError::task_execution_failed(e.to_string()))?;
     Ok(Json(result))
@@ -349,6 +367,25 @@ pub async fn acp_set_config_option(
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AcpGoalControlParams {
+    pub connection_id: String,
+    pub action: crate::acp::connection::GoalControlAction,
+}
+
+pub async fn acp_goal_control(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<AcpGoalControlParams>,
+) -> Result<Json<()>, AppCommandError> {
+    let manager = &state.connection_manager;
+    manager
+        .goal_control(&params.connection_id, params.action)
+        .await
+        .map_err(|e| AppCommandError::task_execution_failed(e.to_string()))?;
+    Ok(Json(()))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AcpDescribeAgentOptionsParams {
     pub agent_type: crate::models::AgentType,
     #[serde(default)]
@@ -446,6 +483,26 @@ pub async fn acp_answer_question(
     let manager = &state.connection_manager;
     manager
         .answer_question(&params.connection_id, &params.question_id, params.answer)
+        .await
+        .map_err(|e| AppCommandError::task_execution_failed(e.to_string()))?;
+    Ok(Json(()))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcpAnswerPlanApprovalParams {
+    pub connection_id: String,
+    pub approval_id: String,
+    pub answer: crate::acp::plan_approval::PlanApprovalAnswer,
+}
+
+pub async fn acp_answer_plan_approval(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<AcpAnswerPlanApprovalParams>,
+) -> Result<Json<()>, AppCommandError> {
+    let manager = &state.connection_manager;
+    manager
+        .answer_plan_approval(&params.connection_id, &params.approval_id, params.answer)
         .await
         .map_err(|e| AppCommandError::task_execution_failed(e.to_string()))?;
     Ok(Json(()))
@@ -863,9 +920,11 @@ pub async fn acp_detect_agent_local_version(
     Json(params): Json<AgentTypeParams>,
 ) -> Result<Json<Option<String>>, AppCommandError> {
     let db = &state.db;
-    let result = acp_commands::acp_detect_agent_local_version_core(params.agent_type, &db.conn)
-        .await
-        .map_err(|e| AppCommandError::task_execution_failed(e.to_string()))?;
+    let emitter = state.emitter.clone();
+    let result =
+        acp_commands::acp_detect_agent_local_version_core(params.agent_type, &db.conn, &emitter)
+            .await
+            .map_err(|e| AppCommandError::task_execution_failed(e.to_string()))?;
     Ok(Json(result))
 }
 

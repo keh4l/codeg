@@ -200,6 +200,21 @@ pub enum AcpEvent {
         #[serde(skip, default)]
         terminal: bool,
     },
+    /// A retryable turn error that keeps the turn alive (codex-acp #289,
+    /// v1.1.3+). Codex reports a transient, auto-retried error as
+    /// `session_info_update._meta.codex.error` (only when `willRetry == true`)
+    /// and continues the turn rather than terminating it. Surfaced as a
+    /// transient "retrying" indicator on the active turn — it is NOT a turn
+    /// failure and must not be rendered as one. The frontend reuses the Claude
+    /// API-retry banner and clears it at the next turn boundary.
+    TurnRetrying {
+        /// Human-readable transient error (`_meta.codex.error.message`).
+        message: String,
+        /// HTTP status pulled from a `codexErrorInfo` object variant
+        /// (e.g. `responseStreamDisconnected.httpStatusCode`), when present.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error_status: Option<i64>,
+    },
     /// `session/load` failed in a non-recoverable way (e.g. the agent has no
     /// record of this `session_id`). Emitted instead of silently falling back
     /// to `session/new`, so the frontend can surface the failure with reload
@@ -331,6 +346,23 @@ pub enum AcpEvent {
     /// (the tool call was aborted / the connection drained). Carries only the
     /// `question_id`; clients clear the matching card. Idempotent on apply.
     QuestionResolved { question_id: String },
+    /// A Grok `exit_plan_mode` call: the agent finished planning and is BLOCKED
+    /// on the user's approval of the plan before it leaves plan mode and starts
+    /// implementing (Grok's native `_x.ai/exit_plan_mode` ext request). Broadcast
+    /// so every client viewing this conversation renders the interactive
+    /// plan-approval card above the input box, and captured into
+    /// `SessionState.pending_plan_approval` so a client attaching mid-turn (cold
+    /// attach, reconnect, another window) recovers it from the snapshot. The
+    /// backend parks the blocked ext-request responder keyed by `approval_id`.
+    PlanApprovalRequest {
+        approval_id: String,
+        tool_call_id: String,
+        plan_markdown: String,
+    },
+    /// A previously-pending plan approval was answered (from any client) or
+    /// canceled (the connection drained). Carries only the `approval_id`; clients
+    /// clear the matching card. Idempotent on apply.
+    PlanApprovalResolved { approval_id: String },
     /// The agent's effective settings (env vars / model provider / native config
     /// files) changed AFTER this connection was spawned, so the running process
     /// is still using its launch-time config. Emitted by
@@ -801,6 +833,63 @@ pub struct AcpAgentStatus {
     pub available: bool,
     pub enabled: bool,
     pub installed_version: Option<String>,
+}
+
+/// Severity of a single diagnostics check / the overall verdict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagLevel {
+    /// Healthy / expected.
+    Ok,
+    /// Suspicious but not necessarily broken (e.g. slow `npm prefix -g`).
+    Warn,
+    /// A concrete problem that explains a failure.
+    Fail,
+    /// Neutral information (not a pass/fail signal).
+    Info,
+}
+
+/// One labelled probe result inside a [`DiagSection`]. `value` and `hint` carry
+/// dynamic data (paths, versions) and are rendered as plain text in the UI —
+/// they are NEVER fed through i18n/ICU (see `label`, which is a language-neutral
+/// technical string emitted by the backend).
+#[derive(Debug, Clone, Serialize)]
+pub struct DiagCheck {
+    pub label: String,
+    pub value: String,
+    pub status: DiagLevel,
+    pub hint: Option<String>,
+}
+
+/// A titled group of [`DiagCheck`]s.
+#[derive(Debug, Clone, Serialize)]
+pub struct DiagSection {
+    pub title: String,
+    pub checks: Vec<DiagCheck>,
+}
+
+/// The one-line "likely cause" conclusion. `code` is a stable identifier the
+/// frontend localizes via `DiagnosticsSettings.verdict.<code>`; `summary` is a
+/// pre-formatted English sentence used only inside [`AgentDiagnosticsReport::plain_text`]
+/// so a copied report reads the same regardless of UI locale.
+#[derive(Debug, Clone, Serialize)]
+pub struct DiagnosticsVerdict {
+    pub level: DiagLevel,
+    pub code: String,
+    pub summary: String,
+}
+
+/// Full environment-diagnostics report returned by `acp_env_diagnostics`.
+///
+/// Plain `Serialize` with snake_case fields (the repo convention for response
+/// DTOs), mirrored field-for-field by the `AgentDiagnosticsReport` TS interface.
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentDiagnosticsReport {
+    pub generated_at: String,
+    pub agent_type: Option<crate::models::agent::AgentType>,
+    pub verdict: DiagnosticsVerdict,
+    pub sections: Vec<DiagSection>,
+    pub plain_text: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

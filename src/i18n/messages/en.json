@@ -611,7 +611,8 @@
       "saveCodeBuddyConfig": "Save CodeBuddy Config",
       "saveKimiCodeConfig": "Save Kimi Code Config",
       "customInstall": "Custom install",
-      "saveKimiCodeRawConfig": "Save config.toml"
+      "saveKimiCodeRawConfig": "Save config.toml",
+      "diagnose": "Diagnose"
     },
     "status": {
       "enabled": "Enabled",
@@ -949,7 +950,11 @@
       "effortLevel_low": "Low",
       "effortLevel_medium": "Medium",
       "effortLevel_high": "High",
-      "effortLevel_xhigh": "Extra High"
+      "effortLevel_xhigh": "Extra High",
+      "sendAttributionHeader": "Send attribution/billing identifier to the API",
+      "sendAttributionHeaderAria": "Send Claude Code attribution/billing identifier to the API",
+      "disableNonessentialTraffic": "Disable telemetry or redundant network requests",
+      "disableNonessentialTrafficAria": "Disable Claude Code telemetry or redundant network requests"
     },
     "dialogs": {
       "confirmDeleteProvider": "Delete Provider {providerId}?",
@@ -1317,6 +1322,7 @@
       "searchPlaceholder": "Search conversations...",
       "viewOptions": "View options",
       "showCompleted": "Show completed conversations",
+      "showWorktrees": "Show worktree folders",
       "moreOptions": "More options",
       "sortBy": "Sort by",
       "sortByCreatedAt": "Created time",
@@ -1372,6 +1378,7 @@
       "sectionFolders": "Folders",
       "sectionChats": "Chat",
       "noChats": "No chats",
+      "noFolders": "No folders open",
       "newChatAction": "New chat",
       "automations": "Automations",
       "loadingSubsessions": "Loading sub-conversations…"
@@ -1737,7 +1744,11 @@
         "confirmApply": "Apply stash {ref} to working directory?",
         "cancel": "Cancel"
       },
-      "deleteBranch": "Delete branch"
+      "deleteBranch": "Delete branch",
+      "searchPlaceholder": "Search branches and actions",
+      "searchAriaLabel": "Search branches and actions",
+      "branchListLabel": "Branches and actions",
+      "noMatches": "No matches"
     },
     "commitDialog": {
       "toasts": {
@@ -1823,6 +1834,7 @@
       "copyMessage": "Copy message",
       "author": "Author",
       "noFileChangeDetails": "No file change details available.",
+      "loadingFiles": "Loading files...",
       "branchesTitle": "Branches",
       "loadingBranches": "Loading branches...",
       "noContainingBranches": "No containing branches found.",
@@ -1851,14 +1863,28 @@
         "resetSuccessDescription": "{branch} reset to {shortHash} with {mode}",
         "resetFailed": "Reset failed"
       },
+      "authorFilter": {
+        "label": "Author",
+        "searchPlaceholder": "Search author",
+        "noAuthors": "No authors found",
+        "you": "you",
+        "filterByAuthorAria": "Filter commits by author",
+        "filterByQuery": "Filter by \"{query}\"",
+        "clearAuthorFilterAria": "Clear author filter",
+        "recent": "Recent",
+        "matchingAuthors": "Matching authors",
+        "removeFromRecent": "Remove {name} from recent"
+      },
       "branchSelector": {
+        "label": "Branch",
         "searchBranch": "Search branch...",
         "noBranches": "No branches",
         "selectBranchPlaceholder": "Select branch...",
         "localBranches": "Local branches",
         "current": "Current",
         "remoteBranches": "Remote branches",
-        "refreshCommitHistory": "Refresh commit history"
+        "refreshCommitHistory": "Refresh commit history",
+        "clearBranchFilterAria": "Clear branch filter"
       },
       "dialogs": {
         "newBranchTitle": "New branch",
@@ -2589,6 +2615,8 @@
           "remaining": "Remaining",
           "elapsed": "Elapsed",
           "tokens": "tokens",
+          "pause": "Pause",
+          "clear": "Clear",
           "status": {
             "active": "active",
             "paused": "paused",
@@ -2717,6 +2745,17 @@
         "submit": "Submit",
         "submitError": "Couldn't submit. Please try again."
       },
+      "planApproval": {
+        "title": "The agent has a plan — review it",
+        "emptyPlan": "The agent didn't write a plan. Approve to start building, or request changes.",
+        "approve": "Approve & build",
+        "requestChanges": "Request changes",
+        "abandon": "Abandon",
+        "feedbackPlaceholder": "What should change?",
+        "sendChanges": "Send",
+        "cancel": "Cancel",
+        "submitError": "Couldn't submit. Please try again."
+      },
       "feedbackCheckResult": {
         "count": "{count, plural, =1 {1 feedback note} other {# feedback notes}}",
         "expand": "Show all feedback",
@@ -2757,6 +2796,11 @@
         "opClose": "Closing sub-agent",
         "opResume": "Resuming sub-agent"
       },
+      "contextCompaction": {
+        "compacting": "Compacting context…",
+        "compacted": "Context compacted",
+        "compactedTokens": "Context compacted · {before} → {after} tokens"
+      },
       "backgroundTasks": {
         "running": "{count, plural, one {# background task running} other {# background tasks running}}",
         "settling": "Syncing background results…",
@@ -2766,6 +2810,10 @@
         "cardCompleted": "Background task completed",
         "cardFinishedWithStatus": "Background task finished ({status})",
         "cardResultPending": "Result not returned yet"
+      },
+      "proposedPlan": {
+        "title": "Proposed plan",
+        "planning": "Planning…"
       }
     },
     "diffPreview": {
@@ -3964,5 +4012,27 @@
     "groupInstructions": "Description & system prompt",
     "fieldDescription": "Description",
     "baseInstructions": "System prompt (base_instructions)"
+  },
+  "DiagnosticsSettings": {
+    "title": "Environment diagnostics",
+    "description": "Checks how this app resolves the agent CLI inside its own process, which can differ from your terminal.",
+    "loading": "Running diagnostics…",
+    "error": "Diagnostics failed",
+    "rerun": "Re-run",
+    "copyAll": "Copy all",
+    "copied": "Diagnostics copied to clipboard",
+    "button": "Diagnose",
+    "verdict": {
+      "ok": "Environment looks healthy. If it still shows as not installed, fully restart the app so the prefix cache refreshes.",
+      "node_missing": "Node.js was not found on the app PATH.",
+      "npm_missing": "npm was not found on the app PATH.",
+      "not_installed": "This agent does not appear to be installed.",
+      "installed_but_unresolved": "The agent is recorded as installed, but the app cannot locate its executable.",
+      "user_prefix_not_on_path": "Installed into the fallback prefix (~/.codeg/npm-global), which is not on the app PATH. Fully restart the app and try again.",
+      "homebrew_bin_not_on_path": "Installed under the Homebrew bin, which is not on the app PATH (Apple Silicon keg split).",
+      "terminal_only_path": "The command resolves in your terminal but not in the app — a GUI PATH gap. Launch the app from a terminal, or reinstall from Agent Settings.",
+      "npm_prefix_timeout": "npm prefix -g was too slow (over 1.5s), so fallback detection was skipped. Restart the app and try again.",
+      "node_too_old": "Your active Node.js is older than this agent requires. Upgrade Node.js."
+    }
   }
 }

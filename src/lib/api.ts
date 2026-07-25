@@ -29,8 +29,10 @@ import type {
   LiveSessionSnapshot,
   FeedbackItem,
   QuestionAnswer,
+  PlanApprovalAnswer,
   AcpAgentInfo,
   AcpAgentStatus,
+  AgentDiagnosticsReport,
   GrokStructuredConfig,
   CursorStructuredConfig,
   CursorAuthStatus,
@@ -89,6 +91,7 @@ import type {
   FileSaveResult,
   WorkspaceSnapshotResponse,
   GitLogResult,
+  GitLogFileChange,
   AvailableTerminalShells,
   SystemLanguageSettings,
   SystemProxySettings,
@@ -215,6 +218,16 @@ export async function acpSetConfigOption(
   })
 }
 
+/** Pause or clear the session's active Codex goal (codex-acp #293). The backend
+ *  sources the sessionId from the live session, so only the connection + action
+ *  are needed here. */
+export async function acpGoalControl(
+  connectionId: string,
+  action: "pause" | "clear"
+): Promise<void> {
+  return getTransport().call("acp_goal_control", { connectionId, action })
+}
+
 export async function acpCancel(connectionId: string): Promise<void> {
   return getTransport().call("acp_cancel", { connectionId })
 }
@@ -281,6 +294,25 @@ export async function acpAnswerQuestion(
   })
 }
 
+/**
+ * Submit the user's decision on a blocking Grok `exit_plan_mode` approval
+ * (approve / request-changes / abandon). Resolves the parked ext request on the
+ * backend (and clears the card on every client via the `plan_approval_resolved`
+ * event). Idempotent: answering an already-resolved / unknown `approvalId` is a
+ * no-op success.
+ */
+export async function acpAnswerPlanApproval(
+  connectionId: string,
+  approvalId: string,
+  answer: PlanApprovalAnswer
+): Promise<void> {
+  return getTransport().call("acp_answer_plan_approval", {
+    connectionId,
+    approvalId,
+    answer,
+  })
+}
+
 export async function acpDisconnect(connectionId: string): Promise<void> {
   return getTransport().call("acp_disconnect", { connectionId })
 }
@@ -329,6 +361,13 @@ export async function acpGetAgentStatus(
   agentType: AgentType
 ): Promise<AcpAgentStatus> {
   return getTransport().call("acp_get_agent_status", { agentType })
+}
+
+// Run environment diagnostics for an agent (or a base env report when omitted).
+export async function acpEnvDiagnostics(
+  agentType?: AgentType
+): Promise<AgentDiagnosticsReport> {
+  return getTransport().call("acp_env_diagnostics", { agentType })
 }
 
 export async function acpClearBinaryCache(agentType: AgentType): Promise<void> {
@@ -3124,7 +3163,10 @@ export async function gitLog(
   limit?: number,
   branch?: string,
   remote?: string,
-  skip?: number
+  skip?: number,
+  author?: string,
+  allBranches?: boolean,
+  withFiles?: boolean
 ): Promise<GitLogResult> {
   return getTransport().call("git_log", {
     path,
@@ -3132,6 +3174,35 @@ export async function gitLog(
     branch: branch ?? null,
     remote: remote ?? null,
     skip: skip ?? null,
+    author: author ?? null,
+    allBranches: allBranches ?? null,
+    withFiles: withFiles ?? null,
+  })
+}
+
+export async function gitCurrentUser(path: string): Promise<string | null> {
+  return getTransport().call("git_current_user", { path })
+}
+
+export async function gitCommitFiles(
+  path: string,
+  commit: string
+): Promise<GitLogFileChange[]> {
+  return getTransport().call("git_commit_files", { path, commit })
+}
+
+// On-demand author search for the log filter — real repo authors matching
+// `query` (case-insensitive, most-active first). Debounced client-side; no
+// upfront full-repo scan.
+export async function gitSearchAuthors(
+  path: string,
+  query: string,
+  limit?: number
+): Promise<string[]> {
+  return getTransport().call("git_search_authors", {
+    path,
+    query,
+    limit: limit ?? null,
   })
 }
 

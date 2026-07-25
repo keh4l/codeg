@@ -611,7 +611,8 @@
       "saveCodeBuddyConfig": "Enregistrer la configuration CodeBuddy",
       "saveKimiCodeConfig": "Enregistrer la configuration de Kimi Code",
       "customInstall": "Installation personnalisée",
-      "saveKimiCodeRawConfig": "Save config.toml"
+      "saveKimiCodeRawConfig": "Save config.toml",
+      "diagnose": "Diagnostiquer"
     },
     "status": {
       "enabled": "Activé",
@@ -949,7 +950,11 @@
       "effortLevel_low": "Bas",
       "effortLevel_medium": "Moyen",
       "effortLevel_high": "Élevé",
-      "effortLevel_xhigh": "Très Élevé"
+      "effortLevel_xhigh": "Très Élevé",
+      "sendAttributionHeader": "Envoyer l'identifiant d'attribution/facturation à l'API",
+      "sendAttributionHeaderAria": "Envoyer l'identifiant d'attribution/facturation de Claude Code à l'API",
+      "disableNonessentialTraffic": "Désactiver la télémétrie ou les requêtes réseau superflues",
+      "disableNonessentialTrafficAria": "Désactiver la télémétrie ou les requêtes réseau superflues de Claude Code"
     },
     "dialogs": {
       "confirmDeleteProvider": "Supprimer le provider {providerId} ?",
@@ -1317,6 +1322,7 @@
       "searchPlaceholder": "Rechercher des conversations...",
       "viewOptions": "Options d'affichage",
       "showCompleted": "Afficher les conversations terminées",
+      "showWorktrees": "Afficher les dossiers de worktree",
       "moreOptions": "Plus d'options",
       "sortBy": "Trier par",
       "sortByCreatedAt": "Date de création",
@@ -1372,6 +1378,7 @@
       "sectionFolders": "Dossiers",
       "sectionChats": "Discussion",
       "noChats": "Aucune discussion",
+      "noFolders": "Aucun dossier ouvert",
       "newChatAction": "Nouvelle discussion",
       "automations": "Automatisations",
       "loadingSubsessions": "Chargement des sous-conversations…"
@@ -1737,7 +1744,11 @@
         "confirmApply": "Appliquer la remise {ref} au répertoire de travail ?",
         "cancel": "Annuler"
       },
-      "deleteBranch": "Supprimer la branche"
+      "deleteBranch": "Supprimer la branche",
+      "searchPlaceholder": "Rechercher des branches et actions",
+      "searchAriaLabel": "Rechercher des branches et actions",
+      "branchListLabel": "Branches et actions",
+      "noMatches": "Aucune correspondance"
     },
     "commitDialog": {
       "toasts": {
@@ -1823,6 +1834,7 @@
       "copyMessage": "Copier le message",
       "author": "Auteur",
       "noFileChangeDetails": "Aucun détail de changement de fichier disponible.",
+      "loadingFiles": "Chargement des fichiers...",
       "branchesTitle": "Branches Git",
       "loadingBranches": "Chargement des branches...",
       "noContainingBranches": "Aucune branche contenant ce commit.",
@@ -1851,14 +1863,28 @@
         "resetSuccessDescription": "{branch} a été réinitialisée sur {shortHash} avec {mode}",
         "resetFailed": "Échec de la réinitialisation"
       },
+      "authorFilter": {
+        "label": "Auteur",
+        "searchPlaceholder": "Rechercher un auteur",
+        "noAuthors": "Aucun auteur trouvé",
+        "you": "vous",
+        "filterByAuthorAria": "Filtrer les commits par auteur",
+        "filterByQuery": "Filtrer par « {query} »",
+        "clearAuthorFilterAria": "Effacer le filtre par auteur",
+        "recent": "Récents",
+        "matchingAuthors": "Auteurs correspondants",
+        "removeFromRecent": "Retirer {name} des récents"
+      },
       "branchSelector": {
+        "label": "Branche",
         "searchBranch": "Rechercher une branche...",
         "noBranches": "Aucune branche",
         "selectBranchPlaceholder": "Sélectionner une branche...",
         "localBranches": "Branches locales",
         "current": "Actuelle",
         "remoteBranches": "Branches distantes",
-        "refreshCommitHistory": "Actualiser l’historique des commits"
+        "refreshCommitHistory": "Actualiser l’historique des commits",
+        "clearBranchFilterAria": "Effacer le filtre par branche"
       },
       "dialogs": {
         "newBranchTitle": "Nouvelle branche",
@@ -2589,6 +2615,8 @@
           "remaining": "Restant",
           "elapsed": "Écoulé",
           "tokens": "tokens",
+          "pause": "Pause",
+          "clear": "Effacer",
           "status": {
             "active": "actif",
             "paused": "en pause",
@@ -2717,6 +2745,17 @@
         "submit": "Envoyer",
         "submitError": "Échec de l'envoi. Veuillez réessayer."
       },
+      "planApproval": {
+        "title": "L'agent a un plan — à vérifier",
+        "emptyPlan": "L'agent n'a pas rédigé de plan. Approuvez pour commencer ou demandez des modifications.",
+        "approve": "Approuver et lancer",
+        "requestChanges": "Demander des modifications",
+        "abandon": "Abandonner",
+        "feedbackPlaceholder": "Que faut-il changer ?",
+        "sendChanges": "Envoyer",
+        "cancel": "Annuler",
+        "submitError": "Échec de l'envoi. Veuillez réessayer."
+      },
       "feedbackCheckResult": {
         "count": "{count, plural, =1 {1 retour} other {# retours}}",
         "expand": "Afficher tous les retours",
@@ -2757,6 +2796,11 @@
         "opClose": "Fermeture du sous-agent",
         "opResume": "Reprise du sous-agent"
       },
+      "contextCompaction": {
+        "compacting": "Compactage du contexte…",
+        "compacted": "Contexte compacté",
+        "compactedTokens": "Contexte compacté · {before} → {after} tokens"
+      },
       "backgroundTasks": {
         "running": "{count, plural, one {# tâche en arrière-plan en cours} other {# tâches en arrière-plan en cours}}",
         "settling": "Synchronisation des résultats d'arrière-plan…",
@@ -2766,6 +2810,10 @@
         "cardCompleted": "Tâche en arrière-plan terminée",
         "cardFinishedWithStatus": "Tâche en arrière-plan terminée ({status})",
         "cardResultPending": "Résultat pas encore reçu"
+      },
+      "proposedPlan": {
+        "title": "Plan proposé",
+        "planning": "Planification…"
       }
     },
     "diffPreview": {
@@ -3964,5 +4012,27 @@
     "groupInstructions": "Description et prompt système",
     "fieldDescription": "Description",
     "baseInstructions": "Invite système (base_instructions)"
+  },
+  "DiagnosticsSettings": {
+    "title": "Diagnostic de l'environnement",
+    "description": "Vérifie comment cette app résout la CLI de l'agent dans son propre processus, ce qui peut différer de votre terminal.",
+    "loading": "Diagnostic en cours…",
+    "error": "Échec du diagnostic",
+    "rerun": "Relancer",
+    "copyAll": "Tout copier",
+    "copied": "Diagnostic copié dans le presse-papiers",
+    "button": "Diagnostiquer",
+    "verdict": {
+      "ok": "L'environnement semble sain. S'il indique toujours non installé, redémarrez complètement l'app pour actualiser le cache du préfixe.",
+      "node_missing": "Node.js est introuvable dans le PATH de l'app.",
+      "npm_missing": "npm est introuvable dans le PATH de l'app.",
+      "not_installed": "Cet agent ne semble pas installé.",
+      "installed_but_unresolved": "Enregistré comme installé, mais l'app ne trouve pas son exécutable.",
+      "user_prefix_not_on_path": "Installé dans le préfixe de secours (~/.codeg/npm-global), qui n'est pas dans le PATH de l'app. Redémarrez complètement l'app et réessayez.",
+      "homebrew_bin_not_on_path": "Installé sous le bin de Homebrew, qui n'est pas dans le PATH de l'app (séparation keg Apple Silicon).",
+      "terminal_only_path": "La commande se résout dans votre terminal mais pas dans l'app : un écart de PATH GUI. Lancez l'app depuis un terminal ou réinstallez depuis les Paramètres des agents.",
+      "npm_prefix_timeout": "npm prefix -g était trop lent (plus de 1,5 s), la détection de secours a été ignorée. Redémarrez l'app et réessayez.",
+      "node_too_old": "Votre Node.js actif est plus ancien que ce que cet agent requiert. Mettez à niveau Node.js."
+    }
   }
 }

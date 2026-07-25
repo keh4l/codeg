@@ -31,17 +31,21 @@ import { useAcpAgents } from "@/hooks/use-acp-agents"
 import { useActiveFolder } from "@/contexts/active-folder-context"
 import { useAppWorkspaceStore } from "@/stores/app-workspace-store"
 import { useTabActions, useTabStore } from "@/contexts/tab-context"
-import { useSessionStats } from "@/contexts/session-stats-context"
 import { useTaskContext } from "@/contexts/task-context"
 import { cn, copyTextFromMenu, randomUUID } from "@/lib/utils"
 import { useConnectionLifecycle } from "@/hooks/use-connection-lifecycle"
 import { useMessageQueue, type QueuedMessage } from "@/hooks/use-message-queue"
 import { MessageListView } from "@/components/message/message-list-view"
+import {
+  GoalControlProvider,
+  type GoalControlValue,
+} from "@/components/message/goal-control-context"
 import { ConversationShell } from "@/components/chat/conversation-shell"
 import { SessionConfigStaleBanner } from "@/components/chat/session-config-stale-banner"
 import { BackgroundTasksChip } from "@/components/chat/background-tasks-chip"
 import { FeedbackNotesDisplay } from "@/components/chat/feedback-notes-display"
 import { FeedbackDialog } from "@/components/chat/feedback-dialog"
+import { AgentDiagnosticsDialog } from "@/components/settings/agent-diagnostics-dialog"
 import { useFeedbackEnabled } from "@/hooks/use-feedback-enabled"
 import { useSessionFeedback } from "@/hooks/use-session-feedback"
 import { AgentSelector } from "@/components/chat/agent-selector"
@@ -84,6 +88,7 @@ import {
   type ConversationStatus,
   type EventEnvelope,
   type MessageTurn,
+  type PlanApprovalAnswer,
   type PromptDraft,
   type QuestionAnswer,
   type UserMessageBlock,
@@ -204,6 +209,7 @@ const ConversationTabView = memo(function ConversationTabView({
 }: ConversationTabViewProps) {
   const t = useTranslations("Folder.conversation")
   const tWelcome = useTranslations("Folder.chat.welcomeInputPanel")
+  const tDiag = useTranslations("DiagnosticsSettings")
   const sharedT = useTranslations("Folder.chat.shared")
   const refreshConversations = useAppWorkspaceStore(
     (s) => s.refreshConversations
@@ -240,7 +246,6 @@ const ConversationTabView = memo(function ConversationTabView({
     confirmDraftAgent,
     setDraftAgentFromFallback,
   } = useTabActions()
-  const { setSessionStats } = useSessionStats()
   const {
     appendOptimisticTurn,
     removeOptimisticTurn,
@@ -286,6 +291,7 @@ const ConversationTabView = memo(function ConversationTabView({
   const [sendSignal, setSendSignal] = useState(0)
   const [agentsLoaded, setAgentsLoaded] = useState(false)
   const [usableAgentCount, setUsableAgentCount] = useState(0)
+  const [composerDiagnosticsOpen, setComposerDiagnosticsOpen] = useState(false)
   const [agentConnectError, setAgentConnectError] = useState<string | null>(
     null
   )
@@ -424,30 +430,22 @@ const ConversationTabView = memo(function ConversationTabView({
   // session — NOT the whole session object. The live-message sink rewrites the
   // session object on every streaming batch (~60/s, via SET_LIVE_MESSAGE); a
   // whole-object selector here would re-render this keep-alive panel (and the
-  // composer subtree it wraps) on every streaming token, even though none of
-  // these three fields change mid-stream. `useShallow` keeps the returned slice
+  // composer subtree it wraps) on every streaming token, even though neither of
+  // these two fields changes mid-stream. `useShallow` keeps the returned slice
   // reference-stable across batches, so the panel re-renders only when one of
   // them actually changes. (message-list-view subscribes to the session's
-  // liveMessage separately to render the live stream.)
-  const {
-    sessionStats: effectiveSessionStats,
-    externalId: runtimeExternalId,
-    syncState: runtimeSyncState,
-  } = useConversationRuntimeStore(
-    useShallow((s) => {
-      const session = s.byConversationId.get(effectiveConversationId)
-      return {
-        sessionStats: session?.sessionStats ?? null,
-        externalId: session?.externalId ?? null,
-        syncState: session?.syncState ?? "idle",
-      }
-    })
-  )
-
-  useEffect(() => {
-    if (!isActive) return
-    setSessionStats(effectiveSessionStats)
-  }, [effectiveSessionStats, isActive, setSessionStats])
+  // liveMessage separately to render the live stream; the context indicator
+  // reads its own session stats from the runtime store directly.)
+  const { externalId: runtimeExternalId, syncState: runtimeSyncState } =
+    useConversationRuntimeStore(
+      useShallow((s) => {
+        const session = s.byConversationId.get(effectiveConversationId)
+        return {
+          externalId: session?.externalId ?? null,
+          syncState: session?.syncState ?? "idle",
+        }
+      })
+    )
 
   // Two-source resolution for the session id passed to acp_connect:
   //   1. detail.summary.external_id — DB value, available for tabs opened
@@ -1343,6 +1341,69 @@ const ConversationTabView = memo(function ConversationTabView({
     [acpActions, tabId]
   )
 
+  // Grok `exit_plan_mode` approval: resolve the blocked ext request. The backend
+  // broadcasts `plan_approval_resolved` to clear the card on every client.
+  //
+  // "Request changes" is special. Grok discards the reply `feedback` on the
+  // keep-planning path (confirmed against 0.2.111 — only `approved`/`abandoned`
+  // consume it), and its own TUI instead delivers the revision notes as a
+  // follow-up user turn (`s` moves focus to the prompt). Mirror that: after
+  // resolving keep-planning, send the notes as a normal prompt so Grok — still
+  // in plan mode — revises and re-presents the plan. The send path queues the
+  // prompt if the keep-planning turn is still winding down, then flushes when
+  // idle (same optimistic-turn + re-queue dance as `handleAnswerQuestion`).
+  const handleAnswerPlanApproval = useCallback(
+    (approvalId: string, answer: PlanApprovalAnswer) => {
+      const result = acpActions.answerPlanApproval(tabId, approvalId, answer)
+      const notes = answer.feedback?.trim()
+      if (
+        answer.decision === "request_changes" &&
+        notes &&
+        connStatus === "connected"
+      ) {
+        const optimisticTurn: MessageTurn = {
+          id: `optimistic-${randomUUID()}`,
+          role: "user",
+          blocks: [{ type: "text", text: notes }],
+          timestamp: new Date().toISOString(),
+        }
+        const draft: PromptDraft = {
+          blocks: [{ type: "text", text: notes }],
+          displayText: notes,
+        }
+        appendOptimisticTurn(
+          effectiveConversationId,
+          optimisticTurn,
+          optimisticTurn.id
+        )
+        setSendSignal((prev) => prev + 1)
+        setSyncState(effectiveConversationId, "awaiting_persist")
+        lifecycleSend(draft, null, {
+          clientMessageId: optimisticTurn.id,
+          // Rejected because the keep-planning turn was still in flight — roll
+          // back the optimistic turn and re-queue at the tail so it isn't lost.
+          onTurnInProgress: () => {
+            lastFlushBounceAtRef.current = Date.now()
+            removeOptimisticTurn(effectiveConversationId, optimisticTurn.id)
+            mqEnqueue(draft, null)
+          },
+        })
+      }
+      return result
+    },
+    [
+      acpActions,
+      tabId,
+      connStatus,
+      appendOptimisticTurn,
+      removeOptimisticTurn,
+      mqEnqueue,
+      effectiveConversationId,
+      lifecycleSend,
+      setSyncState,
+    ]
+  )
+
   // Queue edit flow: derive editing draft text from queue state
   const editingQueueDraftText = useMemo(() => {
     if (!mqEditingItemId) return null
@@ -1419,23 +1480,44 @@ const ConversationTabView = memo(function ConversationTabView({
     closeTab(tabId)
   }, [closeTab, folder, openNewConversationTab, tabId, workingDirForConnection])
 
+  // Goal pause/clear is a live, owner-only action, so decide availability once
+  // here (where the connection is owned) rather than in the deep goal card.
+  // `null` when the session isn't live or the user is a viewer → the card hides
+  // its buttons. Codex is the only agent that produces goal cards, so no
+  // agent-type gate is needed. Provided only around the main panel's list; the
+  // read-only sub-agent dialog renders its own MessageListView with no provider.
+  const goalControlValue = useMemo<GoalControlValue>(() => {
+    const live =
+      conn.connectionId !== null &&
+      (connStatus === "connected" || connStatus === "prompting") &&
+      !conn.isViewer
+    return {
+      onGoalControl: live
+        ? (action) => {
+            void acpActions.goalControl(tabId, action)
+          }
+        : null,
+    }
+  }, [conn.connectionId, conn.isViewer, connStatus, acpActions, tabId])
+
   const messageListNode = (
-    <MessageListView
-      conversationId={effectiveConversationId}
-      agentType={selectedAgent}
-      connStatus={connStatus}
-      isActive={isActive}
-      sendSignal={sendSignal}
-      sessionStats={effectiveSessionStats}
-      detailLoading={detailLoading}
-      detailError={detailError}
-      acpLoadError={acpLoadError}
-      hideEmptyState={!hasPersistedConversation || hasSentMessage}
-      onReload={canShowDetailErrorActions ? handleReloadDetail : undefined}
-      onNewSession={
-        canShowDetailErrorActions ? handleOpenNewSession : undefined
-      }
-    />
+    <GoalControlProvider value={goalControlValue}>
+      <MessageListView
+        conversationId={effectiveConversationId}
+        agentType={selectedAgent}
+        connStatus={connStatus}
+        isActive={isActive}
+        sendSignal={sendSignal}
+        detailLoading={detailLoading}
+        detailError={detailError}
+        acpLoadError={acpLoadError}
+        hideEmptyState={!hasPersistedConversation || hasSentMessage}
+        onReload={canShowDetailErrorActions ? handleReloadDetail : undefined}
+        onNewSession={
+          canShowDetailErrorActions ? handleOpenNewSession : undefined
+        }
+      />
+    </GoalControlProvider>
   )
 
   // Live-feedback bar gating + the "agent never read your note" resend fallback.
@@ -1479,12 +1561,14 @@ const ConversationTabView = memo(function ConversationTabView({
       pendingPermission={conn.pendingPermission}
       pendingQuestion={conn.pendingQuestion}
       pendingAskQuestion={conn.pendingAskQuestion}
+      pendingPlanApproval={conn.pendingPlanApproval}
       onFocus={handleFocus}
       onSend={handleSend}
       onCancel={handleCancel}
       onRespondPermission={handleRespondPermission}
       onAnswerQuestion={handleAnswerQuestion}
       onAnswerAskQuestion={handleAnswerAskQuestion}
+      onAnswerPlanApproval={handleAnswerPlanApproval}
       modes={connectionModes}
       configOptions={connectionConfigOptions}
       modeLoading={modeLoading}
@@ -1553,18 +1637,25 @@ const ConversationTabView = memo(function ConversationTabView({
               />
             </div>
             {composerBlockedMessage ? (
-              <button
-                type="button"
-                onClick={handleOpenAgentsSettings}
-                className="w-full cursor-pointer rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-center text-xs text-destructive transition-colors hover:bg-destructive/10"
-              >
-                <div
-                  className="overflow-hidden text-ellipsis whitespace-nowrap text-center"
+              <div className="flex w-full items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                <button
+                  type="button"
+                  onClick={handleOpenAgentsSettings}
                   title={composerBlockedMessage}
+                  className="min-w-0 flex-1 cursor-pointer overflow-hidden text-ellipsis whitespace-nowrap text-left transition-colors hover:text-destructive/80"
                 >
                   {composerBlockedMessage}
-                </div>
-              </button>
+                </button>
+                {selectedAgentNotInstalled ? (
+                  <button
+                    type="button"
+                    onClick={() => setComposerDiagnosticsOpen(true)}
+                    className="shrink-0 rounded border border-destructive/40 px-2 py-0.5 font-medium transition-colors hover:bg-destructive/10"
+                  >
+                    {tDiag("button")}
+                  </button>
+                ) : null}
+              </div>
             ) : null}
             <ChatInput
               // composerConnStatus (not connStatus): a chat draft mid-reconnect
@@ -1624,18 +1715,25 @@ const ConversationTabView = memo(function ConversationTabView({
               disabled={isConnecting || dbConversationId != null}
             />
             {composerBlockedMessage ? (
-              <button
-                type="button"
-                onClick={handleOpenAgentsSettings}
-                className="mt-2 w-full cursor-pointer rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-center text-xs text-destructive transition-colors hover:bg-destructive/10"
-              >
-                <div
-                  className="overflow-hidden text-ellipsis whitespace-nowrap text-center"
+              <div className="mt-2 flex w-full items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                <button
+                  type="button"
+                  onClick={handleOpenAgentsSettings}
                   title={composerBlockedMessage}
+                  className="min-w-0 flex-1 cursor-pointer overflow-hidden text-ellipsis whitespace-nowrap text-left transition-colors hover:text-destructive/80"
                 >
                   {composerBlockedMessage}
-                </div>
-              </button>
+                </button>
+                {selectedAgentNotInstalled ? (
+                  <button
+                    type="button"
+                    onClick={() => setComposerDiagnosticsOpen(true)}
+                    className="shrink-0 rounded border border-destructive/40 px-2 py-0.5 font-medium transition-colors hover:bg-destructive/10"
+                  >
+                    {tDiag("button")}
+                  </button>
+                ) : null}
+              </div>
             ) : null}
           </div>
           <div className="min-h-0 flex-1">{messageListNode}</div>
@@ -1652,6 +1750,11 @@ const ConversationTabView = memo(function ConversationTabView({
         onSubmit={feedback.submit}
         submitting={feedback.submitting}
         agentName={AGENT_LABELS[selectedAgent]}
+      />
+      <AgentDiagnosticsDialog
+        open={composerDiagnosticsOpen}
+        onOpenChange={setComposerDiagnosticsOpen}
+        agentType={selectedAgent}
       />
     </ConversationShell>
   )
@@ -2008,7 +2111,7 @@ export function ConversationDetailPanel() {
               )
             : active
               ? "h-full"
-              : "absolute inset-0 invisible pointer-events-none"
+              : "conversation-tab-hidden absolute inset-0 invisible pointer-events-none"
         )}
         onPointerDownCapture={
           canTile && !active ? () => switchTab(tab.id) : undefined

@@ -611,7 +611,8 @@
       "saveCodeBuddyConfig": "保存 CodeBuddy 配置",
       "saveKimiCodeConfig": "保存 Kimi Code 配置",
       "customInstall": "自定义安装",
-      "saveKimiCodeRawConfig": "保存 config.toml"
+      "saveKimiCodeRawConfig": "保存 config.toml",
+      "diagnose": "诊断"
     },
     "status": {
       "enabled": "启用",
@@ -949,7 +950,11 @@
       "effortLevel_low": "低",
       "effortLevel_medium": "中",
       "effortLevel_high": "高",
-      "effortLevel_xhigh": "超高"
+      "effortLevel_xhigh": "超高",
+      "sendAttributionHeader": "向接口发送归属/计费标识",
+      "sendAttributionHeaderAria": "向接口发送 Claude Code 归属/计费标识",
+      "disableNonessentialTraffic": "禁用遥测或多余的网络请求",
+      "disableNonessentialTrafficAria": "禁用 Claude Code 遥测或多余的网络请求"
     },
     "dialogs": {
       "confirmDeleteProvider": "确认删除 Provider {providerId}？",
@@ -1317,6 +1322,7 @@
       "searchPlaceholder": "搜索会话...",
       "viewOptions": "显示选项",
       "showCompleted": "显示已完成会话",
+      "showWorktrees": "显示工作树文件夹",
       "moreOptions": "更多选项",
       "sortBy": "排序方式",
       "sortByCreatedAt": "按创建时间排序",
@@ -1372,6 +1378,7 @@
       "sectionFolders": "文件夹",
       "sectionChats": "聊天",
       "noChats": "没有聊天",
+      "noFolders": "没有打开的文件夹",
       "newChatAction": "新建聊天",
       "automations": "自动化",
       "loadingSubsessions": "正在加载子会话…"
@@ -1737,7 +1744,11 @@
         "confirmApply": "将贮藏 {ref} 应用到工作目录？",
         "cancel": "取消"
       },
-      "deleteBranch": "删除分支"
+      "deleteBranch": "删除分支",
+      "searchPlaceholder": "搜索分支和操作",
+      "searchAriaLabel": "搜索分支和操作",
+      "branchListLabel": "分支和操作",
+      "noMatches": "无匹配项"
     },
     "commitDialog": {
       "toasts": {
@@ -1823,6 +1834,7 @@
       "copyMessage": "复制提交消息",
       "author": "作者",
       "noFileChangeDetails": "暂无文件变更详情。",
+      "loadingFiles": "正在加载文件…",
       "branchesTitle": "分支",
       "loadingBranches": "正在加载分支...",
       "noContainingBranches": "未找到包含此提交的分支。",
@@ -1851,14 +1863,28 @@
         "resetSuccessDescription": "已将 {branch} 以 {mode} 重置到 {shortHash}",
         "resetFailed": "重置失败"
       },
+      "authorFilter": {
+        "label": "作者",
+        "searchPlaceholder": "搜索作者",
+        "noAuthors": "未找到作者",
+        "you": "你",
+        "filterByAuthorAria": "按作者筛选提交",
+        "filterByQuery": "按“{query}”过滤",
+        "clearAuthorFilterAria": "清除作者过滤",
+        "recent": "最近",
+        "matchingAuthors": "匹配的作者",
+        "removeFromRecent": "从最近列表移除 {name}"
+      },
       "branchSelector": {
+        "label": "分支",
         "searchBranch": "搜索分支...",
         "noBranches": "无分支",
         "selectBranchPlaceholder": "选择分支...",
         "localBranches": "本地分支",
         "current": "当前",
         "remoteBranches": "远程分支",
-        "refreshCommitHistory": "刷新提交记录"
+        "refreshCommitHistory": "刷新提交记录",
+        "clearBranchFilterAria": "清除分支过滤"
       },
       "dialogs": {
         "newBranchTitle": "新建分支",
@@ -2589,6 +2615,8 @@
           "remaining": "剩余",
           "elapsed": "耗时",
           "tokens": "tokens",
+          "pause": "暂停",
+          "clear": "清除",
           "status": {
             "active": "进行中",
             "paused": "已暂停",
@@ -2717,6 +2745,17 @@
         "submit": "提交",
         "submitError": "提交失败，请重试。"
       },
+      "planApproval": {
+        "title": "智能体已给出计划——请审阅",
+        "emptyPlan": "智能体未写入计划。可批准开始实施，或要求修改。",
+        "approve": "批准并开始",
+        "requestChanges": "要求修改",
+        "abandon": "放弃",
+        "feedbackPlaceholder": "需要修改什么？",
+        "sendChanges": "发送",
+        "cancel": "取消",
+        "submitError": "提交失败，请重试。"
+      },
       "feedbackCheckResult": {
         "count": "{count} 条反馈",
         "expand": "展开全部反馈",
@@ -2757,6 +2796,11 @@
         "opClose": "结束子智能体",
         "opResume": "恢复子智能体"
       },
+      "contextCompaction": {
+        "compacting": "正在压缩上下文…",
+        "compacted": "上下文已压缩",
+        "compactedTokens": "上下文已压缩 · {before} → {after} tokens"
+      },
       "backgroundTasks": {
         "running": "{count} 个后台任务运行中",
         "settling": "正在同步后台结果…",
@@ -2766,6 +2810,10 @@
         "cardCompleted": "后台任务已完成",
         "cardFinishedWithStatus": "后台任务已结束（{status}）",
         "cardResultPending": "结果尚未返回"
+      },
+      "proposedPlan": {
+        "title": "计划提案",
+        "planning": "规划中…"
       }
     },
     "diffPreview": {
@@ -3964,5 +4012,27 @@
     "groupInstructions": "描述与系统提示词",
     "fieldDescription": "描述",
     "baseInstructions": "系统提示词（base_instructions）"
+  },
+  "DiagnosticsSettings": {
+    "title": "环境诊断",
+    "description": "检查本应用在自身进程中如何解析该智能体的 CLI——这可能与你的终端不同。",
+    "loading": "正在运行诊断…",
+    "error": "诊断失败",
+    "rerun": "重新运行",
+    "copyAll": "复制全部",
+    "copied": "诊断信息已复制到剪贴板",
+    "button": "诊断",
+    "verdict": {
+      "ok": "环境正常。若仍提示未安装，请彻底重启应用以刷新前缀缓存。",
+      "node_missing": "在应用的 PATH 上未找到 Node.js。",
+      "npm_missing": "在应用的 PATH 上未找到 npm。",
+      "not_installed": "该智能体似乎尚未安装。",
+      "installed_but_unresolved": "记录显示已安装，但应用无法定位其可执行文件。",
+      "user_prefix_not_on_path": "安装到了回退前缀（~/.codeg/npm-global），但它不在应用的 PATH 上。请彻底重启应用后重试。",
+      "homebrew_bin_not_on_path": "安装在 Homebrew 的 bin 目录下，但它不在应用的 PATH 上（Apple Silicon keg 拆分）。",
+      "terminal_only_path": "该命令在你的终端能解析，但在应用中不能——这是 GUI PATH 差异。请从终端启动应用，或在智能体设置中重新安装。",
+      "npm_prefix_timeout": "npm prefix -g 太慢（超过 1.5 秒），已跳过回退检测。请重启应用后重试。",
+      "node_too_old": "当前 Node.js 版本低于该智能体的要求。请升级 Node.js。"
+    }
   }
 }
