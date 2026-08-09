@@ -7,6 +7,7 @@ import { getFolderConversation } from "@/lib/api"
 import { registerBackendScopedStoreReset } from "@/stores/backend-scoped-store-reset"
 import type {
   AgentExecutionStats,
+  AgentTranscriptEntry,
   DbConversationDetail,
   MessageTurn,
   PlanEntryInfo,
@@ -18,6 +19,10 @@ import {
   inferLiveToolName,
   parseGoalUpdateTitle,
 } from "@/lib/tool-call-normalization"
+import {
+  parseCodexListFilesTitle,
+  parseCodexSearchTitle,
+} from "@/lib/codex-command-action"
 import { COLLAB_AGENT_TOOL_NAME, mergeCollabOp } from "@/lib/collab-tool"
 import { collapseLiveCollabBlocks } from "@/lib/collab-collapse"
 import { kimiTodoWriteEntries } from "@/lib/plan-parse"
@@ -113,8 +118,6 @@ export interface ConversationRuntimeSession {
   detail: DbConversationDetail | null
   detailLoading: boolean
   detailError: string | null
-  olderTurnsLoading: boolean
-  olderTurnsError: string | null
 
   // ACP `session/load` failed in a non-recoverable way (currently only when
   // the agent reports ResourceNotFound for the historical session_id). Set
@@ -248,17 +251,6 @@ type Action =
       conversationId: number
       error: string
     }
-  | { type: "LOAD_OLDER_TURNS_START"; conversationId: number }
-  | {
-      type: "LOAD_OLDER_TURNS_SUCCESS"
-      conversationId: number
-      page: DbConversationDetail
-    }
-  | {
-      type: "LOAD_OLDER_TURNS_ERROR"
-      conversationId: number
-      error: string
-    }
   | {
       type: "COMPLETE_TURN"
       conversationId: number
@@ -388,8 +380,6 @@ function createEmptySession(
     detail: null,
     detailLoading: false,
     detailError: null,
-    olderTurnsLoading: false,
-    olderTurnsError: null,
     acpLoadError: null,
     localTurns: [],
     backgroundTurns: [],
@@ -682,6 +672,25 @@ function resolveLiveToolInput(
     if (path) return JSON.stringify({ file_path: path })
   }
 
+  // The sibling `search` / `listFiles` command actions have neither raw_input
+  // NOR `locations` — their query and path live only in the ACP title. Recover
+  // the canonical grep/glob input from it so the card shows the pattern chip and
+  // scope path, and derives a real title instead of a "<whole title>: <first
+  // line of output>" echo. See parseCodexSearchTitle.
+  if (toolName === "grep") {
+    const search = parseCodexSearchTitle(info.title)
+    if (search && (search.query || search.path)) {
+      return JSON.stringify({
+        ...(search.query ? { pattern: search.query } : {}),
+        ...(search.path ? { path: search.path } : {}),
+      })
+    }
+  }
+  if (toolName === "glob") {
+    const listFiles = parseCodexListFilesTitle(info.title)
+    if (listFiles?.path) return JSON.stringify({ path: listFiles.path })
+  }
+
   const goal = parseGoalUpdateTitle(info.title)
   if (!goal) return info.raw_input
 
@@ -700,8 +709,19 @@ function resolveLiveToolInput(
 
 export function buildStreamingTurnsFromLiveMessage(
   conversationId: number,
-  liveMessage: LiveMessage
+  liveMessage: LiveMessage,
+  opts?: {
+    /**
+     * When false (the COMPLETE_TURN promotion path), parented subagent
+     * text/thinking is still routed OUT of the main thread but no
+     * `agent_transcript` is attached — the transcript is transient live-only
+     * data and must not survive into promoted `localTurns` (the authoritative
+     * detail reload that replaces them has no counterpart for it).
+     */
+    attachAgentTranscripts?: boolean
+  }
 ): BuiltStreamingTurns {
+  const attachAgentTranscripts = opts?.attachAgentTranscripts !== false
   // Consolidate codex collab capsules first (spawn execution + per-wait result,
   // close folded in) so live matches the history reconstruction. No-op when the
   // message has no collab tool calls. See collab-collapse.ts.
@@ -734,6 +754,12 @@ export function buildStreamingTurnsFromLiveMessage(
     Array<{ info: ToolCallInfo; toolName: string }>
   >()
   const childToolCallIds = new Set<string>()
+  // Live subagent transcripts, keyed by the launching Agent tool call's id.
+  // Fed by parented text/thinking blocks (claude-agent-acp ≥0.63 subagent
+  // transcripts); attached to the in-progress Agent card's tool_result as
+  // `agent_transcript`. Entries arrive pre-merged (the reducer splits blocks
+  // only at kind/attribution boundaries), so they are pushed as-is.
+  const agentTranscripts = new Map<string, AgentTranscriptEntry[]>()
 
   // Cache inferred tool names — inferLiveToolName is called per tool_call
   // in both Phase 1 and Phase 2; caching avoids redundant computation.
@@ -815,10 +841,32 @@ export function buildStreamingTurnsFromLiveMessage(
             ?.push({ info: block.info, toolName })
         }
       }
-    } else if (positionalAgentId) {
-      // A non-tool block (text/thinking/plan) means the main agent is
-      // producing new content — stop position-based capture.
-      positionalAgentId = null
+    } else {
+      // Subagent-attributed text/thinking (claude-agent-acp ≥0.63
+      // transcripts) is collected here — BEFORE Phase 2 — so the transcript
+      // is complete when Phase 2 visits the (earlier-positioned) Agent
+      // tool_call and attaches it. A parented block whose parent is not a
+      // classified agent (snapshot-path orphan — the reducer's
+      // parent-presence gate does not cover snapshot-sourced content) is
+      // dropped by the `agentIds` check. Entries arrive pre-merged (the
+      // reducer splits blocks only at kind/attribution boundaries).
+      if (
+        (block.type === "text" || block.type === "thinking") &&
+        block.parentToolUseId
+      ) {
+        if (agentIds.has(block.parentToolUseId)) {
+          const list = agentTranscripts.get(block.parentToolUseId) ?? []
+          list.push({ type: block.type, text: block.text })
+          agentTranscripts.set(block.parentToolUseId, list)
+        }
+      } else if (positionalAgentId) {
+        // A non-tool block (text/thinking/plan) means the main agent is
+        // producing new content — stop position-based capture. (A parented
+        // block took the branch above: it is the SUBAGENT's own prose, so
+        // the positional window survives it — a child tool call arriving
+        // right after subagent text still nests.)
+        positionalAgentId = null
+      }
     }
   }
 
@@ -832,6 +880,18 @@ export function buildStreamingTurnsFromLiveMessage(
   const inProgressToolCallIds = new Set<string>()
 
   for (const block of content) {
+    // Parented subagent text/thinking never enters the main thread: it was
+    // already collected into `agentTranscripts` during Phase 1 (which is why
+    // an Agent tool_call positioned EARLIER in content sees its full
+    // transcript when Phase 2 attaches it below). Skipping here also means
+    // it never starts a new turn group and never counts as main content.
+    if (
+      (block.type === "text" || block.type === "thinking") &&
+      block.parentToolUseId
+    ) {
+      continue
+    }
+
     const isContentBlock =
       block.type === "text" ||
       block.type === "thinking" ||
@@ -985,6 +1045,13 @@ export function buildStreamingTurnsFromLiveMessage(
         const children = isAgent
           ? (agentChildren.get(block.info.tool_call_id) ?? [])
           : []
+        // Live subagent transcript for the RUNNING card only: at settle the
+        // card flips to the real result (and history has no counterpart), so
+        // the final-state branch below never attaches it.
+        const transcript =
+          attachAgentTranscripts && isAgent
+            ? agentTranscripts.get(block.info.tool_call_id)
+            : undefined
 
         const agentStats: AgentExecutionStats | undefined =
           isAgent && children.length > 0
@@ -1019,11 +1086,16 @@ export function buildStreamingTurnsFromLiveMessage(
             ...(agentStats ? { agent_stats: agentStats } : {}),
           })
           currentGroupHasCompletedTool = true
-        } else if (resolvedOutput || (isAgent && children.length > 0)) {
+        } else if (
+          resolvedOutput ||
+          (isAgent && (children.length > 0 || (transcript?.length ?? 0) > 0))
+        ) {
           // In-progress tool that already produced partial output (or an
-          // agent with child calls). Emit the running result so the renderer
-          // can display live output / nested tool calls, and flag the
-          // tool_call so the adapter keeps state="input-available".
+          // agent with child calls or a streaming transcript — a text-only
+          // subagent has no child tools yet but still needs the carrier
+          // block). Emit the running result so the renderer can display live
+          // output / nested tool calls, and flag the tool_call so the
+          // adapter keeps state="input-available".
           //
           // For Agents specifically, partial `content` from Claude Code's
           // Task tool echoes the prompt (and subagent message fragments)
@@ -1035,6 +1107,7 @@ export function buildStreamingTurnsFromLiveMessage(
             output_preview: isAgent ? null : (resolvedOutput ?? null),
             is_error: false,
             ...(agentStats ? { agent_stats: agentStats } : {}),
+            ...(transcript?.length ? { agent_transcript: transcript } : {}),
           })
           inProgressToolCallIds.add(block.info.tool_call_id)
         }
@@ -1369,36 +1442,11 @@ function reducer(
           ? current.backgroundTurns
           : retainedBackground
 
-      // A settled refetch always returns the newest backend page. If the user
-      // already paged farther back, retain that loaded prefix and replace only
-      // the overlapping newest page; otherwise every turn completion would
-      // collapse the transcript back to 100 rows and throw away their scroll
-      // context.
-      let nextDetail = action.detail
-      if (current.detail) {
-        const incomingKeys = new Set(
-          action.detail.turns.map((turn) => `${turn.role} ${turn.id}`)
-        )
-        const loadedPrefix = current.detail.turns.filter(
-          (turn) => !incomingKeys.has(`${turn.role} ${turn.id}`)
-        )
-        if (loadedPrefix.length > 0) {
-          nextDetail = {
-            ...action.detail,
-            turns: [...loadedPrefix, ...action.detail.turns],
-            has_older_turns: current.detail.has_older_turns,
-            older_turns_cursor: current.detail.older_turns_cursor,
-          }
-        }
-      }
-
       const nextSession: ConversationRuntimeSession = {
         ...current,
-        detail: nextDetail,
+        detail: action.detail,
         detailLoading: false,
         detailError: null,
-        olderTurnsLoading: false,
-        olderTurnsError: null,
         externalId: nextExternalId ?? current.externalId,
         sessionStats: action.detail.session_stats ?? current.sessionStats,
         backgroundTurns: nextBackgroundTurns,
@@ -1429,45 +1477,6 @@ function reducer(
         ...current,
         detailLoading: false,
         detailError: action.error,
-      }))
-
-    case "LOAD_OLDER_TURNS_START":
-      return updateSessionInState(state, action.conversationId, (current) => ({
-        ...current,
-        olderTurnsLoading: true,
-        olderTurnsError: null,
-      }))
-
-    case "LOAD_OLDER_TURNS_SUCCESS": {
-      const current = state.byConversationId.get(action.conversationId)
-      if (!current?.detail) return state
-
-      const existing = new Set(
-        current.detail.turns.map((turn) => `${turn.role} ${turn.id}`)
-      )
-      const older = action.page.turns.filter(
-        (turn) => !existing.has(`${turn.role} ${turn.id}`)
-      )
-      return updateSessionInState(state, action.conversationId, (session) => ({
-        ...session,
-        detail: session.detail
-          ? {
-              ...session.detail,
-              turns: [...older, ...session.detail.turns],
-              has_older_turns: action.page.has_older_turns ?? false,
-              older_turns_cursor: action.page.older_turns_cursor ?? null,
-            }
-          : session.detail,
-        olderTurnsLoading: false,
-        olderTurnsError: null,
-      }))
-    }
-
-    case "LOAD_OLDER_TURNS_ERROR":
-      return updateSessionInState(state, action.conversationId, (current) => ({
-        ...current,
-        olderTurnsLoading: false,
-        olderTurnsError: action.error,
       }))
 
     case "COMPLETE_TURN": {
@@ -1514,11 +1523,15 @@ function reducer(
           ? action.liveMessage
           : current.liveMessage
 
-      // Convert liveMessage to completed MessageTurns (split into rounds)
+      // Convert liveMessage to completed MessageTurns (split into rounds).
+      // No agent transcripts on promotion: they are transient live-only data
+      // (see the option's doc) — parented blocks are still routed out of the
+      // main thread, just not re-attached to the promoted card.
       const streamingTurns = sourceLiveMessage
         ? buildStreamingTurnsFromLiveMessage(
             current.conversationId,
-            sourceLiveMessage
+            sourceLiveMessage,
+            { attachAgentTranscripts: false }
           ).turns
         : []
 
@@ -2067,7 +2080,6 @@ function reducer(
 
 export interface RuntimeActions {
   fetchDetail: (conversationId: number) => void
-  loadOlderTurns: (conversationId: number) => boolean
   refetchDetail: (
     conversationId: number,
     options?: { preserveLive?: boolean }
@@ -2459,29 +2471,41 @@ function computeTimelinePrefix(
   }
 
   // Phase 1: DB historical turns.
-  // When liveOwnsActiveTurn is set (sub-agent dialog), the live/local reply
-  // is authoritative for the child's current (only) reply. Strip any
-  // persisted assistant turns while there's a live or just-promoted local
-  // reply in this session — only the kickoff prefix (everything before the
-  // first assistant turn) is shown from the DB. This eliminates the
-  // partial-plus-live duplicate for all timing scenarios, including a
-  // connection-id-null open where we can't read the live store during fetch.
+  // When liveOwnsActiveTurn is set (read-only viewer), the live/local reply is
+  // authoritative for the ACTIVE reply — the persisted copy of that one reply
+  // must not render beside it. This eliminates the partial-plus-live duplicate
+  // for all timing scenarios, including a connection-id-null open where we
+  // can't read the live store during fetch.
   //
-  // Delegation children are SINGLE-REPLY (one-shot): stripping from the
-  // first assistant turn onward removes exactly the persisted copy of that
-  // one reply. (A hypothetical multi-turn child would have earlier replies
-  // hidden during the live/grace window — not a case the viewer supports.)
+  // Scoped to the active round: strip only what follows the LAST persisted
+  // user turn. For a one-shot delegation child ([user, assistant]) that is
+  // exactly the old "from the first assistant turn" rule. For a MULTI-ROUND
+  // session — a work task runs work → rework → retry → merge in one
+  // conversation — the old rule erased every earlier round from the viewer the
+  // whole time it was streaming, leaving only the kickoff and the live reply.
+  // With no persisted user turn at all (transcript still cold) there is no
+  // anchor, so fall back to the first assistant turn: the only assistant
+  // content that can exist is the reply being streamed.
   const rawPersistedTurns = session.detail?.turns ?? []
   const hasLiveOrLocalReply =
     session.liveOwnsActiveTurn &&
     (session.liveMessage !== null || session.localTurns.length > 0)
-  const firstAssistantIdx = hasLiveOrLocalReply
-    ? rawPersistedTurns.findIndex((t) => t.role === "assistant")
-    : -1
+  let stripFrom = -1
+  if (hasLiveOrLocalReply) {
+    let lastUserIdx = -1
+    for (let i = rawPersistedTurns.length - 1; i >= 0; i--) {
+      if (rawPersistedTurns[i]!.role === "user") {
+        lastUserIdx = i
+        break
+      }
+    }
+    stripFrom =
+      lastUserIdx === -1
+        ? rawPersistedTurns.findIndex((t) => t.role === "assistant")
+        : lastUserIdx + 1
+  }
   const persistedTurns =
-    hasLiveOrLocalReply && firstAssistantIdx !== -1
-      ? rawPersistedTurns.slice(0, firstAssistantIdx)
-      : rawPersistedTurns
+    stripFrom !== -1 ? rawPersistedTurns.slice(0, stripFrom) : rawPersistedTurns
 
   // Suppress the persisted PARTIAL in-flight reply for a non-delegation
   // cross-client viewer. While a reply is streaming, some agents (OpenCode,
@@ -2713,40 +2737,6 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>()((
           error: toErrorMessage(error),
         })
       })
-  }
-
-  const loadOlderTurns = (conversationId: number): boolean => {
-    const session = get().byConversationId.get(conversationId)
-    const cursor = session?.detail?.older_turns_cursor
-    if (
-      !session?.detail ||
-      session.olderTurnsLoading ||
-      session.detail.has_older_turns !== true ||
-      cursor == null
-    ) {
-      return false
-    }
-
-    const fetchId = session.dbConversationId ?? conversationId
-    dispatch({ type: "LOAD_OLDER_TURNS_START", conversationId })
-    getFolderConversation(fetchId, { beforeTurn: cursor, limit: 100 })
-      .then((page) => {
-        if (!get().byConversationId.get(conversationId)?.detail) return
-        dispatch({
-          type: "LOAD_OLDER_TURNS_SUCCESS",
-          conversationId,
-          page,
-        })
-      })
-      .catch((error: unknown) => {
-        if (!get().byConversationId.has(conversationId)) return
-        dispatch({
-          type: "LOAD_OLDER_TURNS_ERROR",
-          conversationId,
-          error: toErrorMessage(error),
-        })
-      })
-    return true
   }
 
   const refetchDetail = (
@@ -3014,7 +3004,6 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>()((
 
   const actions: RuntimeActions = {
     fetchDetail,
-    loadOlderTurns,
     refetchDetail,
     syncViewerDetail,
     syncTurnMetadata,

@@ -1,6 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::collections::{HashMap, HashSet};
 
 use crate::app_error::AppCommandError;
 use crate::db::entities::conversation;
@@ -9,6 +7,7 @@ use crate::db::service::{conversation_service, folder_service, import_service, t
 #[cfg(feature = "tauri-runtime")]
 use crate::db::AppDatabase;
 use crate::models::*;
+use crate::parsers::acp_native::AcpNativeParser;
 use crate::parsers::claude::ClaudeParser;
 use crate::parsers::cline::ClineParser;
 use crate::parsers::codebuddy::CodeBuddyParser;
@@ -30,47 +29,6 @@ use crate::web::event_bridge::{
     TabsChanged, CONVERSATIONS_BULK_CHANGED_EVENT, CONVERSATION_CHANGED_EVENT,
     IMPORT_SCAN_PROGRESS_EVENT, TABS_CHANGED_EVENT,
 };
-
-const DEFAULT_CONVERSATION_PAGE_SIZE: usize = 100;
-const MAX_CONVERSATION_PAGE_SIZE: usize = 200;
-const CONVERSATION_PAGE_CACHE_CAPACITY: usize = 2;
-const CONVERSATION_PAGE_CACHE_TTL: Duration = Duration::from_secs(2 * 60);
-
-struct ConversationPageCacheEntry {
-    conversation_id: i32,
-    inserted_at: Instant,
-    detail: Arc<DbConversationDetail>,
-}
-
-fn conversation_page_cache() -> &'static Mutex<VecDeque<ConversationPageCacheEntry>> {
-    static CACHE: OnceLock<Mutex<VecDeque<ConversationPageCacheEntry>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(VecDeque::new()))
-}
-
-fn get_cached_conversation_detail(conversation_id: i32) -> Option<Arc<DbConversationDetail>> {
-    let mut cache = conversation_page_cache().lock().ok()?;
-    cache.retain(|entry| entry.inserted_at.elapsed() <= CONVERSATION_PAGE_CACHE_TTL);
-    let index = cache
-        .iter()
-        .position(|entry| entry.conversation_id == conversation_id)?;
-    let entry = cache.remove(index)?;
-    let detail = Arc::clone(&entry.detail);
-    cache.push_front(entry);
-    Some(detail)
-}
-
-fn cache_conversation_detail(conversation_id: i32, detail: Arc<DbConversationDetail>) {
-    let Ok(mut cache) = conversation_page_cache().lock() else {
-        return;
-    };
-    cache.retain(|entry| entry.conversation_id != conversation_id);
-    cache.push_front(ConversationPageCacheEntry {
-        conversation_id,
-        inserted_at: Instant::now(),
-        detail,
-    });
-    cache.truncate(CONVERSATION_PAGE_CACHE_CAPACITY);
-}
 
 pub async fn list_all_conversations_core(
     conn: &sea_orm::DatabaseConnection,
@@ -210,7 +168,7 @@ fn list_conversations_sync(
     let mut all_conversations = Vec::new();
     let mut seen_keys = HashSet::new();
 
-    let parsers: Vec<(AgentType, Box<dyn AgentParser>)> = vec![
+    let mut parsers: Vec<(AgentType, Box<dyn AgentParser>)> = vec![
         (AgentType::ClaudeCode, Box::new(ClaudeParser::new())),
         (AgentType::Codex, Box::new(CodexParser::new())),
         (AgentType::OpenCode, Box::new(OpenCodeParser::new())),
@@ -224,6 +182,11 @@ fn list_conversations_sync(
         (AgentType::Grok, Box::new(GrokParser::new())),
         (AgentType::Cursor, Box::new(CursorParser::new())),
     ];
+    // Registered custom agents read back from codeg's own ACP transcripts, so
+    // their sessions participate in folder grouping and stats like any other.
+    for custom in crate::acp::custom_registry::all() {
+        parsers.push((custom, Box::new(AcpNativeParser::new(custom))));
+    }
 
     for (at, parser) in &parsers {
         if let Some(ref filter) = agent_type {
@@ -332,6 +295,9 @@ pub async fn get_conversation(
             AgentType::Pi => Box::new(PiParser::new()),
             AgentType::Grok => Box::new(GrokParser::new()),
             AgentType::Cursor => Box::new(CursorParser::new()),
+            // Custom ACP agents have no native store to reverse-engineer;
+            // their history is codeg's own ACP transcript.
+            AgentType::Custom(_) => Box::new(AcpNativeParser::new(agent_type)),
         };
 
         parser
@@ -634,6 +600,17 @@ fn build_scan_result(
 /// Scan every local agent's sessions and reconcile them against the DB for the
 /// import-picker window. Emits [`IMPORT_SCAN_PROGRESS_EVENT`] once per parser
 /// while the walk runs.
+///
+/// The scan also refreshes the conversations that are ALREADY imported, from
+/// the same parse it just did: a title generated after the first import, and
+/// the transcript's own last-activity time when the user kept working on the
+/// session in the agent's own CLI (see
+/// [`import_service::sync_imported_sessions`]). Without this, a re-scan can
+/// only ever offer the *new* sessions — the picker does not let you re-select
+/// an imported one — so an already-imported conversation would keep the
+/// `updated_at` it had at import time forever, and sit in the wrong place in a
+/// recency-sorted sidebar. Each refreshed row is broadcast so every window and
+/// web client re-sorts live.
 pub async fn scan_importable_sessions_core(
     conn: &sea_orm::DatabaseConnection,
     emitter: &EventEmitter,
@@ -663,15 +640,21 @@ pub async fn scan_importable_sessions_core(
         .map_err(crate::db::error::DbError::from)
         .map_err(AppCommandError::from)?;
     let mut imported_index: HashMap<(String, String), bool> = HashMap::new();
-    for row in conv_rows {
-        let Some(external_id) = row.external_id else {
+    for row in &conv_rows {
+        let Some(external_id) = row.external_id.clone() else {
             continue;
         };
         let live = row.deleted_at.is_none();
         let entry = imported_index
-            .entry((row.agent_type, external_id))
+            .entry((row.agent_type.clone(), external_id))
             .or_insert(live);
         *entry = *entry || live;
+    }
+
+    // Refresh the already-imported rows in place before answering, then
+    // broadcast each one so open sidebars re-sort without a refetch.
+    for id in import_service::sync_imported_sessions(conn, &conv_rows, &summaries).await {
+        emit_conversation_upsert(emitter, conn, id).await;
     }
 
     let folder_rows = load_folder_rows(conn).await?;
@@ -908,13 +891,43 @@ fn build_historical_delegation_meta(child: &DbConversationSummary) -> serde_json
     serde_json::Value::Object(obj)
 }
 
-/// Walk every `delegate_to_agent` ToolUse block in `turns` and, when its
-/// `tool_use_id` matches a child conversation in `children`, set
-/// `meta["codeg.delegation"]` to the DB-derived snapshot. Skips blocks
-/// whose meta is already populated so the live-broker write (when present)
-/// always wins. Tool-name match is by substring to cover the
-/// MCP-prefixed (`mcp__codeg-mcp__delegate_to_agent`) and bare forms
-/// the host may have emitted.
+/// The broker-minted task id a `delegate_to_agent` result announces. Codex
+/// persists the ack as prose (`Delegation successful. task_id=<id>. Call
+/// get_delegation_status …`); other hosts return `{"task_id":"<id>"}` — both
+/// are covered by reading `task_id` followed by `=` or `:`. Mirrors the
+/// frontend's `parseDelegateTaskId` (`lib/delegation-card.ts`).
+fn parse_delegate_task_id(output: &str) -> Option<String> {
+    let at = output.find("task_id")? + "task_id".len();
+    let rest = output[at..].trim_start();
+    // Closing quote of a JSON key, then the separator, then the value's quote.
+    let rest = rest.strip_prefix('"').unwrap_or(rest).trim_start();
+    let rest = rest.strip_prefix(['=', ':'])?.trim_start();
+    let rest = rest.strip_prefix('"').unwrap_or(rest);
+    let id: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    if id.is_empty() {
+        None
+    } else {
+        Some(id)
+    }
+}
+
+/// Walk every `delegate_to_agent` ToolUse block in `turns` and, when it can be
+/// matched to a child conversation in `children`, set `meta["codeg.delegation"]`
+/// to the DB-derived snapshot. Skips blocks whose meta is already populated so
+/// the live-broker write (when present) always wins. Tool-name match is by
+/// substring to cover the MCP-prefixed (`mcp__codeg-mcp__delegate_to_agent`)
+/// and bare forms the host may have emitted.
+///
+/// Matching is by `parent_tool_use_id` first, then by the broker's task id.
+/// The fallback is what covers codex: its rollout names the call `call_<id>`,
+/// while the broker — which sees the call over the ACP wire, where code mode
+/// renames every inner call — recorded `exec-<uuid>`. The two never meet, so
+/// every codex delegation card lost its `child_conversation_id` and with it the
+/// "查看会话" affordance. The task id round-trips: the broker mirrors it into
+/// `delegation_call_id`, and the ack the model received carries it verbatim.
 fn inject_delegation_meta(turns: &mut [MessageTurn], children: &[DbConversationSummary]) {
     if children.is_empty() {
         return;
@@ -923,6 +936,31 @@ fn inject_delegation_meta(turns: &mut [MessageTurn], children: &[DbConversationS
         .iter()
         .filter_map(|c| c.parent_tool_use_id.as_deref().map(|tu| (tu, c)))
         .collect();
+    let by_task_id: HashMap<&str, &DbConversationSummary> = children
+        .iter()
+        .filter_map(|c| c.delegation_call_id.as_deref().map(|id| (id, c)))
+        .collect();
+
+    // The task id lives on the call's RESULT, which the parsers emit as a
+    // separate block (usually a later turn), so collect it up front.
+    let mut task_id_by_call: HashMap<String, String> = HashMap::new();
+    if !by_task_id.is_empty() {
+        for turn in turns.iter() {
+            for block in turn.blocks.iter() {
+                if let ContentBlock::ToolResult {
+                    tool_use_id: Some(tu),
+                    output_preview: Some(output),
+                    ..
+                } = block
+                {
+                    if let Some(task_id) = parse_delegate_task_id(output) {
+                        task_id_by_call.insert(tu.clone(), task_id);
+                    }
+                }
+            }
+        }
+    }
+
     for turn in turns.iter_mut() {
         for block in turn.blocks.iter_mut() {
             if let ContentBlock::ToolUse {
@@ -938,7 +976,12 @@ fn inject_delegation_meta(turns: &mut [MessageTurn], children: &[DbConversationS
                 if !tool_name.contains("delegate_to_agent") {
                     continue;
                 }
-                if let Some(child) = by_parent_tool_use_id.get(tu.as_str()) {
+                let child = by_parent_tool_use_id.get(tu.as_str()).or_else(|| {
+                    task_id_by_call
+                        .get(tu.as_str())
+                        .and_then(|task_id| by_task_id.get(task_id.as_str()))
+                });
+                if let Some(child) = child {
                     *meta = Some(serde_json::json!({
                         "codeg.delegation": build_historical_delegation_meta(child),
                     }));
@@ -963,17 +1006,22 @@ pub async fn get_folder_conversation_core(
         .await
         .map_err(AppCommandError::from)?;
 
-    let (mut turns, session_stats, resolved_ext_id, parsed_title, transcript_watermark) =
+    let (mut turns, session_stats, resolved_ext_id, parsed_title, parsed_model, transcript_watermark) =
         if let Some(ref ext_id) = summary.external_id {
         let at = summary.agent_type;
         let eid = ext_id.clone();
         let db_created_at = summary.created_at;
-        let folder_path_for_fallback = {
-            let folder = folder_service::get_folder_by_id(conn, summary.folder_id)
+        // Prefer the recorded origin cwd (set when a removed task worktree's
+        // conversations were re-parented) over the current folder's path — the
+        // session file still carries the ORIGINAL cwd, so matching on the new
+        // parent folder would never find it.
+        let folder_path_for_fallback = match summary.origin_cwd.clone() {
+            Some(cwd) => Some(cwd),
+            None => folder_service::get_folder_by_id(conn, summary.folder_id)
                 .await
                 .ok()
-                .flatten();
-            folder.map(|f| f.path)
+                .flatten()
+                .map(|f| f.path),
         };
         tokio::task::spawn_blocking(move || -> Result<_, AppCommandError> {
             let parser: Box<dyn AgentParser> = match at {
@@ -989,6 +1037,7 @@ pub async fn get_folder_conversation_core(
                 AgentType::Pi => Box::new(PiParser::new()),
                 AgentType::Grok => Box::new(GrokParser::new()),
                 AgentType::Cursor => Box::new(CursorParser::new()),
+                AgentType::Custom(_) => Box::new(AcpNativeParser::new(at)),
             };
             match parser.get_conversation(&eid) {
                 Ok(d) => Ok((
@@ -996,6 +1045,7 @@ pub async fn get_folder_conversation_core(
                     d.session_stats,
                     None,
                     d.summary.title,
+                    d.summary.model,
                     d.transcript_watermark,
                 )),
                 Err(crate::parsers::ParseError::ConversationNotFound(_)) => {
@@ -1035,13 +1085,14 @@ pub async fn get_folder_conversation_core(
                                         d.session_stats,
                                         Some(new_ext_id),
                                         d.summary.title,
+                                        d.summary.model,
                                         d.transcript_watermark,
                                     ));
                                 }
                             }
                         }
                     }
-                    Ok((vec![], None, None, None, None))
+                    Ok((vec![], None, None, None, None, None))
                 }
                 Err(e) => Err(parse_error_to_app_error(e)),
             }
@@ -1054,7 +1105,7 @@ pub async fn get_folder_conversation_core(
             .with_detail(e.to_string())
         })??
     } else {
-        (vec![], None, None, None, None)
+        (vec![], None, None, None, None, None)
     };
 
     // If we resolved a different external_id (e.g. ACP UUID → parser branch ID),
@@ -1065,6 +1116,15 @@ pub async fn get_folder_conversation_core(
 
     let mut summary = summary;
     summary.message_count = turns.len() as u32;
+    // The transcript is the richer source for the session's model. Codex is
+    // the concrete case: an ACP-driven row is created before any
+    // `turn_context` names a model, so the DB column can stay NULL forever
+    // while the rollout file knows the answer. Fill the *returned* summary
+    // only — the row itself is left alone — so the usage sync's
+    // session-model fallback and the detail view both see it.
+    if summary.model.is_none() {
+        summary.model = parsed_model;
+    }
 
     // Historical recovery for the read-only sub-agent viewer: JSONL parsers
     // don't carry `meta["codeg.delegation"]`, so a reloaded conversation
@@ -1081,37 +1141,12 @@ pub async fn get_folder_conversation_core(
         DbConversationDetail {
             summary,
             turns,
-            has_older_turns: false,
-            older_turns_cursor: None,
             session_stats,
             transcript_watermark,
             in_flight_user_turn_id: None,
         },
         parsed_title,
     ))
-}
-
-fn paginated_conversation_detail(
-    full: &DbConversationDetail,
-    before_turn: Option<usize>,
-    limit: Option<usize>,
-) -> DbConversationDetail {
-    let total = full.turns.len();
-    let end = before_turn.unwrap_or(total).min(total);
-    let page_size = limit
-        .unwrap_or(DEFAULT_CONVERSATION_PAGE_SIZE)
-        .clamp(1, MAX_CONVERSATION_PAGE_SIZE);
-    let start = end.saturating_sub(page_size);
-
-    DbConversationDetail {
-        summary: full.summary.clone(),
-        turns: full.turns[start..end].to_vec(),
-        has_older_turns: start > 0,
-        older_turns_cursor: (start > 0).then_some(start),
-        session_stats: full.session_stats.clone(),
-        transcript_watermark: full.transcript_watermark,
-        in_flight_user_turn_id: None,
-    }
 }
 
 /// A normalized, comparable view of a user turn's renderable content. Used to
@@ -1277,37 +1312,8 @@ pub async fn get_folder_conversation_with_live_core(
     chat_channel_manager: &crate::chat_channel::manager::ChatChannelManager,
     emitter: &EventEmitter,
     conversation_id: i32,
-    before_turn: Option<usize>,
-    limit: Option<usize>,
 ) -> Result<DbConversationDetail, AppCommandError> {
-    let pagination_requested = before_turn.is_some() || limit.is_some();
-    let (mut detail, parsed_title) = if pagination_requested {
-        let (full, parsed_title) = if before_turn.is_some() {
-            if let Some(cached) = get_cached_conversation_detail(conversation_id) {
-                (cached, None)
-            } else {
-                let (full, title) = get_folder_conversation_core(conn, conversation_id).await?;
-                let full = Arc::new(full);
-                cache_conversation_detail(conversation_id, Arc::clone(&full));
-                (full, title)
-            }
-        } else {
-            // A newest-page fetch is also a freshness boundary: always reparse
-            // and replace the snapshot so live appends become visible.
-            let (full, title) = get_folder_conversation_core(conn, conversation_id).await?;
-            let full = Arc::new(full);
-            cache_conversation_detail(conversation_id, Arc::clone(&full));
-            (full, title)
-        };
-        (
-            paginated_conversation_detail(&full, before_turn, limit),
-            parsed_title,
-        )
-    } else {
-        // Older remote clients omit pagination fields. Preserve their original
-        // full-response behavior during rolling upgrades.
-        get_folder_conversation_core(conn, conversation_id).await?
-    };
+    let (mut detail, parsed_title) = get_folder_conversation_core(conn, conversation_id).await?;
 
     // Per-turn auto-title backfill. The parse `get_folder_conversation_core`
     // just did already produced the session-file title; adopt it (and broadcast
@@ -1359,8 +1365,6 @@ pub async fn get_folder_conversation(
     manager: tauri::State<'_, crate::acp::manager::ConnectionManager>,
     chat_channel_manager: tauri::State<'_, crate::chat_channel::manager::ChatChannelManager>,
     conversation_id: i32,
-    before_turn: Option<usize>,
-    limit: Option<usize>,
 ) -> Result<DbConversationDetail, AppCommandError> {
     get_folder_conversation_with_live_core(
         &db.conn,
@@ -1368,8 +1372,6 @@ pub async fn get_folder_conversation(
         &chat_channel_manager,
         &EventEmitter::Tauri(app),
         conversation_id,
-        before_turn,
-        limit,
     )
     .await
 }
@@ -2071,6 +2073,7 @@ mod tests {
             parent_id: Some(1),
             parent_tool_use_id: Some(parent_tool_use_id.into()),
             delegation_call_id: Some("call-1".into()),
+            origin_cwd: None,
         }
     }
 
@@ -2128,60 +2131,6 @@ mod tests {
             model: None,
             completed_at: None,
         }
-    }
-
-    fn detail_with_turn_count(count: usize) -> DbConversationDetail {
-        let turns = (0..count)
-            .map(|i| user_text_turn(&format!("turn-{i}"), "message", chrono::Utc::now()))
-            .collect();
-        DbConversationDetail {
-            summary: summary_child(1, "parent-tool", "completed"),
-            turns,
-            has_older_turns: false,
-            older_turns_cursor: None,
-            session_stats: None,
-            transcript_watermark: None,
-            in_flight_user_turn_id: None,
-        }
-    }
-
-    #[test]
-    fn conversation_pagination_returns_newest_page_then_adjacent_older_page() {
-        let full = detail_with_turn_count(250);
-        let newest = paginated_conversation_detail(&full, None, None);
-        assert_eq!(newest.turns.len(), 100);
-        assert_eq!(newest.turns.first().unwrap().id, "turn-150");
-        assert_eq!(newest.turns.last().unwrap().id, "turn-249");
-        assert!(newest.has_older_turns);
-        assert_eq!(newest.older_turns_cursor, Some(150));
-
-        let older =
-            paginated_conversation_detail(&full, newest.older_turns_cursor, None);
-        assert_eq!(older.turns.len(), 100);
-        assert_eq!(older.turns.first().unwrap().id, "turn-50");
-        assert_eq!(older.turns.last().unwrap().id, "turn-149");
-        assert_eq!(older.older_turns_cursor, Some(50));
-
-        let oldest = paginated_conversation_detail(&full, older.older_turns_cursor, None);
-        assert_eq!(oldest.turns.len(), 50);
-        assert_eq!(oldest.turns.first().unwrap().id, "turn-0");
-        assert!(!oldest.has_older_turns);
-        assert_eq!(oldest.older_turns_cursor, None);
-    }
-
-    #[test]
-    fn conversation_pagination_clamps_cursor_and_page_size() {
-        let full = detail_with_turn_count(250);
-        let oversized =
-            paginated_conversation_detail(&full, Some(usize::MAX), Some(usize::MAX));
-        assert_eq!(oversized.turns.len(), MAX_CONVERSATION_PAGE_SIZE);
-        assert_eq!(oversized.turns.first().unwrap().id, "turn-50");
-
-        let short = detail_with_turn_count(3);
-        let zero = paginated_conversation_detail(&short, None, Some(0));
-        assert_eq!(zero.turns.len(), 1);
-        assert_eq!(zero.turns[0].id, "turn-2");
-        assert_eq!(zero.older_turns_cursor, Some(2));
     }
 
     fn assistant_text_turn(
@@ -2437,6 +2386,83 @@ mod tests {
             inner.get("error_code").is_none(),
             "completed has no error_code"
         );
+    }
+
+    fn tool_result_turn(tool_use_id: &str, output: &str) -> MessageTurn {
+        MessageTurn {
+            id: "t2".into(),
+            // Tool results are folded into the assistant turn that owns them.
+            role: TurnRole::Assistant,
+            blocks: vec![ContentBlock::ToolResult {
+                tool_use_id: Some(tool_use_id.into()),
+                output_preview: Some(output.into()),
+                is_error: false,
+                agent_stats: None,
+                images: Vec::new(),
+            }],
+            timestamp: chrono::Utc::now(),
+            usage: None,
+            duration_ms: None,
+            model: None,
+            completed_at: None,
+        }
+    }
+
+    /// codex's rollout names the call `call_<id>` while the broker recorded the
+    /// ACP-side `exec-<uuid>` — the two never meet, so the card lost its
+    /// `child_conversation_id` (and the "查看会话" affordance) entirely. The
+    /// broker's task id, echoed in the ack the model received, is the bridge.
+    #[test]
+    fn inject_delegation_meta_falls_back_to_the_task_id() {
+        let mut turns = vec![
+            tool_use_turn(Some("call_73UFK2"), "mcp__codeg_mcp__delegate_to_agent"),
+            tool_result_turn(
+                "call_73UFK2",
+                "Delegation successful. task_id=8ff4c14c-740c-4482-b758-8f2091f97063. \
+                 Call get_delegation_status with this id in the task_ids array.",
+            ),
+        ];
+        let mut child = summary_child(2890, "exec-0fb6db94-3042-4cc4-b492-2edd1804c1fa", "completed");
+        child.delegation_call_id = Some("8ff4c14c-740c-4482-b758-8f2091f97063".into());
+
+        inject_delegation_meta(&mut turns, &[child]);
+
+        let inner = first_block_meta(&turns[0])
+            .and_then(|m| m.get("codeg.delegation").cloned())
+            .expect("meta should be set");
+        assert_eq!(inner["child_conversation_id"], 2890);
+    }
+
+    #[test]
+    fn inject_delegation_meta_does_not_bind_a_foreign_task_id() {
+        let mut turns = vec![
+            tool_use_turn(Some("call_a"), "delegate_to_agent"),
+            tool_result_turn("call_a", "Delegation successful. task_id=aaaa."),
+        ];
+        let mut child = summary_child(1, "exec-zzz", "completed");
+        child.delegation_call_id = Some("bbbb".into());
+
+        inject_delegation_meta(&mut turns, &[child]);
+
+        assert!(
+            first_block_meta(&turns[0]).is_none(),
+            "a different task's child must not be bound"
+        );
+    }
+
+    #[test]
+    fn parse_delegate_task_id_reads_both_ack_shapes() {
+        assert_eq!(
+            parse_delegate_task_id("Delegation successful. task_id=8ff4c14c-740c. Call …")
+                .as_deref(),
+            Some("8ff4c14c-740c")
+        );
+        assert_eq!(
+            parse_delegate_task_id(r#"{"task_id":"abc-123","status":"running"}"#).as_deref(),
+            Some("abc-123")
+        );
+        assert_eq!(parse_delegate_task_id("no id here"), None);
+        assert_eq!(parse_delegate_task_id("task_id="), None);
     }
 
     #[test]

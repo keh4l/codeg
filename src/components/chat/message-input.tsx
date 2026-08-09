@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { getAgentLabel } from "@/lib/custom-agents"
 import { isDesktop } from "@/lib/platform"
 import Image from "next/image"
 import { useLocale, useTranslations } from "next-intl"
@@ -16,6 +17,7 @@ import {
   FlaskConical,
   FolderSearch,
   GitFork,
+  Loader2,
   Lock,
   MessageSquarePlus,
   MessageSquareText,
@@ -30,6 +32,7 @@ import {
   TextSelect,
   Upload,
   X,
+  Zap,
 } from "lucide-react"
 import {
   DropdownMenu,
@@ -75,7 +78,6 @@ import {
 import { useShortcutSettings } from "@/hooks/use-shortcut-settings"
 import {
   readFileBase64,
-  readLocalImagePathForAttachment,
   quickMessagesList,
   uploadAttachment,
   uploadLocalPathToRemote,
@@ -87,13 +89,18 @@ import {
   UPLOAD_I18N_KEY_NOT_A_FILE,
   UPLOAD_I18N_KEY_QUOTA_EXCEEDED,
 } from "@/lib/api"
-import { extractAppCommandError } from "@/lib/app-error"
+// Local-IPC file read (never proxied to a remote workspace). Used for the
+// thumbnail preview of a locally-dropped image whose BYTES were uploaded to
+// the remote server — `api.readFileBase64` would route through the remote
+// transport and try to read the local path on the wrong machine.
+import { readFileBase64 as readLocalFileBase64 } from "@/lib/tauri"
+import { extractAppCommandError, toErrorMessage } from "@/lib/app-error"
+import { isNoActiveTurnRejection } from "@/lib/turn-busy"
 import { openFileDialog } from "@/lib/platform"
 import { getActiveRemoteConnectionId } from "@/lib/transport"
 import { ServerFileBrowserDialog } from "@/components/shared/server-file-browser-dialog"
 import { toast } from "sonner"
 import { disposeTauriListener } from "@/lib/tauri-listener"
-import { AGENT_LABELS } from "@/lib/types"
 import type {
   AgentSkillItem,
   AgentType,
@@ -155,11 +162,6 @@ import {
   type RichComposerHandle,
 } from "@/components/chat/composer/rich-composer"
 import {
-  mimeTypeFromPath,
-  partitionAttachmentFiles,
-  partitionAttachmentPaths,
-} from "@/components/chat/attachment-routing"
-import {
   composerLeafText,
   docToPromptBlocks,
   serializeDocToDisplayText,
@@ -176,17 +178,15 @@ import {
   restoreBlocksIntoEditor,
 } from "@/components/chat/composer/composer-commands"
 import {
+  commandInvocationToken,
   commandToReference,
   skillToReference,
 } from "@/components/chat/composer/invocation-reference"
 import { cutSelectionToClipboard } from "@/components/chat/composer/clipboard-actions"
 import type { ReferenceAttrs } from "@/components/chat/composer/types"
 import type { Editor, JSONContent } from "@tiptap/core"
-import {
-  useReferenceSearch,
-  type ReferenceGroupLabels,
-} from "@/components/chat/composer/use-reference-search"
-import type { MentionUiLabels } from "@/components/chat/composer/suggestion/types"
+import { useReferenceSearch } from "@/components/chat/composer/use-reference-search"
+import { useComposerMentionLabels } from "@/components/chat/composer/use-composer-mention-labels"
 import {
   imageAttachmentToPromptBlock,
   type ImageInputAttachment,
@@ -251,6 +251,13 @@ interface MessageInputProps {
    *  draft synchronously (clears on click); the parent re-queues it if the fork
    *  can't run, so it is never lost. */
   onForkSend?: (draft: PromptDraft, modeId?: string | null) => void
+  /** Inject the draft's TEXT into the RUNNING turn (native live-feedback
+   *  steering). Present only on sessions whose feedback channel is native —
+   *  when absent, the prompting branch renders its historical Stop-only form.
+   *  Awaited: resolve = injected + recorded (clear the draft); reject =
+   *  failure, where a turn-end `NoActiveTurn` race falls back to the queue
+   *  and anything else keeps the draft. */
+  onSteer?: (text: string) => Promise<void>
   /** Open the live-feedback dialog (from the "+" menu). When omitted the entry
    *  is hidden (feature off). */
   onAddFeedback?: () => void
@@ -261,8 +268,43 @@ interface MessageInputProps {
   onInjectConsumed?: () => void
 }
 
+const MIME_BY_EXT: Record<string, string> = {
+  txt: "text/plain",
+  md: "text/markdown",
+  json: "application/json",
+  yaml: "application/yaml",
+  yml: "application/yaml",
+  csv: "text/csv",
+  html: "text/html",
+  css: "text/css",
+  js: "text/javascript",
+  mjs: "text/javascript",
+  cjs: "text/javascript",
+  ts: "text/typescript",
+  tsx: "text/tsx",
+  jsx: "text/jsx",
+  py: "text/x-python",
+  rs: "text/rust",
+  go: "text/x-go",
+  java: "text/x-java-source",
+  xml: "application/xml",
+  toml: "application/toml",
+  pdf: "application/pdf",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  svg: "image/svg+xml",
+}
+
 function fileNameFromPath(path: string): string {
   return path.split(/[/\\]/).pop() || path
+}
+
+function mimeTypeFromPath(path: string): string | null {
+  const ext = path.split(".").pop()?.toLowerCase() ?? ""
+  return MIME_BY_EXT[ext] ?? null
 }
 
 function hasDragFiles(dataTransfer: DataTransfer | null): boolean {
@@ -349,7 +391,7 @@ const TEXT_LIKE_MIME_PREFIXES = [
   "application/javascript",
   "application/typescript",
 ]
-const IMAGE_ATTACHMENT_MAX_BYTES = 20_000_000
+const DRAG_DROP_IMAGE_MAX_BYTES = 20_000_000
 
 function isTextLikeFile(file: File): boolean {
   const mime = file.type.toLowerCase()
@@ -361,7 +403,7 @@ function isTextLikeFile(file: File): boolean {
   const ext = file.name.split(".").pop()?.toLowerCase()
   if (!ext) return false
   return Boolean(
-    mimeTypeFromPath(file.name)?.startsWith("text/") ||
+    MIME_BY_EXT[ext]?.startsWith("text/") ||
     ["json", "yaml", "yml", "xml", "toml", "md", "csv"].includes(ext)
   )
 }
@@ -489,6 +531,7 @@ export function MessageInput({
   onSaveQueueEdit,
   onCancelQueueEdit,
   onForkSend,
+  onSteer,
   onAddFeedback,
   feedbackAddDisabled,
   injectContent,
@@ -621,26 +664,8 @@ export function MessageInput({
   }, [])
 
   // Localized group headings + panel chrome for the `@` mention panel.
-  const referenceGroupLabels = useMemo<ReferenceGroupLabels>(
-    () => ({
-      file: t("mentionGroupFile"),
-      agent: t("mentionGroupAgent"),
-      session: t("mentionGroupSession"),
-      commit: t("mentionGroupCommit"),
-      skill: t("mentionGroupSkill"),
-    }),
-    [t]
-  )
-  const mentionUiLabels = useMemo<MentionUiLabels>(
-    () => ({
-      empty: t("mentionEmpty"),
-      loading: t("mentionLoading"),
-      listbox: t("mentionListLabel"),
-      more: t("mentionMore"),
-      count: (count: number) => t("mentionCount", { count }),
-    }),
-    [t]
-  )
+  const { groupLabels: referenceGroupLabels, uiLabels: mentionUiLabels } =
+    useComposerMentionLabels()
 
   // Live data sources for the unified `@` mention panel. Pre-warmed only while
   // this composer is the active one (`enabled`). Referentially stable.
@@ -1459,23 +1484,43 @@ export function MessageInput({
   const appendImageAttachments = useCallback(
     async (files: File[]) => {
       if (files.length === 0) return
-      const oversized = files.filter(
-        (file) => file.size > IMAGE_ATTACHMENT_MAX_BYTES
-      )
-      const accepted = files.filter(
-        (file) => file.size <= IMAGE_ATTACHMENT_MAX_BYTES
-      )
+      // Web / remote-workspace mode: the prompt request runs through the
+      // HTTP API, whose body must stay small (axum's 2 MiB default limit —
+      // a couple of inline base64 screenshots would 413 the send). Stream
+      // the bytes through the upload endpoint instead; the base64 stays
+      // local for the thumbnail and the transport strips it from the sent
+      // block (`stripUploadedImagePayloads`), leaving the server to
+      // re-inline the bytes from the uploaded file (`prompt_hydration`).
+      // Desktop-local mode keeps the inline path — Tauri IPC has no body
+      // limit and the workspace has no uploads dir.
+      const uploadImages = !showNativePaperclip
+
+      const oversized = uploadImages
+        ? files.filter((f) => f.size > UPLOAD_MAX_BYTES)
+        : []
       if (oversized.length > 0) {
         toast.error(
           tAttach("attachUploadTooLarge", {
-            limit: IMAGE_ATTACHMENT_MAX_BYTES / 1_000_000,
-            names: oversized.map((file) => file.name).join(", "),
+            limit: Math.round(UPLOAD_MAX_BYTES / (1024 * 1024)),
+            names: oversized.map((f) => f.name).join(", "),
           })
         )
       }
+      const accepted = files.filter((file) => {
+        if (uploadImages && file.size > UPLOAD_MAX_BYTES) return false
+        if (uploadImages && file.size === 0) {
+          // Matches `uploadAttachment`'s EmptyAttachmentError semantics:
+          // dropped silently, no toast, no broken thumbnail.
+          console.warn(
+            `[MessageInput] skipping empty image attachment: ${file.name}`
+          )
+          return false
+        }
+        return true
+      })
       if (accepted.length === 0) return
 
-      const settled = await Promise.allSettled(
+      const parsed = await Promise.all(
         accepted.map(async (file, index) => {
           const mimeType =
             file.type && file.type.startsWith("image/")
@@ -1483,41 +1528,86 @@ export function MessageInput({
               : (mimeTypeFromPath(file.name) ?? "image/png")
           const base64Data = await blobToBase64(file)
           return {
-            id: `image:${Date.now()}:${index}:${randomUUID()}`,
-            type: "image" as const,
-            data: base64Data,
-            uri: null,
-            name: file.name || `image-${Date.now()}-${index + 1}`,
-            mimeType,
+            attachment: {
+              id: `image:${Date.now()}:${index}:${randomUUID()}`,
+              type: "image" as const,
+              data: base64Data,
+              uri: null,
+              name: file.name || `image-${Date.now()}-${index + 1}`,
+              mimeType,
+              ...(uploadImages ? { uploading: true } : {}),
+            },
+            file,
           }
         })
       )
-      const parsed: ImageInputAttachment[] = []
-      const failed: string[] = []
-      settled.forEach((result, index) => {
-        if (result.status === "fulfilled") {
-          parsed.push(result.value)
-          return
+      // Thumbnails appear immediately; uploads settle in the background and
+      // flip `uploading` off (send is gated on that in `handleSend`).
+      setAttachments((prev) => [...prev, ...parsed.map((p) => p.attachment)])
+      if (!uploadImages) return
+
+      const failed: Array<{ name: string; reason: unknown }> = []
+      const quotaRejected: string[] = []
+      const CONCURRENCY = 3
+      let cursor = 0
+      const workers = Array.from(
+        { length: Math.min(CONCURRENCY, parsed.length) },
+        async () => {
+          while (cursor < parsed.length) {
+            const idx = cursor++
+            const { attachment, file } = parsed[idx]
+            try {
+              const r = await uploadAttachment(file, attachmentTabId ?? null)
+              const uri = buildFileUri(r.path)
+              setAttachments((prev) =>
+                prev.map((a) =>
+                  a.id === attachment.id ? { ...a, uri, uploading: false } : a
+                )
+              )
+            } catch (error) {
+              setAttachments((prev) =>
+                prev.filter((a) => a.id !== attachment.id)
+              )
+              if (isEmptyAttachmentError(error)) {
+                console.warn(
+                  `[MessageInput] skipping empty image attachment: ${attachment.name}`
+                )
+                continue
+              }
+              const appError = extractAppCommandError(error)
+              if (appError?.i18n_key === UPLOAD_I18N_KEY_QUOTA_EXCEEDED) {
+                quotaRejected.push(attachment.name)
+                continue
+              }
+              failed.push({ name: attachment.name, reason: error })
+            }
+          }
         }
-        const name = accepted[index].name
-        failed.push(name)
-        console.error(
-          `[MessageInput] image attachment read failed (${name}):`,
-          result.reason
-        )
-      })
-      if (failed.length > 0) {
+      )
+      await Promise.all(workers)
+
+      if (quotaRejected.length > 0) {
         toast.error(
-          tAttach("attachUploadFailed", {
-            names: failed.join(", "),
+          tAttach("attachUploadQuotaExceeded", {
+            names: quotaRejected.join(", "),
           })
         )
       }
-      if (parsed.length > 0) {
-        setAttachments((prev) => [...prev, ...parsed])
+      if (failed.length > 0) {
+        for (const f of failed) {
+          console.error(
+            `[MessageInput] image upload failed (${f.name}):`,
+            f.reason
+          )
+        }
+        toast.error(
+          tAttach("attachUploadFailed", {
+            names: failed.map((r) => r.name).join(", "),
+          })
+        )
       }
     },
-    [tAttach]
+    [showNativePaperclip, attachmentTabId, tAttach]
   )
 
   const appendImagePathAttachments = useCallback(
@@ -1525,7 +1615,7 @@ export function MessageInput({
       if (paths.length === 0 || !canAttachImages) return
       const settled = await Promise.allSettled(
         paths.map(async (path, index) => {
-          const data = await readFileBase64(path, IMAGE_ATTACHMENT_MAX_BYTES)
+          const data = await readFileBase64(path, DRAG_DROP_IMAGE_MAX_BYTES)
           return {
             id: `image:${Date.now()}:${index}:${randomUUID()}`,
             type: "image" as const,
@@ -1555,21 +1645,29 @@ export function MessageInput({
   )
 
   const appendPathsFromDrop = useCallback(
-    async (paths: string[], opts: { atCaret?: boolean } = {}) => {
+    async (paths: string[]) => {
       if (paths.length === 0) return
       const normalized = paths.filter(
         (path): path is string => typeof path === "string" && path.length > 0
       )
       if (normalized.length === 0) return
 
-      const { images: imagePaths, resources: resourcePaths } =
-        partitionAttachmentPaths(normalized, canAttachImages)
+      const imagePaths: string[] = []
+      const resourcePaths: string[] = []
+      for (const path of normalized) {
+        const mimeType = mimeTypeFromPath(path) ?? ""
+        if (canAttachImages && mimeType.startsWith("image/")) {
+          imagePaths.push(path)
+        } else {
+          resourcePaths.push(path)
+        }
+      }
 
       if (imagePaths.length > 0) {
         await appendImagePathAttachments(imagePaths)
       }
       if (resourcePaths.length > 0) {
-        appendResourceAttachments(resourcePaths, opts)
+        appendResourceAttachments(resourcePaths)
       }
     },
     [appendImagePathAttachments, appendResourceAttachments, canAttachImages]
@@ -1580,61 +1678,63 @@ export function MessageInput({
     appendPathsFromDropRef.current = appendPathsFromDrop
   }, [appendPathsFromDrop])
 
-  // Remote-workspace counterpart of `appendPathsFromDrop`. Images stay as
-  // in-memory prompt blocks after the bounded local Rust read; resources use
-  // the existing upload proxy and become server-side ResourceLinks.
+  // Remote-workspace counterpart of `appendPathsFromDrop`. Reads each
+  // local path through Rust, ships the bytes via the upload proxy, then
+  // appends the resulting server-side paths as ResourceLinks. Failures
+  // (oversize, ENOENT, network) are reported in a single aggregated toast
+  // matching `uploadAndAppendFiles`.
   const uploadPathsToRemote = useCallback(
     async (paths: string[]) => {
       const normalized = paths.filter(
         (p): p is string => typeof p === "string" && p.length > 0
       )
       if (normalized.length === 0) return
-      const { images: imagePaths, resources: resourcePaths } =
-        partitionAttachmentPaths(normalized, canAttachImages)
-      const jobs = [
-        ...imagePaths.map((path) => ({ path, image: true as const })),
-        ...resourcePaths.map((path) => ({ path, image: false as const })),
-      ]
 
-      const uploadLimitMb = Math.round(UPLOAD_MAX_BYTES / (1024 * 1024))
+      const limitMb = Math.round(UPLOAD_MAX_BYTES / (1024 * 1024))
       const succeeded: string[] = []
-      const parsedImages: ImageInputAttachment[] = []
       const failed: Array<{ name: string; reason: unknown }> = []
-      const oversizedImages: string[] = []
-      const oversizedResources: string[] = []
+      const oversize: string[] = []
       const directories: string[] = []
       const quotaRejected: string[] = []
+      const imageAttachmentsToAdd: ImageInputAttachment[] = []
 
       const CONCURRENCY = 3
       let cursor = 0
       const workers = Array.from(
-        { length: Math.min(CONCURRENCY, jobs.length) },
+        { length: Math.min(CONCURRENCY, normalized.length) },
         async () => {
-          while (cursor < jobs.length) {
+          while (cursor < normalized.length) {
             const idx = cursor++
-            const { path, image } = jobs[idx]
+            const path = normalized[idx]
             const name = path.split(/[/\\]/).pop() || path
             try {
-              if (image) {
-                const file = await readLocalImagePathForAttachment(path)
-                parsedImages.push({
+              const r = await uploadLocalPathToRemote(
+                path,
+                attachmentTabId ?? null
+              )
+              // A dropped image keeps its image-ness: attach it as a
+              // thumbnail whose uri is the uploaded server-side file, so the
+              // agent receives a real image block (hydrated server-side)
+              // instead of a ResourceLink it may never open. The local path
+              // is only readable on THIS desktop — the thumbnail preview
+              // reads it via local IPC; the remote agent reads the upload.
+              const mimeType = r.mimeType ?? mimeTypeFromPath(name) ?? ""
+              if (canAttachImages && mimeType.startsWith("image/")) {
+                const previewData = await readLocalFileBase64(
+                  path,
+                  UPLOAD_MAX_BYTES
+                )
+                imageAttachmentsToAdd.push({
                   id: `image:${Date.now()}:${idx}:${randomUUID()}`,
                   type: "image",
-                  data: file.dataBase64,
-                  uri: buildFileUri(path),
-                  name: file.fileName || name,
-                  mimeType:
-                    file.mimeType?.startsWith("image/") === true
-                      ? file.mimeType
-                      : (mimeTypeFromPath(path) ?? "image/png"),
+                  data: previewData,
+                  uri: buildFileUri(r.path),
+                  name,
+                  mimeType,
                 })
-              } else {
-                const r = await uploadLocalPathToRemote(
-                  path,
-                  attachmentTabId ?? null
-                )
-                succeeded.push(r.path)
+                continue
               }
+              succeeded.push(r.path)
             } catch (error) {
               if (isEmptyAttachmentError(error)) {
                 console.warn(
@@ -1651,8 +1751,7 @@ export function MessageInput({
               const appError = extractAppCommandError(error)
               const i18nKey = appError?.i18n_key ?? null
               if (i18nKey === UPLOAD_I18N_KEY_TOO_LARGE) {
-                if (image) oversizedImages.push(name)
-                else oversizedResources.push(name)
+                oversize.push(name)
               } else if (i18nKey === UPLOAD_I18N_KEY_NOT_A_FILE) {
                 // Dragging a directory or a special file (FIFO, device
                 // node) lands here. The Rust guard short-circuits before
@@ -1670,19 +1769,11 @@ export function MessageInput({
       )
       await Promise.all(workers)
 
-      if (oversizedImages.length > 0) {
+      if (oversize.length > 0) {
         toast.error(
           tAttach("attachUploadTooLarge", {
-            limit: IMAGE_ATTACHMENT_MAX_BYTES / 1_000_000,
-            names: oversizedImages.join(", "),
-          })
-        )
-      }
-      if (oversizedResources.length > 0) {
-        toast.error(
-          tAttach("attachUploadTooLarge", {
-            limit: uploadLimitMb,
-            names: oversizedResources.join(", "),
+            limit: limitMb,
+            names: oversize.join(", "),
           })
         )
       }
@@ -1713,11 +1804,11 @@ export function MessageInput({
           })
         )
       }
+      if (imageAttachmentsToAdd.length > 0) {
+        setAttachments((prev) => [...prev, ...imageAttachmentsToAdd])
+      }
       if (succeeded.length > 0) {
         appendResourceAttachments(succeeded)
-      }
-      if (parsedImages.length > 0) {
-        setAttachments((prev) => [...prev, ...parsedImages])
       }
     },
     [appendResourceAttachments, attachmentTabId, canAttachImages, tAttach]
@@ -1731,8 +1822,16 @@ export function MessageInput({
   const appendFilesFromInput = useCallback(
     async (files: File[]) => {
       if (files.length === 0) return
-      const { images: imageFiles, resources: resourceFiles } =
-        partitionAttachmentFiles(files, canAttachImages)
+      const imageFiles: File[] = []
+      const resourceFiles: File[] = []
+      for (const file of files) {
+        const mimeType = file.type || mimeTypeFromPath(file.name) || ""
+        if (canAttachImages && mimeType.startsWith("image/")) {
+          imageFiles.push(file)
+        } else {
+          resourceFiles.push(file)
+        }
+      }
 
       if (imageFiles.length > 0) {
         await appendImageAttachments(imageFiles)
@@ -1955,7 +2054,7 @@ export function MessageInput({
 
   const notifySkillNotEnabled = useCallback(
     (skillLabel: string, section: SettingsSection) => {
-      const agentLabel = agentType ? AGENT_LABELS[agentType] : ""
+      const agentLabel = agentType ? getAgentLabel(agentType) : ""
       toast.warning(
         tQa("notEnabled.title", { skill: skillLabel, agent: agentLabel }),
         {
@@ -2058,11 +2157,11 @@ export function MessageInput({
       })
       if (!selected) return
       const picked = Array.isArray(selected) ? selected : [selected]
-      await appendPathsFromDrop(picked.filter((item): item is string => !!item))
+      appendResourceAttachments(picked.filter((item): item is string => !!item))
     } catch (error) {
       console.error("[MessageInput] pick files failed:", error)
     }
-  }, [appendPathsFromDrop, defaultPath, disabled])
+  }, [appendResourceAttachments, defaultPath, disabled])
 
   const [serverFilePickerOpen, setServerFilePickerOpen] = useState(false)
 
@@ -2070,25 +2169,29 @@ export function MessageInput({
     if (disabled) return
     // Open a hidden <input type="file"> to grab File objects (browsers and
     // Tauri webviews both produce blob-style File objects from this control,
-    // never raw OS paths), then route images inline and upload resources.
+    // never raw OS paths), then upload each one — `uploadAttachment` picks
+    // the right transport (direct fetch in web mode, IPC-proxied multipart
+    // in remote-desktop mode).
     const input = document.createElement("input")
     input.type = "file"
     input.multiple = true
     input.onchange = async () => {
       const all = input.files ? Array.from(input.files) : []
+      // Route through the shared classifier so images become thumbnail
+      // attachments (uploaded, then re-inlined server-side) instead of
+      // degrading to plain ResourceLinks; non-images keep the existing
+      // upload → ResourceLink path via `appendFilesAsResources`.
       await appendFilesFromInput(all)
     }
     input.click()
-  }, [appendFilesFromInput, disabled])
+  }, [disabled, appendFilesFromInput])
 
   const handleServerFilesSelected = useCallback(
     (paths: string[]) => {
       if (paths.length === 0) return
-      void appendPathsFromDrop(paths).catch((error) => {
-        console.error("[MessageInput] select server files failed:", error)
-      })
+      appendResourceAttachments(paths)
     },
-    [appendPathsFromDrop]
+    [appendResourceAttachments]
   )
 
   const loadQuickMessages = useCallback(async () => {
@@ -2266,9 +2369,7 @@ export function MessageInput({
       if (range) {
         appendFileRangeAttachment(path, range, { atCaret: true })
       } else {
-        void appendPathsFromDrop([path], { atCaret: true }).catch((error) => {
-          console.error("[MessageInput] attach session file failed:", error)
-        })
+        appendResourceAttachments([path], { atCaret: true })
       }
     }
 
@@ -2276,7 +2377,7 @@ export function MessageInput({
     return () => {
       window.removeEventListener(ATTACH_FILE_TO_SESSION_EVENT, handleAttachFile)
     }
-  }, [appendPathsFromDrop, appendFileRangeAttachment, attachmentTabId])
+  }, [appendResourceAttachments, appendFileRangeAttachment, attachmentTabId])
 
   useEffect(() => {
     if (!attachmentTabId) return
@@ -2506,6 +2607,15 @@ export function MessageInput({
     // can keep typing, but a plain send is blocked — only enqueue / queue-edit
     // save go through. Mirrors the legacy textarea's keydown guard.
     if (disabled && !isPrompting && !isEditingQueueItem) return
+    // An image whose web/remote upload hasn't settled has no server-side uri
+    // yet — the transport would strip its base64 and the backend would have
+    // nothing to hydrate. Block ALL three branches below (send / enqueue /
+    // queue-edit save; a queued block is sent verbatim later) until uploads
+    // finish. The draft stays intact, so this is a "wait a moment", not a loss.
+    if (attachments.some((a) => a.type === "image" && a.uploading)) {
+      toast.error(tAttach("attachUploadInProgress"))
+      return
+    }
     const draft = buildDraft()
     if (!draft) return
 
@@ -2530,6 +2640,8 @@ export function MessageInput({
     resetComposer()
   }, [
     disabled,
+    attachments,
+    tAttach,
     buildDraft,
     isEditingQueueItem,
     isPrompting,
@@ -2544,6 +2656,13 @@ export function MessageInput({
 
   const handleForkSendClick = useCallback(() => {
     if (!onForkSend) return
+    // Same uploading gate as `handleSend`: a fork-send consumes the draft
+    // (and its blocks) immediately, so an unsettled upload would strip to
+    // nothing on the wire.
+    if (attachments.some((a) => a.type === "image" && a.uploading)) {
+      toast.error(tAttach("attachUploadInProgress"))
+      return
+    }
     const draft = buildDraft()
     if (!draft) return
     // Fork-send consumes the draft synchronously, exactly like a normal send:
@@ -2557,11 +2676,67 @@ export function MessageInput({
     resetComposer()
   }, [
     onForkSend,
+    attachments,
+    tAttach,
     buildDraft,
     effectiveModeId,
     showModeSelector,
     effectiveDraftStorageKey,
     resetComposer,
+  ])
+
+  // Mid-turn "insert into current turn" (native steering). Awaited, unlike
+  // the synchronous send/enqueue/fork paths: the draft clears ONLY once the
+  // backend confirms the injection was recorded — a turn-end race falls back
+  // to the queue (the note is never lost), any other failure keeps the draft
+  // for retry. Steering is text-only: a draft carrying non-text blocks (file
+  // badges) is queued whole instead of being silently stripped; image
+  // attachments disable the menu entry at render (which also keeps unsettled
+  // uploads out of this path — the enqueue fallback below bypasses
+  // `handleSend`'s uploading gate).
+  const [steering, setSteering] = useState(false)
+  const handleSteerClick = useCallback(async () => {
+    if (!onSteer || steering) return
+    const draft = buildDraft()
+    if (!draft) return
+    const enqueueInstead = () => {
+      if (!onEnqueue) return
+      onEnqueue(draft, showModeSelector ? effectiveModeId : null)
+      resetComposer()
+      toast.info(t("steerQueuedInstead"))
+    }
+    if (draft.blocks.some((b) => b.type !== "text")) {
+      enqueueInstead()
+      return
+    }
+    const text = draft.blocks
+      .map((b) => (b.type === "text" ? b.text : ""))
+      .join("\n")
+      .trim()
+    if (!text) return
+    setSteering(true)
+    try {
+      await onSteer(text)
+      resetComposer()
+    } catch (err) {
+      if (isNoActiveTurnRejection(err)) {
+        // The turn ended in the race window — reroute through the queue.
+        enqueueInstead()
+      } else {
+        toast.error(t("steerFailed"), { description: toErrorMessage(err) })
+      }
+    } finally {
+      setSteering(false)
+    }
+  }, [
+    onSteer,
+    steering,
+    buildDraft,
+    onEnqueue,
+    showModeSelector,
+    effectiveModeId,
+    resetComposer,
+    t,
   ])
 
   // Navigation/confirm/escape keys for the `/` (commands) and `$` (Codex skills)
@@ -2891,15 +3066,71 @@ export function MessageInput({
       </Button>
     </div>
   ) : isPrompting && onCancel ? (
-    <Button
-      onClick={onCancel}
-      variant="destructive"
-      size="icon"
-      className="h-8 w-8"
-      title={t("cancel")}
-    >
-      <Square className="size-4" />
-    </Button>
+    onSteer && onEnqueue && hasSendableContent ? (
+      // Native-steering sessions surface the mid-turn actions that already
+      // exist but were keyboard-only/invisible: the primary half of the split
+      // queues the draft (what Enter has always done here), the dropdown
+      // injects it into the RUNNING turn. Without `onSteer` this branch stays
+      // pixel-identical to the historical Stop-only form below.
+      <div className="flex items-center gap-1">
+        <Button
+          onClick={onCancel}
+          variant="destructive"
+          size="icon"
+          className="h-8 w-8"
+          title={t("cancel")}
+        >
+          <Square className="size-4" />
+        </Button>
+        <div className="flex items-center">
+          <Button
+            onClick={handleSend}
+            disabled={steering}
+            size="icon"
+            className="h-8 w-8 rounded-r-none"
+            title={t("queueMessage")}
+          >
+            <Send className="size-4" />
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                disabled={steering}
+                size="icon"
+                className="h-8 w-5 rounded-l-none border-l border-primary-foreground/20"
+                aria-label={t("steerIntoTurn")}
+              >
+                <ChevronUp className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" side="top">
+              <DropdownMenuItem
+                onSelect={() => void handleSteerClick()}
+                disabled={steering || attachments.length > 0}
+                title={
+                  attachments.length > 0
+                    ? t("steerAttachmentsUnsupported")
+                    : undefined
+                }
+              >
+                <Zap className="h-4 w-4" />
+                {t("steerIntoTurn")}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+    ) : (
+      <Button
+        onClick={onCancel}
+        variant="destructive"
+        size="icon"
+        className="h-8 w-8"
+        title={t("cancel")}
+      >
+        <Square className="size-4" />
+      </Button>
+    )
   ) : onForkSend ? (
     <div className="flex items-center">
       <Button
@@ -2978,7 +3209,7 @@ export function MessageInput({
                 }}
               >
                 <span className="shrink-0 font-mono text-primary">
-                  /{cmd.name}
+                  {commandInvocationToken(cmd.name)}
                 </span>
                 <span className="truncate text-xs text-muted-foreground">
                   {cmd.description}
@@ -3100,6 +3331,13 @@ export function MessageInput({
                             className="h-14 w-14 object-cover"
                           />
                         </button>
+                        {attachment.uploading ? (
+                          // Web/remote upload still in flight — sends are
+                          // gated on this settling (see `handleSend`).
+                          <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/50">
+                            <Loader2 className="h-4 w-4 animate-spin text-foreground/80" />
+                          </div>
+                        ) : null}
                         <button
                           type="button"
                           onClick={() => removeAttachment(attachment.id)}
@@ -3334,7 +3572,7 @@ export function MessageInput({
                                   className="hover:bg-accent hover:text-accent-foreground"
                                 >
                                   <DropdownRadioItemContent
-                                    label={`/${cmd.name}`}
+                                    label={commandInvocationToken(cmd.name)}
                                     description={cmd.description}
                                   />
                                 </DropdownMenuItem>

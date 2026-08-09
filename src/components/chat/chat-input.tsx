@@ -56,6 +56,12 @@ interface ChatInputProps {
   onSaveQueueEdit?: (draft: PromptDraft) => void
   onCancelQueueEdit?: () => void
   onForkSend?: (draft: PromptDraft, modeId?: string | null) => void
+  /** Inject the draft's text into the RUNNING turn over the native steering
+   *  channel. Present only when the session's live-feedback channel is native
+   *  (`useSessionFeedback().channel === "native"`); resolves once recorded,
+   *  rejects on any failure (incl. the turn-end race) so MessageInput can run
+   *  its own enqueue fallback / draft preservation. */
+  onSteer?: (text: string) => Promise<void>
   onAddFeedback?: () => void
   feedbackAddDisabled?: boolean
   /**
@@ -111,6 +117,7 @@ export const ChatInput = memo(function ChatInput({
   onSaveQueueEdit,
   onCancelQueueEdit,
   onForkSend,
+  onSteer,
   onAddFeedback,
   feedbackAddDisabled,
   allowOfflineCompose = false,
@@ -135,6 +142,16 @@ export const ChatInput = memo(function ChatInput({
     <div
       className={cn("pt-0", flush ? "pb-1" : "px-4 pb-1")}
       onContextMenu={(event) => event.stopPropagation()}
+      // Touch and pen open a context menu from a LONG PRESS, which Radix arms on
+      // pointerdown — and the whole conversation panel (composer included) sits
+      // inside its own context-menu trigger. Without this, a slow tap on any
+      // composer control (the agent icon, the send button, …) pops the
+      // conversation menu. Mouse presses keep bubbling, so the panel's
+      // selection bookkeeping is untouched; the composer's OWN context menu
+      // still arms, since its trigger is nested below this wrapper.
+      onPointerDown={(event) => {
+        if (event.pointerType !== "mouse") event.stopPropagation()
+      }}
     >
       {queue &&
         queue.length > 0 &&
@@ -182,6 +199,7 @@ export const ChatInput = memo(function ChatInput({
         onSaveQueueEdit={onSaveQueueEdit}
         onCancelQueueEdit={onCancelQueueEdit}
         onForkSend={onForkSend}
+        onSteer={onSteer}
         onAddFeedback={onAddFeedback}
         feedbackAddDisabled={feedbackAddDisabled}
         injectContent={injectContent}

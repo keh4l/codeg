@@ -1,9 +1,11 @@
 pub mod background_watch;
 pub mod binary_cache;
+pub mod chat_authoring;
 pub mod codex_catalog_source;
 pub mod codex_goal;
 pub mod codex_model_catalog;
 pub mod connection;
+pub mod custom_registry;
 pub mod delegation;
 pub mod error;
 pub mod event_stream;
@@ -18,12 +20,16 @@ pub mod opencode_catalog;
 pub mod opencode_plugins;
 pub mod plan_approval;
 pub mod preflight;
+pub mod prompt_hydration;
 pub mod question;
 pub mod registry;
+pub mod remote_registry;
 pub mod session_info;
 pub mod session_state;
+pub mod stderr_tail;
 pub mod terminal_runtime;
 pub mod types;
+pub mod work_task_tools;
 
 pub use idle_sweep::{idle_sweep_task, idle_timeout_from_env, SWEEP_INTERVAL_SECS};
 pub use internal_bus::{EventBusMetrics, EventBusMetricsSnapshot, InternalEventBus};

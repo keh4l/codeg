@@ -14,6 +14,7 @@ use crate::acp::types::{
 use crate::app_error::{AppCommandError, AppErrorCode};
 use crate::app_state::AppState;
 use crate::commands::acp as acp_commands;
+use crate::commands::custom_agents as custom_agent_commands;
 use crate::models::agent::AgentType;
 
 #[derive(Deserialize)]
@@ -658,6 +659,7 @@ pub struct AcpUpdateAgentConfigParams {
     pub codex_auth_json: Option<String>,
     pub codex_config_toml: Option<String>,
     pub codex_model_catalog: Option<String>,
+    pub codex_sandbox: Option<crate::acp::types::CodexSandboxStructuredConfig>,
     pub grok_config_toml: Option<String>,
     pub grok_structured: Option<crate::acp::types::GrokStructuredConfig>,
     pub cursor_cli_config_json: Option<String>,
@@ -676,6 +678,7 @@ pub async fn acp_update_agent_config(
         params.codex_auth_json,
         params.codex_config_toml,
         params.codex_model_catalog,
+        params.codex_sandbox,
         params.grok_config_toml,
         params.grok_structured,
         params.cursor_cli_config_json,
@@ -771,6 +774,14 @@ pub struct AcpUpdateKimiCodeConfigParams {
     pub vertex_location: Option<String>,
     #[serde(default)]
     pub raw_config_toml: Option<String>,
+    #[serde(default)]
+    pub reasoning_enabled: Option<bool>,
+    #[serde(default)]
+    pub always_thinking: Option<bool>,
+    #[serde(default)]
+    pub support_efforts: Option<Vec<String>>,
+    #[serde(default)]
+    pub default_effort: Option<String>,
 }
 
 pub async fn acp_update_kimi_code_config(
@@ -790,6 +801,10 @@ pub async fn acp_update_kimi_code_config(
             vertex_project: params.vertex_project,
             vertex_location: params.vertex_location,
             raw_config_toml: params.raw_config_toml,
+            reasoning_enabled: params.reasoning_enabled,
+            always_thinking: params.always_thinking,
+            support_efforts: params.support_efforts,
+            default_effort: params.default_effort,
         },
         &state.db,
         &state.connection_manager,
@@ -1125,4 +1140,96 @@ pub async fn codex_poll_device_code(
         .await
         .map_err(|e| AppCommandError::task_execution_failed(e.to_string()))?;
     Ok(Json(result))
+}
+
+// ---------------------------------------------------------------------------
+// Custom ACP agents (user-registered). See `commands::custom_agents`.
+// ---------------------------------------------------------------------------
+
+pub async fn acp_list_custom_agents(
+    Extension(state): Extension<Arc<AppState>>,
+) -> Result<Json<Vec<custom_agent_commands::CustomAgentInfo>>, AppCommandError> {
+    let result = custom_agent_commands::acp_list_custom_agents_core(&state.db)
+        .await
+        .map_err(|e| AppCommandError::task_execution_failed(e.to_string()))?;
+    Ok(Json(result))
+}
+
+/// Wrapper matching the Tauri command's single `params` argument — the shared
+/// frontend client sends the same body to both runtimes.
+#[derive(Deserialize)]
+pub struct AcpSaveCustomAgentBody {
+    pub params: custom_agent_commands::SaveCustomAgentParams,
+}
+
+pub async fn acp_save_custom_agent(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(body): Json<AcpSaveCustomAgentBody>,
+) -> Result<Json<()>, AppCommandError> {
+    let emitter = state.emitter.clone();
+    custom_agent_commands::acp_save_custom_agent_params_core(body.params, &state.db, &emitter)
+        .await
+        .map_err(|e| AppCommandError::task_execution_failed(e.to_string()))?;
+    Ok(Json(()))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcpDeleteCustomAgentParams {
+    pub registry_id: String,
+    #[serde(default)]
+    pub delete_transcripts: bool,
+}
+
+pub async fn acp_delete_custom_agent(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<AcpDeleteCustomAgentParams>,
+) -> Result<Json<()>, AppCommandError> {
+    let emitter = state.emitter.clone();
+    custom_agent_commands::acp_delete_custom_agent_core(
+        params.registry_id,
+        params.delete_transcripts,
+        &state.db,
+        &emitter,
+    )
+    .await
+    .map_err(|e| AppCommandError::task_execution_failed(e.to_string()))?;
+    Ok(Json(()))
+}
+
+pub async fn acp_fetch_registry_catalog(
+    Extension(state): Extension<Arc<AppState>>,
+) -> Result<Json<Vec<crate::acp::remote_registry::RegistryCatalogAgent>>, AppCommandError> {
+    let result = custom_agent_commands::acp_fetch_registry_catalog_core(&state.db)
+        .await
+        .map_err(|e| AppCommandError::task_execution_failed(e.to_string()))?;
+    Ok(Json(result))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcpAddRegistryAgentParams {
+    pub registry_id: String,
+    #[serde(default)]
+    pub distribution_kind: Option<String>,
+}
+
+pub async fn acp_add_registry_agent(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<AcpAddRegistryAgentParams>,
+) -> Result<Json<()>, AppCommandError> {
+    let emitter = state.emitter.clone();
+    custom_agent_commands::acp_add_registry_agent_core(
+        params.registry_id,
+        params.distribution_kind,
+        &state.db,
+        &emitter,
+    )
+    .await
+    .map_err(|e| AppCommandError::task_execution_failed(e.to_string()))?;
+    Ok(Json(()))
+}
+
+pub async fn acp_current_platform() -> Json<String> {
+    Json(custom_agent_commands::acp_current_platform_core())
 }

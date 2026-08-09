@@ -18,8 +18,6 @@ use super::{auth, handlers, ws};
 use crate::app_state::AppState;
 use tracing::Instrument;
 
-const ACP_PROMPT_MAX_BYTES: usize = 32 * 1024 * 1024;
-
 pub fn build_router(
     state: Arc<AppState>,
     token: String,
@@ -94,6 +92,14 @@ pub fn build_router(
         .route(
             "/set_session_info_settings",
             post(handlers::session_info::set_session_info_settings),
+        )
+        .route(
+            "/get_chat_authoring_settings",
+            post(handlers::chat_authoring::get_chat_authoring_settings),
+        )
+        .route(
+            "/set_chat_authoring_settings",
+            post(handlers::chat_authoring::set_chat_authoring_settings),
         )
         .route(
             "/get_folder_conversation",
@@ -204,6 +210,30 @@ pub fn build_router(
         .route(
             "/update_folder_default_agent",
             post(handlers::folders::update_folder_default_agent),
+        )
+        .route(
+            "/list_folder_links",
+            post(handlers::folder_links::list_folder_links),
+        )
+        .route(
+            "/preview_folder_links",
+            post(handlers::folder_links::preview_folder_links),
+        )
+        .route(
+            "/create_folder_links",
+            post(handlers::folder_links::create_folder_links),
+        )
+        .route(
+            "/rename_folder_link",
+            post(handlers::folder_links::rename_folder_link),
+        )
+        .route(
+            "/repair_folder_link",
+            post(handlers::folder_links::repair_folder_link),
+        )
+        .route(
+            "/remove_folder_link",
+            post(handlers::folder_links::remove_folder_link),
         )
         .route(
             "/add_folder_to_history",
@@ -355,6 +385,10 @@ pub fn build_router(
         .route("/git_pull", post(handlers::git::git_pull))
         .route("/git_push", post(handlers::git::git_push))
         .route("/git_fetch", post(handlers::git::git_fetch))
+        .route(
+            "/git_update_branch",
+            post(handlers::git::git_update_branch),
+        )
         .route("/git_commit", post(handlers::git::git_commit))
         .route("/git_fetch_remote", post(handlers::git::git_fetch_remote))
         .route("/git_delete_branch", post(handlers::git::git_delete_branch))
@@ -400,14 +434,14 @@ pub fn build_router(
         )
         .route(
             "/upload_attachment",
-            // The 2MiB `UPLOAD_MAX_BYTES` is the *file payload* limit; the
-            // raw multipart body also carries boundary markers, the
+            // `UPLOAD_MAX_BYTES` is the *file payload* limit; the raw
+            // multipart body also carries boundary markers, the
             // `Content-Disposition` headers, and the `session_id` field —
             // ~256-512 bytes of overhead. Without this layer, axum's default
-            // 2MiB `DefaultBodyLimit` rejects a perfectly-sized 2MiB file
-            // before our handler ever sees a chunk. Pad by 64KiB so the
-            // handler's own chunk-summing check (in `files.rs`) stays the
-            // authoritative size boundary.
+            // 2MiB `DefaultBodyLimit` would reject anything bigger before our
+            // handler ever sees a chunk. Pad by 64KiB so the handler's own
+            // chunk-summing check (in `files.rs`) stays the authoritative
+            // size boundary.
             post(handlers::files::upload_attachment)
                 .layer(DefaultBodyLimit::max(UPLOAD_MAX_BYTES as usize + 64 * 1024)),
         )
@@ -609,13 +643,7 @@ pub fn build_router(
             "/acp_touch_connection",
             post(handlers::acp::acp_touch_connection),
         )
-        .route(
-            "/acp_prompt",
-            // Browser image prompts carry the pasted file inline as base64.
-            // The native image-read path permits 20 MB, which expands to about
-            // 26.7 MB before the surrounding JSON is added.
-            post(handlers::acp::acp_prompt).layer(DefaultBodyLimit::max(ACP_PROMPT_MAX_BYTES)),
-        )
+        .route("/acp_prompt", post(handlers::acp::acp_prompt))
         .route("/acp_preflight", post(handlers::acp::acp_preflight))
         .route("/acp_set_mode", post(handlers::acp::acp_set_mode))
         .route(
@@ -739,6 +767,30 @@ pub fn build_router(
         .route(
             "/acp_reorder_agents",
             post(handlers::acp::acp_reorder_agents),
+        )
+        .route(
+            "/acp_list_custom_agents",
+            post(handlers::acp::acp_list_custom_agents),
+        )
+        .route(
+            "/acp_save_custom_agent",
+            post(handlers::acp::acp_save_custom_agent),
+        )
+        .route(
+            "/acp_delete_custom_agent",
+            post(handlers::acp::acp_delete_custom_agent),
+        )
+        .route(
+            "/acp_fetch_registry_catalog",
+            post(handlers::acp::acp_fetch_registry_catalog),
+        )
+        .route(
+            "/acp_add_registry_agent",
+            post(handlers::acp::acp_add_registry_agent),
+        )
+        .route(
+            "/acp_current_platform",
+            post(handlers::acp::acp_current_platform),
         )
         .route(
             "/acp_list_agent_skills",
@@ -1172,6 +1224,131 @@ pub fn build_router(
             "/automation_cancel_run",
             post(handlers::automation::automation_cancel_run),
         )
+        // ─── Token usage dashboard ───
+        .route(
+            "/token_usage_report",
+            post(handlers::token_usage::token_usage_report),
+        )
+        .route(
+            "/token_usage_facets",
+            post(handlers::token_usage::token_usage_facets),
+        )
+        .route(
+            "/token_usage_status",
+            post(handlers::token_usage::token_usage_status),
+        )
+        .route(
+            "/token_usage_sync",
+            post(handlers::token_usage::token_usage_sync),
+        )
+        // ─── Work tasks ───
+        .route("/work_task_list", post(handlers::work_task::work_task_list))
+        .route("/work_task_get", post(handlers::work_task::work_task_get))
+        .route(
+            "/work_task_events",
+            post(handlers::work_task::work_task_events),
+        )
+        .route(
+            "/work_task_attention_count",
+            post(handlers::work_task::work_task_attention_count),
+        )
+        .route(
+            "/work_task_create",
+            post(handlers::work_task::work_task_create),
+        )
+        .route(
+            "/work_task_update",
+            post(handlers::work_task::work_task_update),
+        )
+        .route(
+            "/work_task_reorder",
+            post(handlers::work_task::work_task_reorder),
+        )
+        .route(
+            "/work_task_delete",
+            post(handlers::work_task::work_task_delete),
+        )
+        .route(
+            "/work_task_start",
+            post(handlers::work_task::work_task_start),
+        )
+        .route(
+            "/work_task_start_all",
+            post(handlers::work_task::work_task_start_all),
+        )
+        .route(
+            "/work_task_retry",
+            post(handlers::work_task::work_task_retry),
+        )
+        .route(
+            "/work_task_requeue",
+            post(handlers::work_task::work_task_requeue),
+        )
+        .route(
+            "/work_task_schedule",
+            post(handlers::work_task::work_task_schedule),
+        )
+        .route(
+            "/work_task_return",
+            post(handlers::work_task::work_task_return),
+        )
+        .route(
+            "/work_task_cancel",
+            post(handlers::work_task::work_task_cancel),
+        )
+        .route(
+            "/work_task_merge",
+            post(handlers::work_task::work_task_merge),
+        )
+        .route(
+            "/work_task_complete",
+            post(handlers::work_task::work_task_complete),
+        )
+        .route(
+            "/work_task_archive",
+            post(handlers::work_task::work_task_archive),
+        )
+        .route(
+            "/work_task_cleanup",
+            post(handlers::work_task::work_task_cleanup),
+        )
+        .route("/work_task_diff", post(handlers::work_task::work_task_diff))
+        .route(
+            "/work_task_changed_files",
+            post(handlers::work_task::work_task_changed_files),
+        )
+        .route(
+            "/work_task_settings_get",
+            post(handlers::work_task::work_task_settings_get),
+        )
+        .route(
+            "/work_task_settings_effective",
+            post(handlers::work_task::work_task_settings_effective),
+        )
+        .route(
+            "/work_task_settings_get_own",
+            post(handlers::work_task::work_task_settings_get_own),
+        )
+        .route(
+            "/work_task_settings_set",
+            post(handlers::work_task::work_task_settings_set),
+        )
+        .route(
+            "/work_task_settings_delete",
+            post(handlers::work_task::work_task_settings_delete),
+        )
+        .route(
+            "/work_task_template_list",
+            post(handlers::work_task::work_task_template_list),
+        )
+        .route(
+            "/work_task_template_save",
+            post(handlers::work_task::work_task_template_save),
+        )
+        .route(
+            "/work_task_template_delete",
+            post(handlers::work_task::work_task_template_delete),
+        )
         // ─── Workspace background ───
         .route(
             "/background_read",
@@ -1386,44 +1563,4 @@ async fn api_not_found(uri: axum::http::Uri) -> impl IntoResponse {
             "message": format!("API endpoint '{}' is not available in web mode", command),
         })),
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use axum_test::TestServer;
-
-    #[tokio::test]
-    async fn acp_prompt_accepts_image_payload_above_axum_default_limit() {
-        let temp_dir = tempfile::tempdir().expect("create test data directory");
-        let db = crate::db::test_helpers::fresh_in_memory_db().await;
-        let state = Arc::new(AppState::new_for_test(db, temp_dir.path().to_path_buf()));
-        let router = build_router(
-            state,
-            "test-token".to_owned(),
-            temp_dir.path().to_path_buf(),
-            Arc::new(ShutdownSignal::new()),
-        );
-        let server = TestServer::new(router).expect("create test server");
-
-        let response = server
-            .post("/api/acp_prompt")
-            .authorization_bearer("test-token")
-            .json(&serde_json::json!({
-                "connectionId": "missing-connection",
-                "blocks": [{
-                    "type": "image",
-                    "data": "A".repeat(2 * 1024 * 1024),
-                    "mime_type": "image/png",
-                    "uri": null
-                }],
-                "folderId": null,
-                "conversationId": null,
-                "clientMessageId": null
-            }))
-            .await;
-
-        assert_eq!(response.status_code(), StatusCode::INTERNAL_SERVER_ERROR);
-        assert!(response.text().contains("connection not found"));
-    }
 }

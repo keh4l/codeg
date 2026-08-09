@@ -1,8 +1,6 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Stdio;
-#[cfg(unix)]
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,7 +10,7 @@ use sacp::schema::{
     TerminalOutputResponse, WaitForTerminalExitRequest, WaitForTerminalExitResponse,
 };
 use tokio::io::{AsyncRead, AsyncReadExt};
-use tokio::sync::Mutex;
+use tokio::sync::{watch, Mutex, Notify};
 use tokio::task::JoinHandle;
 
 type TerminalMap = HashMap<String, Arc<TerminalInstance>>;
@@ -23,15 +21,27 @@ const DEFAULT_OUTPUT_BYTE_LIMIT: u64 = 1_000_000;
 /// inherit the pipe handle and keep it open long after the direct child
 /// exits, turning `wait_for_exit` into a silent hang.
 const READER_DRAIN_GRACE: Duration = Duration::from_millis(200);
-const CHILD_EXIT_POLL_INTERVAL: Duration = Duration::from_millis(25);
-#[cfg(unix)]
-const SIGINT_GRACE: Duration = Duration::from_millis(500);
-#[cfg(unix)]
-const SIGTERM_GRACE: Duration = Duration::from_millis(1_500);
-#[cfg(unix)]
-const SIGKILL_GRACE: Duration = Duration::from_millis(2_000);
-#[cfg(unix)]
-const DESCENDANT_LEASE_DURATION: Duration = Duration::from_secs(5);
+/// How long a killed command gets to honor `SIGTERM` before the owner task
+/// escalates to `SIGKILL`. `kill_tree` only sends `SIGTERM` by default, which a
+/// process that traps it can ignore forever.
+const KILL_ESCALATE_GRACE: Duration = Duration::from_secs(2);
+/// How long `kill_command` waits to be able to *report* that the process is
+/// gone. Bounding the report keeps session teardown and the cancel path
+/// responsive; it does NOT abandon the process — the owner task holds the
+/// `Child` and keeps reaping past this deadline.
+const KILL_REPORT_BUDGET: Duration = Duration::from_secs(5);
+/// Backoff cap between retries when `Child::wait` itself fails.
+const WAIT_RETRY_MAX_BACKOFF: Duration = Duration::from_secs(1);
+/// How long the owner task retries a failing `Child::wait` before publishing a
+/// terminal state anyway. Without this, a persistently failing wait would pin
+/// `TerminalCompletion::Running` forever and any agent that polls
+/// `terminal/output` (rather than calling `terminal/wait_for_exit`) would hang —
+/// the very bug this module was rewritten to remove. The owner task keeps
+/// owning and reaping the child afterwards; only the *reporting* is unblocked.
+const WAIT_ERROR_BUDGET: Duration = Duration::from_secs(30);
+/// Retry cadence after `WAIT_ERROR_BUDGET` is spent and completion has already
+/// been published. Purely janitorial at that point, so it can be slow.
+const WAIT_ERROR_IDLE_RETRY: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 pub enum TerminalRuntimeError {
@@ -48,21 +58,6 @@ impl TerminalRuntimeError {
     }
 }
 
-#[derive(Debug, Default)]
-pub(crate) struct TerminalCleanupReport {
-    failures: Vec<(String, String)>,
-}
-
-impl TerminalCleanupReport {
-    pub(crate) fn is_clean(&self) -> bool {
-        self.failures.is_empty()
-    }
-
-    pub(crate) fn failure_count(&self) -> usize {
-        self.failures.len()
-    }
-}
-
 #[derive(Debug, Default, Clone)]
 struct TerminalSnapshot {
     output: String,
@@ -71,422 +66,54 @@ struct TerminalSnapshot {
     exit_status: Option<TerminalExitStatus>,
 }
 
-#[cfg(unix)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ProcessGroupKey {
-    pgid: libc::pid_t,
-    generation: u64,
-}
-
-#[cfg(unix)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ProcessGroupPresence {
-    Present,
-    Missing,
-}
-
-#[cfg(unix)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ProcessGroupSignalResult {
-    Delivered,
-    Missing,
-}
-
-#[cfg(unix)]
-trait UnixProcessGroupBackend: Send + Sync {
-    fn probe(&self, key: ProcessGroupKey) -> Result<ProcessGroupPresence, TerminalRuntimeError>;
-
-    fn signal(
-        &self,
-        key: ProcessGroupKey,
-        signal: libc::c_int,
-    ) -> Result<ProcessGroupSignalResult, TerminalRuntimeError>;
-}
-
-#[cfg(unix)]
-struct LibcProcessGroupBackend;
-
-#[cfg(unix)]
-impl UnixProcessGroupBackend for LibcProcessGroupBackend {
-    fn probe(&self, key: ProcessGroupKey) -> Result<ProcessGroupPresence, TerminalRuntimeError> {
-        let result = unsafe { libc::kill(-key.pgid, 0) };
-        if result == 0 {
-            return Ok(ProcessGroupPresence::Present);
-        }
-
-        let err = std::io::Error::last_os_error();
-        match err.raw_os_error() {
-            Some(libc::ESRCH) => Ok(ProcessGroupPresence::Missing),
-            Some(libc::EPERM) => Ok(ProcessGroupPresence::Present),
-            _ => Err(TerminalRuntimeError::Internal(format!(
-                "failed to query terminal process group pgid={} generation={}: {err}",
-                key.pgid, key.generation
-            ))),
-        }
-    }
-
-    fn signal(
-        &self,
-        key: ProcessGroupKey,
-        signal: libc::c_int,
-    ) -> Result<ProcessGroupSignalResult, TerminalRuntimeError> {
-        let result = unsafe { libc::kill(-key.pgid, signal) };
-        if result == 0 {
-            return Ok(ProcessGroupSignalResult::Delivered);
-        }
-
-        let err = std::io::Error::last_os_error();
-        if err.raw_os_error() == Some(libc::ESRCH) {
-            return Ok(ProcessGroupSignalResult::Missing);
-        }
-        Err(TerminalRuntimeError::Internal(format!(
-            "failed to signal terminal process group pgid={} generation={} signal={signal}: {err}",
-            key.pgid, key.generation
-        )))
-    }
-}
-
-#[cfg(unix)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum UnixProcessGroupState {
-    OwnedLeaderAlive {
-        key: ProcessGroupKey,
-    },
-    OwnedDescendants {
-        key: ProcessGroupKey,
-        deadline: tokio::time::Instant,
-    },
-    Retired,
-}
-
-#[cfg(unix)]
-struct UnixProcessGroupLease {
-    terminal_id: String,
-    session_id: String,
-    pid: u32,
-    backend: Arc<dyn UnixProcessGroupBackend>,
-    state: Mutex<UnixProcessGroupState>,
-    cleanup_gate: Mutex<()>,
-}
-
-#[cfg(unix)]
-impl UnixProcessGroupLease {
-    fn new(
-        terminal_id: String,
-        session_id: String,
-        pid: u32,
-        generation: u64,
-        backend: Arc<dyn UnixProcessGroupBackend>,
-    ) -> Result<Self, TerminalRuntimeError> {
-        let pgid = libc::pid_t::try_from(pid).map_err(|_| {
-            TerminalRuntimeError::Internal(format!("terminal pid {pid} does not fit pid_t"))
-        })?;
-        Ok(Self {
-            terminal_id,
-            session_id,
-            pid,
-            backend,
-            state: Mutex::new(UnixProcessGroupState::OwnedLeaderAlive {
-                key: ProcessGroupKey { pgid, generation },
-            }),
-            cleanup_gate: Mutex::new(()),
-        })
-    }
-
-    async fn observe_leader_exit(
-        &self,
-        observed_at: tokio::time::Instant,
-    ) -> Result<(), TerminalRuntimeError> {
-        let mut state = self.state.lock().await;
-        let UnixProcessGroupState::OwnedLeaderAlive { key } = *state else {
-            return Ok(());
-        };
-
-        match self.backend.probe(key) {
-            Ok(ProcessGroupPresence::Missing) => {
-                *state = UnixProcessGroupState::Retired;
-                tracing::info!(
-                    terminal_id = %self.terminal_id,
-                    session_id = %self.session_id,
-                    pid = self.pid,
-                    pgid = key.pgid,
-                    generation = key.generation,
-                    "[ACP] retired terminal process-group lease after leader exit"
-                );
-                Ok(())
-            }
-            Ok(ProcessGroupPresence::Present) => {
-                let deadline = observed_at + DESCENDANT_LEASE_DURATION;
-                *state = UnixProcessGroupState::OwnedDescendants { key, deadline };
-                tracing::info!(
-                    terminal_id = %self.terminal_id,
-                    session_id = %self.session_id,
-                    pid = self.pid,
-                    pgid = key.pgid,
-                    generation = key.generation,
-                    lease_ms = DESCENDANT_LEASE_DURATION.as_millis(),
-                    "[ACP] started bounded descendant process-group lease"
-                );
-                Ok(())
-            }
-            Err(err) => {
-                *state = UnixProcessGroupState::Retired;
-                Err(err)
-            }
-        }
-    }
-
-    fn active_key(
-        state: &mut UnixProcessGroupState,
-        now: tokio::time::Instant,
-    ) -> Option<(ProcessGroupKey, Option<tokio::time::Instant>)> {
-        match *state {
-            UnixProcessGroupState::OwnedLeaderAlive { key } => Some((key, None)),
-            UnixProcessGroupState::OwnedDescendants { key, deadline } if now < deadline => {
-                Some((key, Some(deadline)))
-            }
-            UnixProcessGroupState::OwnedDescendants { .. } => {
-                *state = UnixProcessGroupState::Retired;
-                None
-            }
-            UnixProcessGroupState::Retired => None,
-        }
-    }
-
-    async fn signal_active(
-        &self,
-        signal: libc::c_int,
-        stage: &'static str,
-    ) -> Result<Option<(ProcessGroupKey, Option<tokio::time::Instant>)>, TerminalRuntimeError> {
-        let mut state = self.state.lock().await;
-        let Some((key, deadline)) = Self::active_key(&mut state, tokio::time::Instant::now())
-        else {
-            return Ok(None);
-        };
-
-        // A live leader anchors its PID/PGID, but descendants only have a
-        // bounded numeric-PGID lease. Revalidate that lease immediately before
-        // every signal so an already-disappeared group is retired instead of
-        // receiving a signal after a delayed release. POSIX still permits the
-        // final probe-to-signal syscall race; both calls stay under the same
-        // terminal state lock to avoid a wider in-process race.
-        if deadline.is_some() {
-            match self.backend.probe(key) {
-                Ok(ProcessGroupPresence::Present) => {}
-                Ok(ProcessGroupPresence::Missing) => {
-                    *state = UnixProcessGroupState::Retired;
-                    return Ok(None);
-                }
-                Err(err) => {
-                    *state = UnixProcessGroupState::Retired;
-                    return Err(err);
-                }
-            }
-
-            // A synchronous backend can itself consume the final lease time.
-            // Expiry is absolute and non-renewable, so do not let a successful
-            // probe grant time for a later signal.
-            if Self::active_key(&mut state, tokio::time::Instant::now()).is_none() {
-                return Ok(None);
-            }
-        }
-
-        match self.backend.signal(key, signal) {
-            Ok(ProcessGroupSignalResult::Delivered) => {
-                tracing::info!(
-                    terminal_id = %self.terminal_id,
-                    session_id = %self.session_id,
-                    pid = self.pid,
-                    pgid = key.pgid,
-                    generation = key.generation,
-                    signal_stage = stage,
-                    "[ACP] signalled terminal process group"
-                );
-                Ok(Some((key, deadline)))
-            }
-            Ok(ProcessGroupSignalResult::Missing) => {
-                *state = UnixProcessGroupState::Retired;
-                Ok(None)
-            }
-            Err(err) => {
-                *state = UnixProcessGroupState::Retired;
-                Err(err)
-            }
-        }
-    }
-
-    async fn probe_active(&self) -> Result<bool, TerminalRuntimeError> {
-        let mut state = self.state.lock().await;
-        let Some((key, _)) = Self::active_key(&mut state, tokio::time::Instant::now()) else {
-            return Ok(false);
-        };
-
-        match self.backend.probe(key) {
-            Ok(ProcessGroupPresence::Present) => Ok(true),
-            Ok(ProcessGroupPresence::Missing) => {
-                *state = UnixProcessGroupState::Retired;
-                Ok(false)
-            }
-            Err(err) => {
-                *state = UnixProcessGroupState::Retired;
-                Err(err)
-            }
-        }
-    }
-
-    async fn retire(&self) {
-        *self.state.lock().await = UnixProcessGroupState::Retired;
-    }
-
-    async fn cleanup_with_stages(
-        &self,
-        stages: &[(libc::c_int, &'static str, Duration)],
-        terminal: Option<&TerminalInstance>,
-    ) -> Result<(), TerminalRuntimeError> {
-        let _cleanup_guard = self.cleanup_gate.lock().await;
-        let started = std::time::Instant::now();
-        let mut last_key = None;
-
-        for &(signal, stage, grace) in stages {
-            let Some((key, descendant_deadline)) = self.signal_active(signal, stage).await? else {
-                return Ok(());
-            };
-            last_key = Some(key);
-
-            let now = tokio::time::Instant::now();
-            let stage_deadline = descendant_deadline
-                .map(|lease_deadline| (now + grace).min(lease_deadline))
-                .unwrap_or(now + grace);
-
-            loop {
-                if let Some(terminal) = terminal {
-                    terminal.refresh_exit_status().await?;
-                }
-
-                let now = tokio::time::Instant::now();
-                if !self.probe_active().await? {
-                    tracing::info!(
-                        terminal_id = %self.terminal_id,
-                        session_id = %self.session_id,
-                        pid = self.pid,
-                        pgid = key.pgid,
-                        generation = key.generation,
-                        elapsed_ms = started.elapsed().as_millis(),
-                        signal_stage = stage,
-                        "[ACP] terminal process-group lease retired"
-                    );
-                    return Ok(());
-                }
-
-                if now >= stage_deadline {
-                    break;
-                }
-                tokio::time::sleep(
-                    CHILD_EXIT_POLL_INTERVAL.min(stage_deadline.saturating_duration_since(now)),
-                )
-                .await;
-            }
-        }
-
-        self.retire().await;
-        let key = last_key.expect("non-empty terminal signal stages");
-        Err(TerminalRuntimeError::Internal(format!(
-            "terminal process group pgid={} generation={} survived SIGKILL deadline",
-            key.pgid, key.generation
-        )))
-    }
-
-    async fn cleanup(&self, terminal: &TerminalInstance) -> Result<(), TerminalRuntimeError> {
-        self.cleanup_with_stages(
-            &[
-                (libc::SIGINT, "sigint", SIGINT_GRACE),
-                (libc::SIGTERM, "sigterm", SIGTERM_GRACE),
-                (libc::SIGKILL, "sigkill", SIGKILL_GRACE),
-            ],
-            Some(terminal),
-        )
-        .await
-    }
-}
-
-#[cfg(all(test, unix))]
-#[derive(Clone)]
-struct ExitObservationBarrier {
-    reached: Arc<tokio::sync::Barrier>,
-    resume: Arc<tokio::sync::Barrier>,
+/// What the owner task has published about the child process. Two states only:
+/// either it is still running, or it is **known** to be gone.
+///
+/// There is deliberately no "failed" state. An unknown-but-maybe-finished state
+/// would be indistinguishable from `Running` to `terminal/output` consumers
+/// (`exit_status: None` reads as "still going"), which is exactly how an agent
+/// turn hangs forever.
+#[derive(Debug, Clone)]
+enum TerminalCompletion {
+    Running,
+    /// The process is gone. Carries the real status when `Child::wait`
+    /// reported one; carries an empty [`TerminalExitStatus`] (no code, no
+    /// signal — ACP's "finished, details unknown") when the status is
+    /// unknowable, e.g. something else reaped the child out from under us.
+    Exited(TerminalExitStatus),
 }
 
 struct TerminalInstance {
-    terminal_id: String,
     session_id: String,
-    #[cfg(unix)]
-    process_group: UnixProcessGroupLease,
-    /// Serializes observing a direct-child exit with the corresponding Unix
-    /// process-group lease transition. A cleanup must not see an absent child
-    /// while the lease still describes a live leader.
-    #[cfg(unix)]
-    leader_exit_observation_gate: Mutex<()>,
     output_limit: Option<usize>,
-    child: Mutex<Option<tokio::process::Child>>,
     snapshot: Mutex<TerminalSnapshot>,
     reader_handles: Mutex<Vec<JoinHandle<()>>>,
-    #[cfg(all(test, unix))]
-    exit_observation_barrier: std::sync::Mutex<Option<ExitObservationBarrier>>,
+    /// Asks the owner task to kill the process tree.
+    ///
+    /// Callers signal rather than holding a pid of their own, so every kill
+    /// runs while the owner still holds the **un-reaped** `Child`. That is what
+    /// makes the pid safe to signal: an un-reaped child keeps its pid reserved,
+    /// so it cannot have been recycled onto some unrelated process.
+    kill: Notify,
+    /// Terminal state, published by the owner task.
+    ///
+    /// Always written with `send_replace`, never `send`: a `watch` **discards**
+    /// a value sent while no receiver exists (see the `Sender::new` doc in
+    /// tokio's `sync/watch.rs`, which asserts `send(..).is_err()`), so a
+    /// short-lived command that exits before anyone subscribes would strand
+    /// every later waiter.
+    completion: watch::Sender<TerminalCompletion>,
 }
 
 impl TerminalInstance {
-    fn new(
-        terminal_id: String,
-        session_id: String,
-        output_limit: Option<u64>,
-        child: tokio::process::Child,
-        #[cfg_attr(not(unix), allow(unused_variables))] pid: u32,
-        #[cfg(unix)] generation: u64,
-        #[cfg(unix)] process_group_backend: Arc<dyn UnixProcessGroupBackend>,
-    ) -> Result<Self, TerminalRuntimeError> {
-        #[cfg(unix)]
-        let process_group = UnixProcessGroupLease::new(
-            terminal_id.clone(),
-            session_id.clone(),
-            pid,
-            generation,
-            process_group_backend,
-        )?;
-
-        Ok(Self {
-            terminal_id,
+    fn new(session_id: String, output_limit: Option<u64>) -> Self {
+        Self {
             session_id,
-            #[cfg(unix)]
-            process_group,
-            #[cfg(unix)]
-            leader_exit_observation_gate: Mutex::new(()),
             output_limit: output_limit.and_then(|v| usize::try_from(v).ok()),
-            child: Mutex::new(Some(child)),
             snapshot: Mutex::new(TerminalSnapshot::default()),
             reader_handles: Mutex::new(Vec::new()),
-            #[cfg(all(test, unix))]
-            exit_observation_barrier: std::sync::Mutex::new(None),
-        })
-    }
-
-    #[cfg(all(test, unix))]
-    fn install_exit_observation_barrier(&self, barrier: ExitObservationBarrier) {
-        *self
-            .exit_observation_barrier
-            .lock()
-            .expect("exit observation barrier lock") = Some(barrier);
-    }
-
-    #[cfg(all(test, unix))]
-    async fn pause_after_reap_before_lease_observation(&self) {
-        let barrier = self
-            .exit_observation_barrier
-            .lock()
-            .expect("exit observation barrier lock")
-            .clone();
-        if let Some(barrier) = barrier {
-            barrier.reached.wait().await;
-            barrier.resume.wait().await;
+            kill: Notify::new(),
+            completion: watch::Sender::new(TerminalCompletion::Running),
         }
     }
 
@@ -520,129 +147,53 @@ impl TerminalInstance {
         }
     }
 
-    async fn refresh_exit_status(&self) -> Result<(), TerminalRuntimeError> {
-        {
-            let snapshot = self.snapshot.lock().await;
-            if snapshot.exit_status.is_some() {
-                return Ok(());
-            }
-        }
-
-        #[cfg(unix)]
-        let (maybe_status, process_group_result) = {
-            let _observation_guard = self.leader_exit_observation_gate.lock().await;
-            let mut child_guard = self.child.lock().await;
-            if let Some(child) = child_guard.as_mut() {
-                match child.try_wait() {
-                    Ok(Some(status)) => {
-                        // Do not make the child absent visible until the group
-                        // lease has either become bounded descendants or has
-                        // retired. The child mutex is released before the
-                        // async lease observation.
-                        drop(child_guard);
-
-                        #[cfg(all(test, unix))]
-                        self.pause_after_reap_before_lease_observation().await;
-
-                        let process_group_result = self
-                            .process_group
-                            .observe_leader_exit(tokio::time::Instant::now())
-                            .await;
-
-                        *self.child.lock().await = None;
-                        (Some(status), process_group_result)
-                    }
-                    Ok(None) => (None, Ok(())),
-                    Err(err) => {
-                        return Err(TerminalRuntimeError::Internal(format!(
-                            "failed to query terminal exit status: {err}"
-                        )))
-                    }
-                }
-            } else {
-                (None, Ok(()))
-            }
-        };
-
-        #[cfg(not(unix))]
-        let maybe_status = {
-            let mut child_guard = self.child.lock().await;
-            if let Some(child) = child_guard.as_mut() {
-                match child.try_wait() {
-                    Ok(Some(status)) => {
-                        *child_guard = None;
-                        Some(status)
-                    }
-                    Ok(None) => None,
-                    Err(err) => {
-                        return Err(TerminalRuntimeError::Internal(format!(
-                            "failed to query terminal exit status: {err}"
-                        )))
-                    }
-                }
-            } else {
-                None
-            }
-        };
-
-        if let Some(status) = maybe_status {
-            // Drain readers BEFORE exposing exit_status. Otherwise a caller
-            // polling `terminal/output` can see `exit_status = Some(...)` while
-            // a grandchild process (e.g. Node spawned from a `.cmd` shim on
-            // Windows) still holds the stdout/stderr pipe and is flushing
-            // tail output. If the agent treats exit_status as "terminal done",
-            // the trailing bytes never reach the UI. Draining here upholds the
-            // invariant: whenever an external observer sees exit_status, the
-            // snapshot already contains (or has explicitly given up on) all
-            // reader output.
-            self.drain_readers().await;
-            let mut snapshot = self.snapshot.lock().await;
-            snapshot.exit_status = Some(map_exit_status(status));
-
-            #[cfg(unix)]
-            process_group_result?;
-        }
-
-        Ok(())
-    }
-
+    /// Block until the owner task publishes a terminal state.
+    ///
+    /// Holds no lock for the duration, so `terminal/output`, `terminal/kill`
+    /// and the session cancel path stay responsive while a never-exiting
+    /// command (a dev server, `tail -f`, a watcher) is still running.
     async fn wait_for_exit(&self) -> Result<TerminalExitStatus, TerminalRuntimeError> {
+        let mut completion = self.completion.subscribe();
         loop {
-            self.refresh_exit_status().await?;
-            if let Some(exit_status) = self.snapshot.lock().await.exit_status.clone() {
+            let current = completion.borrow_and_update().clone();
+            if let TerminalCompletion::Exited(exit_status) = current {
                 return Ok(exit_status);
             }
-            tokio::time::sleep(CHILD_EXIT_POLL_INTERVAL).await;
+            if completion.changed().await.is_err() {
+                return Err(TerminalRuntimeError::Internal(
+                    "terminal owner task ended without publishing an exit status".to_string(),
+                ));
+            }
         }
     }
 
-    #[cfg(unix)]
     async fn kill_command(&self) -> Result<(), TerminalRuntimeError> {
-        self.refresh_exit_status().await?;
-        let cleanup_result = self.process_group.cleanup(self).await;
-        let refresh_result = self.refresh_exit_status().await;
-        cleanup_result.and(refresh_result)
-    }
-
-    #[cfg(not(unix))]
-    async fn kill_command(&self) -> Result<(), TerminalRuntimeError> {
-        self.refresh_exit_status().await?;
-        if self.snapshot.lock().await.exit_status.is_some() {
+        if matches!(
+            *self.completion.borrow(),
+            TerminalCompletion::Exited(_)
+        ) {
             return Ok(());
         }
 
-        let pid = self
-            .child
-            .lock()
+        // The owner task performs the kill; see `TerminalInstance::kill`.
+        self.kill.notify_one();
+
+        // Bound only how long we wait to *report*. The owner task keeps the
+        // `Child` and keeps escalating and reaping regardless, so returning
+        // early here never abandons the process — even once `release_terminal`
+        // has already dropped this terminal from the map.
+        if tokio::time::timeout(KILL_REPORT_BUDGET, self.wait_for_exit())
             .await
-            .as_ref()
-            .and_then(tokio::process::Child::id);
-        if let Some(pid) = pid {
-            if let Err(err) = kill_tree::tokio::kill_tree(pid).await {
-                tracing::error!("[ACP] kill_tree failed for pid {pid}: {err}");
-            }
+            .is_err()
+        {
+            tracing::warn!(
+                "[ACP] terminal for session {} did not reap within {:?} of being killed; \
+                 the owner task keeps trying",
+                self.session_id,
+                KILL_REPORT_BUDGET
+            );
         }
-        self.wait_for_exit().await.map(|_| ())
+        Ok(())
     }
 
     async fn snapshot(&self) -> TerminalSnapshot {
@@ -650,12 +201,197 @@ impl TerminalInstance {
     }
 }
 
+/// Signal a whole process tree, returning the pids the pass actually signalled.
+///
+/// `kill_tree` snapshots the tree, signals it children-first, and returns
+/// immediately without waiting for anything to die. A descendant that ignores
+/// the signal therefore outlives its parent and gets reparented away from
+/// `pid`, at which point no snapshot rooted at `pid` can find it again. The
+/// returned pids are the only remaining handle on such a survivor.
+async fn signal_tree(pid: Option<u32>, signal: &str) -> Vec<u32> {
+    let Some(pid) = pid else {
+        return Vec::new();
+    };
+    let config = kill_tree::Config {
+        signal: signal.to_string(),
+        include_target: true,
+    };
+    match kill_tree::tokio::kill_tree_with_config(pid, &config).await {
+        Ok(outputs) => outputs
+            .into_iter()
+            .filter_map(|output| match output {
+                kill_tree::Output::Killed { process_id, .. } => Some(process_id),
+                kill_tree::Output::MaybeAlreadyTerminated { .. } => None,
+            })
+            .collect(),
+        Err(err) => {
+            tracing::error!("[ACP] kill_tree({signal}) failed for pid {pid}: {err}");
+            Vec::new()
+        }
+    }
+}
+
+/// `SIGKILL` any recorded descendant that outlived the graceful pass.
+///
+/// Best-effort by construction: survivors are identified by pid alone, so a pid
+/// recycled inside the escalation window could in principle be signalled by
+/// mistake. That is the same trade-off `pkill -P`-style cleanup makes, and it
+/// is the price of reaching a descendant that has been reparented away. `root`
+/// is skipped — it is the direct child, whose pid is already protected by the
+/// un-reaped `Child` handle the owner task holds.
+async fn sweep_survivors(signalled: &HashSet<u32>, root: Option<u32>) {
+    for &pid in signalled {
+        if Some(pid) == root {
+            continue;
+        }
+        signal_tree(Some(pid), "SIGKILL").await;
+    }
+}
+
+/// True when `Child::wait` failed because the child was already reaped by
+/// something else, which means the process **is** gone but its status is lost
+/// forever — and, critically, that its pid is now free for reuse and must not
+/// be signalled.
+///
+/// Unix-only on purpose: on Windows `raw_os_error` carries Win32 codes, a
+/// different namespace from the CRT errno `libc::ECHILD` belongs to. Mirrors
+/// the `cfg`-guarded errno check in `crate::process::is_exec_busy`.
+#[cfg(unix)]
+fn is_already_reaped(err: &std::io::Error) -> bool {
+    err.raw_os_error() == Some(libc::ECHILD)
+}
+
+#[cfg(not(unix))]
+fn is_already_reaped(_err: &std::io::Error) -> bool {
+    false
+}
+
+/// Sole owner of a spawned terminal's `Child` for the process's whole life.
+///
+/// Everything else in this module reads a snapshot or signals this task, which
+/// is what keeps `terminal/output`, `terminal/kill` and session teardown off
+/// the unbounded `Child::wait`. The task ends only once the process is **known**
+/// to be gone, so it never drops a possibly-live child (tokio does not kill on
+/// drop, and codeg never sets `kill_on_drop`).
+async fn own_terminal_process(terminal: Arc<TerminalInstance>, mut child: tokio::process::Child) {
+    let pid = child.id();
+    // Cumulative across every pass, never overwritten: a later `SIGKILL` pass
+    // re-snapshots the (by then smaller) tree, so only the union still holds a
+    // descendant that was recorded earlier and has since been reparented.
+    let mut signalled: HashSet<u32> = HashSet::new();
+    let mut escalate_at: Option<tokio::time::Instant> = None;
+    let mut kill_requested = false;
+    let mut escalated = false;
+    // State for the `Child::wait`-keeps-failing path.
+    let mut backoff = Duration::from_millis(10);
+    let mut wait_error_deadline: Option<tokio::time::Instant> = None;
+    let mut published_without_reaping = false;
+
+    let exit_status = loop {
+        let escalate = async {
+            match escalate_at {
+                Some(at) => tokio::time::sleep_until(at).await,
+                None => std::future::pending::<()>().await,
+            }
+        };
+
+        tokio::select! {
+            reaped = child.wait() => match reaped {
+                Ok(status) => break map_exit_status(status),
+                Err(err) if is_already_reaped(&err) => {
+                    // Gone, but the status died with whoever reaped it. Do NOT
+                    // signal `pid` from here on: it is reusable now.
+                    tracing::error!(
+                        "[ACP] terminal child was reaped elsewhere; exit status unavailable: {err}"
+                    );
+                    terminal
+                        .append_output("\n[terminal exit status unavailable: child reaped elsewhere]\n")
+                        .await;
+                    break TerminalExitStatus::new();
+                }
+                Err(err) => {
+                    // Not "already reaped", so nothing has collected this child
+                    // and its pid is still ours. It may well still be running:
+                    // kill it hard and keep trying to reap it.
+                    tracing::error!("[ACP] failed waiting for terminal process to exit: {err}");
+                    signalled.extend(signal_tree(pid, "SIGKILL").await);
+
+                    let deadline = *wait_error_deadline
+                        .get_or_insert_with(|| tokio::time::Instant::now() + WAIT_ERROR_BUDGET);
+                    if !published_without_reaping && tokio::time::Instant::now() >= deadline {
+                        // Budget spent. Unblock every reader of the completion
+                        // state so no agent turn is left hanging, but keep
+                        // owning the child so cleanup still has a real handle.
+                        published_without_reaping = true;
+                        terminal
+                            .append_output(
+                                "\n[terminal exit status unavailable: could not reap the process]\n",
+                            )
+                            .await;
+                        terminal.drain_readers().await;
+                        let unknown = TerminalExitStatus::new();
+                        terminal.snapshot.lock().await.exit_status = Some(unknown.clone());
+                        terminal
+                            .completion
+                            .send_replace(TerminalCompletion::Exited(unknown));
+                    }
+
+                    let pause = if published_without_reaping {
+                        WAIT_ERROR_IDLE_RETRY
+                    } else {
+                        backoff = (backoff * 2).min(WAIT_RETRY_MAX_BACKOFF);
+                        backoff
+                    };
+                    tokio::time::sleep(pause).await;
+                }
+            },
+            () = escalate => {
+                escalate_at = None;
+                escalated = true;
+                signalled.extend(signal_tree(pid, "SIGKILL").await);
+            }
+            () = terminal.kill.notified() => {
+                let signal = if escalated { "SIGKILL" } else { "SIGTERM" };
+                signalled.extend(signal_tree(pid, signal).await);
+                // Only the first request arms the escalation deadline. Clearing
+                // `escalate_at` when the timer fires means a plain
+                // `get_or_insert` would let a later request arm a fresh one and
+                // push `SIGKILL` back indefinitely.
+                if !kill_requested {
+                    kill_requested = true;
+                    escalate_at = Some(tokio::time::Instant::now() + KILL_ESCALATE_GRACE);
+                }
+            }
+        }
+    };
+
+    if kill_requested {
+        sweep_survivors(&signalled, pid).await;
+    }
+
+    if published_without_reaping {
+        // Completion was already published on the budget-exhausted path; the
+        // real status arrived late and nobody is waiting for it any more.
+        return;
+    }
+
+    // Drain readers BEFORE publishing. Otherwise a caller polling
+    // `terminal/output` can see `exit_status = Some(...)` while a grandchild
+    // process (e.g. Node spawned from a `.cmd` shim on Windows) still holds the
+    // stdout/stderr pipe and is flushing tail output. If the agent treats
+    // exit_status as "terminal done", the trailing bytes never reach the UI.
+    // Draining first upholds the invariant: whenever an external observer sees
+    // exit_status, the snapshot already contains (or has explicitly given up
+    // on) all reader output.
+    terminal.drain_readers().await;
+    terminal.snapshot.lock().await.exit_status = Some(exit_status.clone());
+    terminal
+        .completion
+        .send_replace(TerminalCompletion::Exited(exit_status));
+}
+
 pub struct TerminalRuntime {
     terminals: Mutex<TerminalMap>,
-    #[cfg(unix)]
-    process_group_backend: Arc<dyn UnixProcessGroupBackend>,
-    #[cfg(unix)]
-    next_process_group_generation: AtomicU64,
     /// Base environment merged into every spawned terminal command before
     /// the agent's per-request `env` is applied. This is where the codeg
     /// git credential helper (`GIT_CONFIG_*`) lives so an agent that runs
@@ -690,38 +426,15 @@ impl TerminalRuntime {
     pub fn with_base_env(base_env: BTreeMap<String, String>) -> Self {
         Self {
             terminals: Mutex::new(HashMap::new()),
-            #[cfg(unix)]
-            process_group_backend: Arc::new(LibcProcessGroupBackend),
-            #[cfg(unix)]
-            next_process_group_generation: AtomicU64::new(1),
             base_env,
             default_cwd: None,
         }
-    }
-
-    #[cfg(unix)]
-    fn allocate_process_group_generation(&self) -> Result<u64, TerminalRuntimeError> {
-        self.next_process_group_generation
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |generation| {
-                generation.checked_add(1)
-            })
-            .map_err(|_| {
-                TerminalRuntimeError::Internal(
-                    "terminal process-group generation space exhausted".to_string(),
-                )
-            })
     }
 
     /// Set the fallback working directory used when a `terminal/create` request
     /// does not specify its own `cwd`. Chainable after `with_base_env`.
     pub fn with_default_cwd(mut self, default_cwd: Option<PathBuf>) -> Self {
         self.default_cwd = default_cwd;
-        self
-    }
-
-    #[cfg(all(test, unix))]
-    fn with_process_group_backend(mut self, backend: Arc<dyn UnixProcessGroupBackend>) -> Self {
-        self.process_group_backend = backend;
         self
     }
 
@@ -765,11 +478,6 @@ impl TerminalRuntime {
         for env_var in &request.env {
             command.env(&env_var.name, &env_var.value);
         }
-
-        #[cfg(unix)]
-        {
-            command.process_group(0);
-        }
     }
 
     pub async fn create_terminal(
@@ -799,9 +507,6 @@ impl TerminalRuntime {
             ));
         }
 
-        #[cfg(unix)]
-        let process_group_generation = self.allocate_process_group_generation()?;
-
         // Spawn the command. Try a direct exec first so a real program — one
         // resolved on PATH, an absolute path, or a relative/space-containing
         // path reachable through the request's cwd and env — runs exactly as
@@ -817,11 +522,18 @@ impl TerminalRuntime {
         // least as correct. Deciding off a real failed spawn — rather than a
         // pre-spawn `which` guess that runs in codeg's own cwd/env — means we
         // never reroute a command that would otherwise have run.
+        //
+        // A spawn the kernel refuses with `ETXTBSY` is retried in place instead
+        // (see `spawn_retrying_exec_busy`): the program *is* runnable, it is
+        // just momentarily held open for writing — often by the agent's own
+        // brand-new script — so rerouting it through the shell would split a
+        // space-containing path for no reason.
         let mut direct = crate::process::tokio_command(&request.command);
         direct.args(&request.args);
         self.configure_command(&mut direct, &request);
 
-        let mut child = match direct.spawn() {
+        let spawned = crate::process::spawn_retrying_exec_busy(|| direct.spawn()).await;
+        let mut child = match spawned {
             Ok(child) => child,
             Err(err)
                 if matches!(
@@ -847,34 +559,14 @@ impl TerminalRuntime {
             }
         };
 
-        let pid = child.id().ok_or_else(|| {
-            TerminalRuntimeError::Internal("spawned terminal has no process id".to_string())
-        })?;
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
 
         let terminal_id = format!("term_{}", uuid::Uuid::new_v4().simple());
         let terminal = Arc::new(TerminalInstance::new(
-            terminal_id.clone(),
             request.session_id.to_string(),
             Some(output_byte_limit),
-            child,
-            pid,
-            #[cfg(unix)]
-            process_group_generation,
-            #[cfg(unix)]
-            Arc::clone(&self.process_group_backend),
-        )?);
-
-        #[cfg(unix)]
-        tracing::info!(
-            terminal_id = %terminal_id,
-            session_id = %request.session_id,
-            pid,
-            pgid = pid,
-            generation = process_group_generation,
-            "[ACP] spawned isolated terminal process group"
-        );
+        ));
 
         let mut handles: Vec<JoinHandle<()>> = Vec::new();
         if let Some(reader) = stdout {
@@ -895,6 +587,12 @@ impl TerminalRuntime {
             terminal.reader_handles.lock().await.extend(handles);
         }
 
+        // Hand the child to its owner task only AFTER the reader handles are
+        // registered: the owner drains them before publishing the exit status,
+        // and a command that exits instantly would otherwise drain an empty
+        // list and leave the readers running past the published completion.
+        tokio::spawn(own_terminal_process(terminal.clone(), child));
+
         self.terminals
             .lock()
             .await
@@ -914,7 +612,6 @@ impl TerminalRuntime {
             )
             .await?;
 
-        terminal.refresh_exit_status().await?;
         let snapshot = terminal.snapshot().await;
 
         Ok(
@@ -930,7 +627,6 @@ impl TerminalRuntime {
         from_offset: Option<u64>,
     ) -> Result<TerminalOutputDelta, TerminalRuntimeError> {
         let terminal = self.find_terminal(terminal_id, session_id).await?;
-        terminal.refresh_exit_status().await?;
         let snapshot = terminal.snapshot().await;
 
         let output_len = u64::try_from(snapshot.output.len()).unwrap_or(u64::MAX);
@@ -1006,7 +702,7 @@ impl TerminalRuntime {
         Ok(ReleaseTerminalResponse::new())
     }
 
-    pub(crate) async fn release_all_for_session(&self, session_id: &str) -> TerminalCleanupReport {
+    pub async fn release_all_for_session(&self, session_id: &str) {
         let removed = {
             let mut terminals = self.terminals.lock().await;
             let ids: Vec<String> = terminals
@@ -1024,28 +720,15 @@ impl TerminalRuntime {
             removed
         };
 
-        let results = futures::future::join_all(removed.into_iter().map(|terminal| async move {
-            let terminal_id = terminal.terminal_id.clone();
-            (terminal_id, terminal.kill_command().await)
+        // Kill concurrently. Sequentially, a session holding N terminals would
+        // cost up to N * KILL_REPORT_BUDGET to tear down, and this runs on the
+        // cancel path where the user is waiting.
+        futures::future::join_all(removed.into_iter().map(|terminal| async move {
+            if let Err(err) = terminal.kill_command().await {
+                tracing::error!("[ACP] Failed to release terminal during cleanup: {err:?}");
+            }
         }))
         .await;
-
-        let failures = results
-            .into_iter()
-            .filter_map(|(terminal_id, result)| {
-                result.err().map(|err| {
-                    tracing::error!(
-                        terminal_id = %terminal_id,
-                        session_id,
-                        error = ?err,
-                        "[ACP] terminal session cleanup failed"
-                    );
-                    (terminal_id, format!("{err:?}"))
-                })
-            })
-            .collect();
-
-        TerminalCleanupReport { failures }
     }
 
     async fn find_terminal(
@@ -1188,709 +871,7 @@ fn decode_available_utf8(pending: &mut Vec<u8>) -> String {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use std::collections::VecDeque;
-    use std::time::Instant;
-
-    use kill_tree::Config;
-    use sacp::schema::{EnvVariable, SessionId, WaitForTerminalExitRequest};
-
-    fn init_test_tracing() {
-        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-    }
-
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    enum BackendCall {
-        Probe(ProcessGroupKey),
-        Signal(ProcessGroupKey, libc::c_int),
-    }
-
-    #[derive(Default)]
-    struct MockProcessGroupBackend {
-        calls: std::sync::Mutex<Vec<BackendCall>>,
-        probes: std::sync::Mutex<VecDeque<ProcessGroupPresence>>,
-        signals: std::sync::Mutex<VecDeque<ProcessGroupSignalResult>>,
-        probe_delay: Option<Duration>,
-        call_tx: Option<tokio::sync::mpsc::UnboundedSender<BackendCall>>,
-    }
-
-    impl MockProcessGroupBackend {
-        fn with_probes(probes: impl IntoIterator<Item = ProcessGroupPresence>) -> Self {
-            Self {
-                probes: std::sync::Mutex::new(probes.into_iter().collect()),
-                ..Self::default()
-            }
-        }
-
-        fn with_signals(signals: impl IntoIterator<Item = ProcessGroupSignalResult>) -> Self {
-            Self {
-                signals: std::sync::Mutex::new(signals.into_iter().collect()),
-                ..Self::default()
-            }
-        }
-
-        fn with_probe_delay(
-            probes: impl IntoIterator<Item = ProcessGroupPresence>,
-            probe_delay: Duration,
-        ) -> Self {
-            Self {
-                probes: std::sync::Mutex::new(probes.into_iter().collect()),
-                probe_delay: Some(probe_delay),
-                ..Self::default()
-            }
-        }
-
-        fn with_call_tx(
-            mut self,
-            call_tx: tokio::sync::mpsc::UnboundedSender<BackendCall>,
-        ) -> Self {
-            self.call_tx = Some(call_tx);
-            self
-        }
-
-        fn record_call(&self, call: BackendCall) {
-            self.calls
-                .lock()
-                .expect("mock calls lock")
-                .push(call.clone());
-            if let Some(call_tx) = &self.call_tx {
-                let _ = call_tx.send(call);
-            }
-        }
-
-        fn calls(&self) -> Vec<BackendCall> {
-            self.calls.lock().expect("mock calls lock").clone()
-        }
-
-        fn delivered_signals(&self) -> Vec<libc::c_int> {
-            self.calls()
-                .into_iter()
-                .filter_map(|call| match call {
-                    BackendCall::Signal(_, signal) => Some(signal),
-                    BackendCall::Probe(_) => None,
-                })
-                .collect()
-        }
-
-        fn clear_calls(&self) {
-            self.calls.lock().expect("mock calls lock").clear();
-        }
-
-        fn push_probe(&self, presence: ProcessGroupPresence) {
-            self.probes
-                .lock()
-                .expect("mock probes lock")
-                .push_back(presence);
-        }
-    }
-
-    impl UnixProcessGroupBackend for MockProcessGroupBackend {
-        fn probe(
-            &self,
-            key: ProcessGroupKey,
-        ) -> Result<ProcessGroupPresence, TerminalRuntimeError> {
-            self.record_call(BackendCall::Probe(key));
-            let result = self
-                .probes
-                .lock()
-                .expect("mock probes lock")
-                .pop_front()
-                .unwrap_or(ProcessGroupPresence::Present);
-            if let Some(delay) = self.probe_delay {
-                std::thread::sleep(delay);
-            }
-            Ok(result)
-        }
-
-        fn signal(
-            &self,
-            key: ProcessGroupKey,
-            signal: libc::c_int,
-        ) -> Result<ProcessGroupSignalResult, TerminalRuntimeError> {
-            self.record_call(BackendCall::Signal(key, signal));
-            Ok(self
-                .signals
-                .lock()
-                .expect("mock signals lock")
-                .pop_front()
-                .unwrap_or(ProcessGroupSignalResult::Delivered))
-        }
-    }
-
-    const TEST_PROCESS_GROUP_KEY: ProcessGroupKey = ProcessGroupKey {
-        pgid: 42_424,
-        generation: 7,
-    };
-
-    fn test_process_group_lease(
-        state: UnixProcessGroupState,
-        backend: Arc<MockProcessGroupBackend>,
-    ) -> UnixProcessGroupLease {
-        UnixProcessGroupLease {
-            terminal_id: "test-terminal".to_string(),
-            session_id: "test-session".to_string(),
-            pid: TEST_PROCESS_GROUP_KEY.pgid as u32,
-            backend,
-            state: Mutex::new(state),
-            cleanup_gate: Mutex::new(()),
-        }
-    }
-
-    fn zero_grace_stages() -> [(libc::c_int, &'static str, Duration); 3] {
-        [
-            (libc::SIGINT, "sigint", Duration::ZERO),
-            (libc::SIGTERM, "sigterm", Duration::ZERO),
-            (libc::SIGKILL, "sigkill", Duration::ZERO),
-        ]
-    }
-
-    #[tokio::test]
-    async fn leader_exit_with_descendants_starts_bounded_lease() {
-        let backend = Arc::new(MockProcessGroupBackend::default());
-        let lease = test_process_group_lease(
-            UnixProcessGroupState::OwnedLeaderAlive {
-                key: TEST_PROCESS_GROUP_KEY,
-            },
-            backend,
-        );
-        let observed_at = tokio::time::Instant::now();
-
-        lease
-            .observe_leader_exit(observed_at)
-            .await
-            .expect("observe leader exit");
-
-        assert_eq!(
-            *lease.state.lock().await,
-            UnixProcessGroupState::OwnedDescendants {
-                key: TEST_PROCESS_GROUP_KEY,
-                deadline: observed_at + DESCENDANT_LEASE_DURATION,
-            }
-        );
-    }
-
-    #[tokio::test]
-    async fn leader_exit_without_descendants_retires_before_delayed_release() {
-        let backend = Arc::new(MockProcessGroupBackend::with_probes([
-            ProcessGroupPresence::Missing,
-        ]));
-        let lease = test_process_group_lease(
-            UnixProcessGroupState::OwnedLeaderAlive {
-                key: TEST_PROCESS_GROUP_KEY,
-            },
-            backend.clone(),
-        );
-        lease
-            .observe_leader_exit(tokio::time::Instant::now())
-            .await
-            .expect("observe leader exit");
-        backend.clear_calls();
-
-        lease
-            .cleanup_with_stages(&zero_grace_stages(), None)
-            .await
-            .expect("delayed cleanup");
-
-        assert!(backend.calls().is_empty());
-        assert!(backend.delivered_signals().is_empty());
-        assert_eq!(*lease.state.lock().await, UnixProcessGroupState::Retired);
-    }
-
-    #[tokio::test]
-    async fn naturally_exited_terminal_delayed_release_sends_no_group_signal() {
-        let backend = Arc::new(MockProcessGroupBackend::with_probes([
-            ProcessGroupPresence::Missing,
-        ]));
-        let runtime = TerminalRuntime::with_base_env(BTreeMap::new())
-            .with_process_group_backend(backend.clone());
-        let session_id = SessionId::new("natural-exit-delayed-release".to_string());
-        let request = CreateTerminalRequest::new(session_id.clone(), "/bin/true".to_string());
-        let response = runtime
-            .create_terminal(request)
-            .await
-            .expect("create short terminal");
-
-        runtime
-            .wait_for_terminal_exit(WaitForTerminalExitRequest::new(
-                session_id.clone(),
-                response.terminal_id,
-            ))
-            .await
-            .expect("observe natural exit");
-        backend.clear_calls();
-        tokio::time::sleep(Duration::from_millis(25)).await;
-
-        let report = runtime.release_all_for_session(session_id.0.as_ref()).await;
-
-        assert!(report.is_clean());
-        assert!(backend.calls().is_empty());
-        assert!(backend.delivered_signals().is_empty());
-    }
-
-    #[tokio::test]
-    async fn concurrent_cleanup_never_signals_after_reap_before_lease_observation() {
-        let (call_tx, mut call_rx) = tokio::sync::mpsc::unbounded_channel();
-        let backend = Arc::new(
-            MockProcessGroupBackend::with_probes([ProcessGroupPresence::Missing])
-                .with_call_tx(call_tx),
-        );
-        let runtime = TerminalRuntime::with_base_env(BTreeMap::new())
-            .with_process_group_backend(backend.clone());
-        let session_id = SessionId::new("reap-before-lease-observation".to_string());
-        let response = runtime
-            .create_terminal(CreateTerminalRequest::new(
-                session_id.clone(),
-                "/bin/true".to_string(),
-            ))
-            .await
-            .expect("create short terminal");
-        let terminal = runtime
-            .find_terminal(&response.terminal_id.to_string(), session_id.0.as_ref())
-            .await
-            .expect("find test terminal");
-        let barrier = ExitObservationBarrier {
-            reached: Arc::new(tokio::sync::Barrier::new(2)),
-            resume: Arc::new(tokio::sync::Barrier::new(2)),
-        };
-        terminal.install_exit_observation_barrier(barrier.clone());
-
-        let refresh_terminal = terminal.clone();
-        let refresh = tokio::spawn(async move {
-            loop {
-                refresh_terminal.refresh_exit_status().await?;
-                if refresh_terminal.snapshot.lock().await.exit_status.is_some() {
-                    return Ok::<(), TerminalRuntimeError>(());
-                }
-                tokio::time::sleep(CHILD_EXIT_POLL_INTERVAL).await;
-            }
-        });
-        tokio::time::timeout(Duration::from_secs(1), barrier.reached.wait())
-            .await
-            .expect("direct child did not reach controlled reap observation");
-        let leader_key = match *terminal.process_group.state.lock().await {
-            UnixProcessGroupState::OwnedLeaderAlive { key } => key,
-            other => panic!("lease changed before the controlled observation point: {other:?}"),
-        };
-        assert!(
-            terminal.child.lock().await.is_some(),
-            "child must not become absent before the lease observation commits"
-        );
-
-        let cleanup_terminal = terminal.clone();
-        let cleanup = tokio::spawn(async move { cleanup_terminal.kill_command().await });
-        let early_call = tokio::time::timeout(Duration::from_millis(50), call_rx.recv()).await;
-        assert!(
-            early_call.is_err(),
-            "cleanup signalled or probed while leader exit observation was paused: {early_call:?}"
-        );
-
-        tokio::time::timeout(Duration::from_secs(1), barrier.resume.wait())
-            .await
-            .expect("controlled reap observation did not resume");
-        refresh.await.expect("join refresh").expect("refresh exit");
-        cleanup.await.expect("join cleanup").expect("cleanup exit");
-
-        assert_eq!(backend.calls(), vec![BackendCall::Probe(leader_key)]);
-        assert!(backend.delivered_signals().is_empty());
-        assert_eq!(
-            *terminal.process_group.state.lock().await,
-            UnixProcessGroupState::Retired
-        );
-
-        // A later user of the same numeric PGID remains outside this terminal's
-        // retired lease and receives no further backend operation.
-        backend.push_probe(ProcessGroupPresence::Present);
-        let calls_after_retirement = backend.calls();
-        terminal.kill_command().await.expect("repeated cleanup");
-        assert_eq!(backend.calls(), calls_after_retirement);
-        assert!(backend.delivered_signals().is_empty());
-    }
-
-    #[tokio::test]
-    async fn descendant_lease_release_before_deadline_can_signal_original_group() {
-        let backend = Arc::new(MockProcessGroupBackend::with_probes([
-            ProcessGroupPresence::Present,
-            ProcessGroupPresence::Present,
-            ProcessGroupPresence::Present,
-            ProcessGroupPresence::Present,
-            ProcessGroupPresence::Present,
-            ProcessGroupPresence::Missing,
-        ]));
-        let lease = test_process_group_lease(
-            UnixProcessGroupState::OwnedDescendants {
-                key: TEST_PROCESS_GROUP_KEY,
-                deadline: tokio::time::Instant::now() + DESCENDANT_LEASE_DURATION,
-            },
-            backend.clone(),
-        );
-
-        lease
-            .cleanup_with_stages(&zero_grace_stages(), None)
-            .await
-            .expect("cleanup descendants");
-
-        assert_eq!(
-            backend.delivered_signals(),
-            vec![libc::SIGINT, libc::SIGTERM, libc::SIGKILL]
-        );
-        assert!(backend.calls().iter().all(|call| match call {
-            BackendCall::Probe(key) | BackendCall::Signal(key, _) => {
-                *key == TEST_PROCESS_GROUP_KEY
-            }
-        }));
-    }
-
-    #[tokio::test]
-    async fn missing_descendant_group_retires_before_signal_and_ignores_later_reuse() {
-        let backend = Arc::new(MockProcessGroupBackend::with_probes([
-            ProcessGroupPresence::Missing,
-        ]));
-        let lease = test_process_group_lease(
-            UnixProcessGroupState::OwnedDescendants {
-                key: TEST_PROCESS_GROUP_KEY,
-                deadline: tokio::time::Instant::now() + DESCENDANT_LEASE_DURATION,
-            },
-            backend.clone(),
-        );
-
-        lease
-            .cleanup_with_stages(&zero_grace_stages(), None)
-            .await
-            .expect("missing descendant group cleanup");
-
-        assert_eq!(
-            backend.calls(),
-            vec![BackendCall::Probe(TEST_PROCESS_GROUP_KEY)]
-        );
-        assert!(backend.delivered_signals().is_empty());
-        assert_eq!(*lease.state.lock().await, UnixProcessGroupState::Retired);
-
-        // The original group is gone. A later owner reusing its numeric PGID
-        // must not be queried or signalled by this terminal.
-        backend.push_probe(ProcessGroupPresence::Present);
-        let calls_after_retirement = backend.calls();
-        lease
-            .cleanup_with_stages(&zero_grace_stages(), None)
-            .await
-            .expect("repeated cleanup after simulated reuse");
-
-        assert_eq!(backend.calls(), calls_after_retirement);
-        assert!(backend.delivered_signals().is_empty());
-    }
-
-    #[tokio::test]
-    async fn descendant_lease_expiry_during_probe_retires_before_signal() {
-        let backend = Arc::new(MockProcessGroupBackend::with_probe_delay(
-            [ProcessGroupPresence::Present],
-            Duration::from_millis(10),
-        ));
-        let lease = test_process_group_lease(
-            UnixProcessGroupState::OwnedDescendants {
-                key: TEST_PROCESS_GROUP_KEY,
-                deadline: tokio::time::Instant::now() + Duration::from_millis(1),
-            },
-            backend.clone(),
-        );
-
-        lease
-            .cleanup_with_stages(&zero_grace_stages(), None)
-            .await
-            .expect("expired descendant group cleanup");
-
-        assert_eq!(
-            backend.calls(),
-            vec![BackendCall::Probe(TEST_PROCESS_GROUP_KEY)]
-        );
-        assert!(backend.delivered_signals().is_empty());
-        assert_eq!(*lease.state.lock().await, UnixProcessGroupState::Retired);
-    }
-
-    #[tokio::test]
-    async fn descendant_probe_esrch_between_stages_retires_before_next_signal() {
-        let backend = Arc::new(MockProcessGroupBackend::with_probes([
-            ProcessGroupPresence::Present,
-            ProcessGroupPresence::Present,
-            ProcessGroupPresence::Missing,
-        ]));
-        let lease = test_process_group_lease(
-            UnixProcessGroupState::OwnedDescendants {
-                key: TEST_PROCESS_GROUP_KEY,
-                deadline: tokio::time::Instant::now() + DESCENDANT_LEASE_DURATION,
-            },
-            backend.clone(),
-        );
-
-        lease
-            .cleanup_with_stages(&zero_grace_stages(), None)
-            .await
-            .expect("stage cleanup");
-
-        assert_eq!(backend.delivered_signals(), vec![libc::SIGINT]);
-        assert_eq!(
-            backend.calls(),
-            vec![
-                BackendCall::Probe(TEST_PROCESS_GROUP_KEY),
-                BackendCall::Signal(TEST_PROCESS_GROUP_KEY, libc::SIGINT),
-                BackendCall::Probe(TEST_PROCESS_GROUP_KEY),
-                BackendCall::Probe(TEST_PROCESS_GROUP_KEY),
-            ]
-        );
-        assert_eq!(*lease.state.lock().await, UnixProcessGroupState::Retired);
-    }
-
-    #[tokio::test]
-    async fn descendant_signal_esrch_retires_and_repeat_cleanup_is_noop() {
-        let backend = Arc::new(MockProcessGroupBackend {
-            probes: std::sync::Mutex::new([ProcessGroupPresence::Present].into_iter().collect()),
-            signals: std::sync::Mutex::new(
-                [ProcessGroupSignalResult::Missing].into_iter().collect(),
-            ),
-            ..MockProcessGroupBackend::default()
-        });
-        let lease = test_process_group_lease(
-            UnixProcessGroupState::OwnedDescendants {
-                key: TEST_PROCESS_GROUP_KEY,
-                deadline: tokio::time::Instant::now() + DESCENDANT_LEASE_DURATION,
-            },
-            backend.clone(),
-        );
-
-        lease
-            .cleanup_with_stages(&zero_grace_stages(), None)
-            .await
-            .expect("signal ESRCH cleanup");
-        let calls_after_first_cleanup = backend.calls();
-
-        lease
-            .cleanup_with_stages(&zero_grace_stages(), None)
-            .await
-            .expect("repeated cleanup after signal ESRCH");
-
-        assert_eq!(backend.calls(), calls_after_first_cleanup);
-        assert_eq!(
-            backend.delivered_signals(),
-            vec![libc::SIGINT],
-            "the backend observed the attempted signal, but ESRCH delivered it to no group"
-        );
-        assert_eq!(*lease.state.lock().await, UnixProcessGroupState::Retired);
-    }
-
-    #[tokio::test]
-    async fn expired_descendant_lease_retires_without_backend_call() {
-        let backend = Arc::new(MockProcessGroupBackend::default());
-        let lease = test_process_group_lease(
-            UnixProcessGroupState::OwnedDescendants {
-                key: TEST_PROCESS_GROUP_KEY,
-                deadline: tokio::time::Instant::now(),
-            },
-            backend.clone(),
-        );
-
-        lease
-            .cleanup_with_stages(&zero_grace_stages(), None)
-            .await
-            .expect("expire descendants lease");
-
-        assert!(backend.calls().is_empty());
-        assert_eq!(*lease.state.lock().await, UnixProcessGroupState::Retired);
-    }
-
-    #[tokio::test]
-    async fn retired_lease_ignores_simulated_pgid_reuse() {
-        let backend = Arc::new(MockProcessGroupBackend::with_probes([
-            ProcessGroupPresence::Missing,
-        ]));
-        let lease = test_process_group_lease(
-            UnixProcessGroupState::OwnedLeaderAlive {
-                key: TEST_PROCESS_GROUP_KEY,
-            },
-            backend.clone(),
-        );
-        lease
-            .observe_leader_exit(tokio::time::Instant::now())
-            .await
-            .expect("retire original group");
-        backend.clear_calls();
-        backend.push_probe(ProcessGroupPresence::Present);
-
-        lease
-            .cleanup_with_stages(&zero_grace_stages(), None)
-            .await
-            .expect("cleanup reused numeric pgid");
-
-        assert!(backend.calls().is_empty());
-        assert!(backend.delivered_signals().is_empty());
-    }
-
-    #[tokio::test]
-    async fn esrch_retires_permanently_and_repeat_cleanup_is_noop() {
-        let backend = Arc::new(MockProcessGroupBackend::with_signals([
-            ProcessGroupSignalResult::Missing,
-        ]));
-        let lease = test_process_group_lease(
-            UnixProcessGroupState::OwnedLeaderAlive {
-                key: TEST_PROCESS_GROUP_KEY,
-            },
-            backend.clone(),
-        );
-        lease
-            .cleanup_with_stages(&zero_grace_stages(), None)
-            .await
-            .expect("first cleanup");
-        let calls_after_first = backend.calls();
-
-        lease
-            .cleanup_with_stages(&zero_grace_stages(), None)
-            .await
-            .expect("repeat cleanup");
-
-        assert_eq!(backend.calls(), calls_after_first);
-        assert_eq!(*lease.state.lock().await, UnixProcessGroupState::Retired);
-    }
-
-    #[tokio::test]
-    async fn concurrent_cleanup_runs_one_signal_sequence() {
-        let backend = Arc::new(MockProcessGroupBackend::with_probes([
-            ProcessGroupPresence::Present,
-            ProcessGroupPresence::Present,
-            ProcessGroupPresence::Missing,
-        ]));
-        let lease = Arc::new(test_process_group_lease(
-            UnixProcessGroupState::OwnedLeaderAlive {
-                key: TEST_PROCESS_GROUP_KEY,
-            },
-            backend.clone(),
-        ));
-        let stages = zero_grace_stages();
-
-        let (left, right) = tokio::join!(
-            lease.cleanup_with_stages(&stages, None),
-            lease.cleanup_with_stages(&stages, None),
-        );
-
-        left.expect("left cleanup");
-        right.expect("right cleanup");
-        assert_eq!(
-            backend.delivered_signals(),
-            vec![libc::SIGINT, libc::SIGTERM, libc::SIGKILL]
-        );
-    }
-
-    #[tokio::test]
-    async fn live_leader_keeps_staged_signal_sequence() {
-        let backend = Arc::new(MockProcessGroupBackend::with_probes([
-            ProcessGroupPresence::Present,
-            ProcessGroupPresence::Present,
-            ProcessGroupPresence::Missing,
-        ]));
-        let lease = test_process_group_lease(
-            UnixProcessGroupState::OwnedLeaderAlive {
-                key: TEST_PROCESS_GROUP_KEY,
-            },
-            backend.clone(),
-        );
-
-        lease
-            .cleanup_with_stages(&zero_grace_stages(), None)
-            .await
-            .expect("cleanup live leader");
-
-        assert_eq!(
-            backend.delivered_signals(),
-            vec![libc::SIGINT, libc::SIGTERM, libc::SIGKILL]
-        );
-    }
-
-    #[tokio::test]
-    async fn leader_exit_with_live_descendants_is_not_retired_immediately() {
-        let backend = Arc::new(MockProcessGroupBackend::default());
-        let lease = test_process_group_lease(
-            UnixProcessGroupState::OwnedLeaderAlive {
-                key: TEST_PROCESS_GROUP_KEY,
-            },
-            backend,
-        );
-
-        lease
-            .observe_leader_exit(tokio::time::Instant::now())
-            .await
-            .expect("observe descendants");
-
-        assert!(matches!(
-            *lease.state.lock().await,
-            UnixProcessGroupState::OwnedDescendants { .. }
-        ));
-    }
-
-    async fn terminal_pid(
-        runtime: &TerminalRuntime,
-        session_id: &SessionId,
-        terminal_id: &str,
-    ) -> u32 {
-        let terminal = runtime
-            .find_terminal(terminal_id, session_id.0.as_ref())
-            .await
-            .expect("test terminal exists");
-        let pid = terminal
-            .child
-            .lock()
-            .await
-            .as_ref()
-            .and_then(tokio::process::Child::id)
-            .expect("test terminal has a direct child pid");
-        pid
-    }
-
-    fn pid_exists(pid: u32) -> bool {
-        let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
-        if result == 0 {
-            return true;
-        }
-        std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
-    }
-
-    async fn emergency_kill_exact_tree(pid: u32, terminal: &Arc<TerminalInstance>) {
-        let pid = pid as libc::pid_t;
-        let _ = unsafe { libc::kill(pid, libc::SIGSTOP) };
-        let config = Config {
-            signal: "SIGKILL".to_string(),
-            include_target: true,
-        };
-        let _ = kill_tree::tokio::kill_tree_with_config(pid as u32, &config).await;
-        let _ = unsafe { libc::kill(pid, libc::SIGKILL) };
-        let _ = tokio::time::timeout(Duration::from_secs(1), terminal.wait_for_exit()).await;
-        for _ in 0..100 {
-            if !pid_exists(pid as u32) {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    }
-
-    async fn spawn_shell(
-        runtime: &TerminalRuntime,
-        session_id: &SessionId,
-        script: &str,
-    ) -> (String, u32) {
-        let mut request = CreateTerminalRequest::new(session_id.clone(), "/bin/sh".to_string());
-        request.args = vec!["-c".into(), script.into()];
-        let response = runtime
-            .create_terminal(request)
-            .await
-            .expect("create test terminal");
-        let terminal_id = response.terminal_id.to_string();
-        let pid = terminal_pid(runtime, session_id, &terminal_id).await;
-        (terminal_id, pid)
-    }
-
-    async fn wait_for_output(terminal: &Arc<TerminalInstance>, needle: &str) -> bool {
-        for _ in 0..100 {
-            if terminal.snapshot().await.output.contains(needle) {
-                return true;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        false
-    }
+    use sacp::schema::{EnvVariable, SessionId, TerminalId, WaitForTerminalExitRequest};
 
     /// Regression: when an ACP agent calls `terminal/create` (e.g. to run
     /// `git push`), the runtime's base env — populated by the connection
@@ -2047,7 +1028,8 @@ mod tests {
 
         // Genuine shell operators must evaluate, not be passed as literal args.
         let session_id = SessionId::new("shell-ops".to_string());
-        let request = CreateTerminalRequest::new(session_id.clone(), "true && echo OK".to_string());
+        let request =
+            CreateTerminalRequest::new(session_id.clone(), "true && echo OK".to_string());
         let output = run_and_capture(&runtime, &session_id, request).await;
         assert!(
             output.contains("OK"),
@@ -2105,7 +1087,8 @@ mod tests {
         let runtime = TerminalRuntime::with_base_env(BTreeMap::new());
 
         let session_id = SessionId::new("direct-exec".to_string());
-        let mut request = CreateTerminalRequest::new(session_id.clone(), "/bin/echo".to_string());
+        let mut request =
+            CreateTerminalRequest::new(session_id.clone(), "/bin/echo".to_string());
         request.args = vec!["hello world".into()];
         let output = run_and_capture(&runtime, &session_id, request).await;
         assert!(
@@ -2137,6 +1120,12 @@ mod tests {
     /// A real executable whose path contains spaces is exec'd directly: the
     /// direct spawn succeeds, so the shell fallback never fires (shell-wrapping
     /// would split the path at the space).
+    ///
+    /// Note: writing an executable and exec'ing it from a multi-threaded test
+    /// binary can hit a spurious `ETXTBSY` when a sibling test forks in the
+    /// window where the write descriptor is still open. The spawn's
+    /// `spawn_retrying_exec_busy` wrapper is what keeps this deterministic —
+    /// see `spawn_rides_out_a_transient_text_file_busy`.
     #[tokio::test]
     async fn executable_path_with_spaces_is_not_shell_wrapped() {
         use std::os::unix::fs::PermissionsExt;
@@ -2182,16 +1171,11 @@ mod tests {
     /// check, run in codeg's own cwd, would shell-wrap and split the path.
     #[tokio::test]
     async fn relative_executable_with_spaces_runs_in_effective_cwd() {
-        use std::io::Write;
         use std::os::unix::fs::PermissionsExt;
 
         let dir = tempfile::tempdir().expect("temp dir");
         let exe = dir.path().join("my tool"); // space in the file name
-        let mut file = std::fs::File::create(&exe).expect("create script");
-        file.write_all(b"#!/bin/sh\necho ran-relative\n")
-            .expect("write script");
-        file.sync_all().expect("sync script before exec");
-        drop(file);
+        std::fs::write(&exe, "#!/bin/sh\necho ran-relative\n").expect("write script");
         let mut perms = std::fs::metadata(&exe).expect("metadata").permissions();
         perms.set_mode(0o755);
         std::fs::set_permissions(&exe, perms).expect("chmod");
@@ -2209,182 +1193,557 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn unix_terminal_isolated_in_own_process_group() {
-        init_test_tracing();
-        let runtime = TerminalRuntime::with_base_env(BTreeMap::new());
-        let session_id = SessionId::new("pgid-isolation".to_string());
-        let (_terminal_id, pid) = spawn_shell(&runtime, &session_id, "sleep 60").await;
-
-        let child_pgid = unsafe { libc::getpgid(pid as libc::pid_t) };
-        let runner_pgid = unsafe { libc::getpgrp() };
-        runtime.release_all_for_session(session_id.0.as_ref()).await;
-
-        assert_eq!(
-            child_pgid, pid as libc::pid_t,
-            "child must lead its own process group"
-        );
-        assert_ne!(
-            child_pgid, runner_pgid,
-            "child must not share the test runner process group"
-        );
-    }
-
-    #[tokio::test]
-    async fn exited_leader_keeps_short_lease_for_live_same_group_descendant() {
-        init_test_tracing();
-        let runtime = TerminalRuntime::with_base_env(BTreeMap::new());
-        let session_id = SessionId::new("exited-leader-live-descendant".to_string());
-        let (terminal_id, leader_pid) = spawn_shell(
-            &runtime,
-            &session_id,
-            "sleep 60 & child=$!; printf 'descendant=%s\\n' \"$child\"; exit 0",
-        )
-        .await;
-        let terminal = runtime
-            .find_terminal(&terminal_id, session_id.0.as_ref())
-            .await
-            .expect("terminal exists");
-        assert!(
-            wait_for_output(&terminal, "descendant=").await,
-            "shell did not report its test-owned descendant"
-        );
-        let output = terminal.snapshot().await.output;
-        let descendant_pid = output
-            .lines()
-            .find_map(|line| line.strip_prefix("descendant="))
-            .and_then(|pid| pid.parse::<u32>().ok())
-            .expect("parse descendant pid");
-
-        terminal
-            .wait_for_exit()
-            .await
-            .expect("observe direct child exit");
-        let descendant_pgid = unsafe { libc::getpgid(descendant_pid as libc::pid_t) };
-        let state_after_leader_exit = *terminal.process_group.state.lock().await;
-
-        assert_eq!(
-            descendant_pgid, leader_pid as libc::pid_t,
-            "descendant must remain in the terminal's original process group"
-        );
-        assert!(
-            pid_exists(descendant_pid),
-            "descendant must still be alive when the leader exit is observed"
-        );
-        assert!(matches!(
-            state_after_leader_exit,
-            UnixProcessGroupState::OwnedDescendants {
-                key: ProcessGroupKey { pgid, .. },
-                deadline,
-            } if pgid == leader_pid as libc::pid_t && deadline > tokio::time::Instant::now()
-        ));
-
-        let report = runtime.release_all_for_session(session_id.0.as_ref()).await;
-        if pid_exists(descendant_pid) {
-            let _ = unsafe { libc::kill(descendant_pid as libc::pid_t, libc::SIGKILL) };
-        }
-
-        assert!(report.is_clean(), "descendant cleanup should succeed");
-        assert!(
-            !pid_exists(descendant_pid),
-            "same-group descendant survived release inside its lease"
-        );
-    }
-
-    #[tokio::test]
-    async fn session_cleanup_kills_stubborn_group_without_touching_other_session() {
-        init_test_tracing();
-        let runtime = TerminalRuntime::with_base_env(BTreeMap::new());
-        let victim_session = SessionId::new("stubborn-victim".to_string());
-        let other_session = SessionId::new("unrelated-session".to_string());
-        let (victim_terminal_id, victim_pid) = spawn_shell(
-            &runtime,
-            &victim_session,
-            "trap '' INT TERM; printf 'ready\\n'; while :; do sleep 60 & wait $!; done",
-        )
-        .await;
-        let victim_terminal = runtime
-            .find_terminal(&victim_terminal_id, victim_session.0.as_ref())
-            .await
-            .expect("victim terminal exists");
-        if !wait_for_output(&victim_terminal, "ready\n").await {
-            emergency_kill_exact_tree(victim_pid, &victim_terminal).await;
-            panic!("stubborn shell did not install signal traps in time");
-        }
-        let (_other_terminal, other_pid) =
-            spawn_shell(&runtime, &other_session, "while :; do sleep 60; done").await;
-
-        let started = Instant::now();
-        let cleanup = tokio::time::timeout(
-            Duration::from_secs(5),
-            runtime.release_all_for_session(victim_session.0.as_ref()),
-        )
-        .await;
-
-        if cleanup.is_err() {
-            emergency_kill_exact_tree(victim_pid, &victim_terminal).await;
-        }
-        let other_still_alive = pid_exists(other_pid);
-        runtime
-            .release_all_for_session(other_session.0.as_ref())
-            .await;
-
-        assert!(
-            cleanup.is_ok(),
-            "stubborn terminal cleanup exceeded five seconds"
-        );
-        assert!(
-            !pid_exists(victim_pid),
-            "victim direct child survived cleanup"
-        );
-        assert!(
-            other_still_alive,
-            "cleanup signalled a terminal from another session"
-        );
-        assert!(started.elapsed() < Duration::from_secs(5));
-    }
-
-    #[tokio::test]
-    async fn in_flight_wait_does_not_block_session_cleanup() {
-        init_test_tracing();
+    /// Spawn `command` and return `(runtime, session_id, terminal_id)` without
+    /// waiting for it to finish. For the long-running cases below, where the
+    /// point is what happens *while* the command is still alive.
+    async fn start(command: &str, session: &str) -> (Arc<TerminalRuntime>, SessionId, TerminalId) {
         let runtime = Arc::new(TerminalRuntime::with_base_env(BTreeMap::new()));
-        let session_id = SessionId::new("wait-does-not-lock-cancel".to_string());
-        let (terminal_id, pid) = spawn_shell(&runtime, &session_id, "sleep 60").await;
-        let terminal = runtime
-            .find_terminal(&terminal_id, session_id.0.as_ref())
+        let session_id = SessionId::new(session.to_string());
+        let request = CreateTerminalRequest::new(session_id.clone(), command.to_string());
+        let response = runtime
+            .create_terminal(request)
             .await
-            .expect("terminal exists");
+            .expect("create terminal");
+        let terminal_id = response.terminal_id.clone();
+        (runtime, session_id, terminal_id)
+    }
 
-        let waiter_runtime = Arc::clone(&runtime);
-        let waiter_session = session_id.clone();
-        let waiter_terminal = terminal_id.clone();
-        let wait_task = tokio::spawn(async move {
-            waiter_runtime
-                .wait_for_terminal_exit(WaitForTerminalExitRequest::new(
-                    waiter_session,
-                    waiter_terminal,
+    /// True while `pid` names a live process.
+    fn pid_is_alive(pid: u32) -> bool {
+        // Signal 0 performs the permission/existence check without delivering.
+        unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+    }
+
+    /// Current parent pid of `pid`, or `None` if it is gone / unreadable.
+    fn parent_pid_of(pid: u32) -> Option<u32> {
+        let out = std::process::Command::new("ps")
+            .args(["-o", "ppid=", "-p", &pid.to_string()])
+            .output()
+            .ok()?;
+        String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+    }
+
+    /// Poll until `pid` is gone, or the deadline passes.
+    async fn wait_until_pid_gone(pid: u32, budget: Duration) -> bool {
+        let deadline = tokio::time::Instant::now() + budget;
+        while tokio::time::Instant::now() < deadline {
+            if !pid_is_alive(pid) {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        !pid_is_alive(pid)
+    }
+
+    /// Regression: a waiter that subscribes AFTER a fast command already exited
+    /// must still get its exit status.
+    ///
+    /// This is the `watch::Sender::send` trap — `send` DISCARDS the value when
+    /// no receiver exists yet, so publishing completion with it would strand
+    /// every later waiter forever. Observing the exit through `terminal/output`
+    /// first is what guarantees the publication already happened; only then is
+    /// `wait_for_terminal_exit` called.
+    #[tokio::test]
+    async fn wait_for_exit_resolves_when_subscribing_after_a_fast_exit() {
+        let (runtime, session_id, terminal_id) = start("true", "fast-exit").await;
+
+        // Wait for the owner task to publish, observed via the output path.
+        let mut published = false;
+        for _ in 0..200 {
+            let out = runtime
+                .terminal_output(TerminalOutputRequest::new(
+                    session_id.clone(),
+                    terminal_id.clone(),
                 ))
                 .await
+                .expect("get output");
+            if out.exit_status.is_some() {
+                published = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(published, "owner task never published an exit status");
+
+        // Subscribing only now must not hang.
+        let exit = tokio::time::timeout(
+            Duration::from_secs(5),
+            runtime.wait_for_terminal_exit(WaitForTerminalExitRequest::new(
+                session_id.clone(),
+                terminal_id.clone(),
+            )),
+        )
+        .await
+        .expect("wait_for_exit hung after a fast exit — completion was lost")
+        .expect("wait for exit");
+        assert_eq!(exit.exit_status.exit_code, Some(0));
+
+        runtime.release_all_for_session(session_id.0.as_ref()).await;
+    }
+
+    /// The bug this module was rewritten for: an outstanding `wait_for_exit` on
+    /// a command that never exits must not block `terminal/output` or
+    /// `terminal/kill`. Previously `wait_for_exit` held the child mutex for the
+    /// whole wait, so both of those (and the session cancel path) deadlocked.
+    #[tokio::test]
+    async fn output_and_kill_work_while_wait_for_exit_is_outstanding() {
+        let (runtime, session_id, terminal_id) = start("sleep 30", "wait-outstanding").await;
+
+        let waiter = tokio::spawn({
+            let runtime = runtime.clone();
+            let session_id = session_id.clone();
+            let terminal_id = terminal_id.clone();
+            async move {
+                runtime
+                    .wait_for_terminal_exit(WaitForTerminalExitRequest::new(
+                        session_id, terminal_id,
+                    ))
+                    .await
+            }
         });
+        // Let the waiter actually park inside wait_for_exit.
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        let cleanup = tokio::time::timeout(
+        tokio::time::timeout(
             Duration::from_secs(5),
-            runtime.release_all_for_session(session_id.0.as_ref()),
+            runtime.terminal_output(TerminalOutputRequest::new(
+                session_id.clone(),
+                terminal_id.clone(),
+            )),
+        )
+        .await
+        .expect("terminal_output blocked behind an outstanding wait_for_exit")
+        .expect("get output");
+
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            runtime.kill_terminal(KillTerminalRequest::new(
+                session_id.clone(),
+                terminal_id.clone(),
+            )),
+        )
+        .await
+        .expect("kill_terminal blocked behind an outstanding wait_for_exit")
+        .expect("kill terminal");
+
+        tokio::time::timeout(Duration::from_secs(5), waiter)
+            .await
+            .expect("the outstanding wait never resolved after the kill")
+            .expect("waiter task")
+            .expect("wait for exit");
+
+        runtime.release_all_for_session(session_id.0.as_ref()).await;
+    }
+
+    /// Every concurrent waiter is released, not just the first one.
+    #[tokio::test]
+    async fn multiple_waiters_all_resolve() {
+        let (runtime, session_id, terminal_id) = start("sleep 30", "many-waiters").await;
+
+        let waiters: Vec<_> = (0..3)
+            .map(|_| {
+                let runtime = runtime.clone();
+                let session_id = session_id.clone();
+                let terminal_id = terminal_id.clone();
+                tokio::spawn(async move {
+                    runtime
+                        .wait_for_terminal_exit(WaitForTerminalExitRequest::new(
+                            session_id, terminal_id,
+                        ))
+                        .await
+                })
+            })
+            .collect();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        runtime
+            .kill_terminal(KillTerminalRequest::new(
+                session_id.clone(),
+                terminal_id.clone(),
+            ))
+            .await
+            .expect("kill terminal");
+
+        for waiter in waiters {
+            tokio::time::timeout(Duration::from_secs(5), waiter)
+                .await
+                .expect("a concurrent waiter was never released")
+                .expect("waiter task")
+                .expect("wait for exit");
+        }
+
+        runtime.release_all_for_session(session_id.0.as_ref()).await;
+    }
+
+    /// `kill_tree` only sends `SIGTERM`, which a process that traps it ignores
+    /// forever. The owner task must escalate to `SIGKILL`.
+    #[tokio::test]
+    async fn kill_escalates_to_sigkill_for_a_sigterm_ignoring_process() {
+        let (runtime, session_id, terminal_id) = start(
+            "sh -c 'trap \"\" TERM; while :; do sleep 0.1; done'",
+            "sigterm-immune",
         )
         .await;
-        if cleanup.is_err() {
-            emergency_kill_exact_tree(pid, &terminal).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        tokio::time::timeout(
+            Duration::from_secs(15),
+            runtime.kill_terminal(KillTerminalRequest::new(
+                session_id.clone(),
+                terminal_id.clone(),
+            )),
+        )
+        .await
+        .expect("kill_terminal never returned for a SIGTERM-immune process")
+        .expect("kill terminal");
+
+        let exit = tokio::time::timeout(
+            Duration::from_secs(5),
+            runtime.wait_for_terminal_exit(WaitForTerminalExitRequest::new(
+                session_id.clone(),
+                terminal_id.clone(),
+            )),
+        )
+        .await
+        .expect("the SIGTERM-immune process was never reaped")
+        .expect("wait for exit");
+        assert!(
+            exit.exit_status.signal.is_some() || exit.exit_status.exit_code.is_some(),
+            "expected a terminal status after escalation, got {:?}",
+            exit.exit_status
+        );
+
+        runtime.release_all_for_session(session_id.0.as_ref()).await;
+    }
+
+    /// A descendant that outlives a SIGTERM-obedient parent must still be
+    /// killed.
+    ///
+    /// Deliberately THREE levels deep: root traps TERM, the middle level dies
+    /// on TERM, the leaf traps TERM. When the middle level dies the leaf is
+    /// reparented, so no fresh snapshot rooted at the direct child can find it
+    /// again — only the cumulative record of everything the SIGTERM pass
+    /// signalled still reaches it. A two-level version of this test passes even
+    /// with a non-cumulative record, so it would not catch the regression.
+    #[tokio::test]
+    async fn kill_sweeps_a_descendant_that_outlives_a_sigterm_obedient_parent() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let pid_file = dir.path().join("leaf.pid");
+        let leaf = dir.path().join("leaf.sh");
+        let middle = dir.path().join("middle.sh");
+        let root = dir.path().join("root.sh");
+
+        // Three files rather than one nested one-liner: the quoting of nested
+        // `sh -c "sh -c '...'"` is unreadable and easy to get subtly wrong.
+        //
+        // Note the ORDER in root.sh. `trap '' TERM` sets SIG_IGN, and SIG_IGN is
+        // inherited across both fork AND exec — and a shell that starts with a
+        // signal already ignored cannot restore its default (`trap - TERM` is a
+        // no-op there). Installing the trap before spawning would therefore make
+        // the ENTIRE subtree TERM-immune, the middle level would never die, the
+        // leaf would never be reparented, and this test would pass even with a
+        // non-cumulative record. Spawn first, then go immune.
+        std::fs::write(
+            &leaf,
+            format!(
+                "trap '' TERM\necho $$ > {}\nwhile :; do sleep 0.2; done\n",
+                pid_file.display()
+            ),
+        )
+        .expect("write leaf.sh");
+        std::fs::write(
+            &middle,
+            format!("sh {} &\nwhile :; do sleep 0.2; done\n", leaf.display()),
+        )
+        .expect("write middle.sh");
+        std::fs::write(
+            &root,
+            format!(
+                "sh {} &\ntrap '' TERM\nwhile :; do sleep 0.2; done\n",
+                middle.display()
+            ),
+        )
+        .expect("write root.sh");
+
+        let (runtime, session_id, terminal_id) =
+            start(&format!("sh {}", root.display()), "deep-tree").await;
+
+        // Wait for the leaf to announce itself.
+        let mut leaf_pid = None;
+        for _ in 0..200 {
+            if let Ok(text) = std::fs::read_to_string(&pid_file) {
+                if let Ok(pid) = text.trim().parse::<u32>() {
+                    if pid > 0 {
+                        leaf_pid = Some(pid);
+                        break;
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
         }
-        let wait_result = tokio::time::timeout(Duration::from_secs(1), wait_task).await;
+        let leaf_pid = leaf_pid.expect("leaf process never recorded its pid");
+        assert!(pid_is_alive(leaf_pid), "leaf should be running");
+
+        tokio::time::timeout(
+            Duration::from_secs(20),
+            runtime.kill_terminal(KillTerminalRequest::new(
+                session_id.clone(),
+                terminal_id.clone(),
+            )),
+        )
+        .await
+        .expect("kill_terminal never returned")
+        .expect("kill terminal");
 
         assert!(
-            cleanup.is_ok(),
-            "terminal wait held the child mutex across cancellation"
+            wait_until_pid_gone(leaf_pid, Duration::from_secs(10)).await,
+            "reparented leaf {leaf_pid} survived the kill"
+        );
+
+        runtime.release_all_for_session(session_id.0.as_ref()).await;
+    }
+
+    /// Sanity check for the test above: the middle level must actually die on
+    /// `SIGTERM` while the leaf survives and is reparented. If this stops
+    /// holding, `kill_sweeps_a_descendant_that_outlives_a_sigterm_obedient_parent`
+    /// silently stops testing the reparenting path it exists for.
+    #[tokio::test]
+    async fn deep_tree_fixture_reparents_the_leaf_on_sigterm() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let pid_file = dir.path().join("leaf.pid");
+        let leaf = dir.path().join("leaf.sh");
+        let middle = dir.path().join("middle.sh");
+        let root = dir.path().join("root.sh");
+        std::fs::write(
+            &leaf,
+            format!(
+                "trap '' TERM\necho $$ > {}\nwhile :; do sleep 0.2; done\n",
+                pid_file.display()
+            ),
+        )
+        .expect("write leaf.sh");
+        std::fs::write(
+            &middle,
+            format!("sh {} &\nwhile :; do sleep 0.2; done\n", leaf.display()),
+        )
+        .expect("write middle.sh");
+        std::fs::write(
+            &root,
+            format!(
+                "sh {} &\ntrap '' TERM\nwhile :; do sleep 0.2; done\n",
+                middle.display()
+            ),
+        )
+        .expect("write root.sh");
+
+        let (runtime, session_id, terminal_id) =
+            start(&format!("sh {}", root.display()), "deep-tree-fixture").await;
+
+        let mut leaf_pid = None;
+        for _ in 0..200 {
+            if let Ok(text) = std::fs::read_to_string(&pid_file) {
+                if let Ok(pid) = text.trim().parse::<u32>() {
+                    if pid > 0 {
+                        leaf_pid = Some(pid);
+                        break;
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        let leaf_pid = leaf_pid.expect("leaf process never recorded its pid");
+        let middle_pid = parent_pid_of(leaf_pid).expect("leaf should have a parent");
+
+        // The graceful pass only: no escalation, no sweep.
+        signal_tree(Some(middle_pid), "SIGTERM").await;
+        let middle_died = wait_until_pid_gone(middle_pid, Duration::from_secs(5)).await;
+        let leaf_survived = pid_is_alive(leaf_pid);
+        let leaf_parent_now = parent_pid_of(leaf_pid);
+
+        // Clean up BEFORE asserting: a failing assertion would otherwise unwind
+        // past the cleanup and leave a TERM-immune spinner running forever on
+        // the machine (or the CI worker) that ran the test.
+        unsafe { libc::kill(leaf_pid as libc::pid_t, libc::SIGKILL) };
+        runtime.release_all_for_session(session_id.0.as_ref()).await;
+        let _ = terminal_id;
+
+        assert!(
+            middle_died,
+            "middle level ignored SIGTERM — the fixture no longer exercises reparenting"
         );
         assert!(
-            wait_result.is_ok(),
-            "terminal wait did not observe cancellation exit"
+            leaf_survived,
+            "leaf died on SIGTERM — the fixture no longer exercises reparenting"
+        );
+        // Deliberately NOT `== Some(1)`: under a child subreaper (containers,
+        // some init systems) an orphan is reparented to the subreaper rather
+        // than to pid 1. All this test needs is that the leaf moved off its
+        // dead parent, which is what makes it unreachable from the root.
+        assert!(
+            leaf_parent_now.is_some() && leaf_parent_now != Some(middle_pid),
+            "leaf was not reparented after its parent died (parent is still {leaf_parent_now:?})"
+        );
+    }
+
+    /// Session teardown kills terminals concurrently. Sequentially, N stubborn
+    /// terminals would each burn their own escalation grace and the cancel path
+    /// (which awaits this) would stall for N times as long.
+    ///
+    /// The commands deliberately ignore SIGTERM: with TERM-responsive ones each
+    /// kill returns in milliseconds, so a sequential implementation would finish
+    /// just as fast and the test would prove nothing. Ignoring TERM forces every
+    /// terminal to cost a full `KILL_ESCALATE_GRACE`, making the difference
+    /// between 4 * grace (sequential) and ~1 * grace (concurrent) unmistakable.
+    #[tokio::test]
+    async fn release_all_for_session_kills_many_terminals_concurrently() {
+        const TERMINALS: u32 = 4;
+        let runtime = Arc::new(TerminalRuntime::with_base_env(BTreeMap::new()));
+        let session_id = SessionId::new("bulk-release".to_string());
+        for _ in 0..TERMINALS {
+            let request = CreateTerminalRequest::new(
+                session_id.clone(),
+                "sh -c 'trap \"\" TERM; while :; do sleep 0.1; done'".to_string(),
+            );
+            runtime
+                .create_terminal(request)
+                .await
+                .expect("create terminal");
+        }
+        // Let every shell install its trap before we start killing.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let started = tokio::time::Instant::now();
+        tokio::time::timeout(
+            Duration::from_secs(30),
+            runtime.release_all_for_session(session_id.0.as_ref()),
+        )
+        .await
+        .expect("release_all_for_session never returned");
+
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < KILL_ESCALATE_GRACE * 2,
+            "teardown of {TERMINALS} SIGTERM-immune terminals took {elapsed:?}; \
+             concurrent kills should cost roughly one {KILL_ESCALATE_GRACE:?} grace, \
+             so this suggests they ran sequentially"
+        );
+    }
+
+    /// Output is readable while the command is still running — the snapshot is
+    /// not gated on the process finishing.
+    #[tokio::test]
+    async fn output_is_readable_before_the_command_exits() {
+        let (runtime, session_id, terminal_id) =
+            start("sh -c 'echo early-marker; sleep 30'", "live-output").await;
+
+        let mut saw_marker = false;
+        for _ in 0..200 {
+            let out = runtime
+                .terminal_output(TerminalOutputRequest::new(
+                    session_id.clone(),
+                    terminal_id.clone(),
+                ))
+                .await
+                .expect("get output");
+            if out.output.contains("early-marker") {
+                assert!(
+                    out.exit_status.is_none(),
+                    "command should still be running while we read its output"
+                );
+                saw_marker = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert!(saw_marker, "never saw output from a still-running command");
+
+        runtime.release_all_for_session(session_id.0.as_ref()).await;
+    }
+
+    /// Once `wait_for_exit` returns, ALL output is already in the snapshot.
+    /// Guards the drain-before-publish ordering in the owner task: publishing
+    /// the exit status first would let a caller treat the terminal as done and
+    /// miss the tail.
+    #[tokio::test]
+    async fn all_output_is_present_after_wait_returns() {
+        let runtime = Arc::new(TerminalRuntime::with_base_env(BTreeMap::new()));
+        let session_id = SessionId::new("drain-order".to_string());
+        let request = CreateTerminalRequest::new(
+            session_id.clone(),
+            "sh -c 'i=0; while [ $i -lt 400 ]; do echo line-$i; i=$((i+1)); done'".to_string(),
+        );
+        let response = runtime
+            .create_terminal(request)
+            .await
+            .expect("create terminal");
+        let terminal_id = response.terminal_id.clone();
+
+        runtime
+            .wait_for_terminal_exit(WaitForTerminalExitRequest::new(
+                session_id.clone(),
+                terminal_id.clone(),
+            ))
+            .await
+            .expect("wait for exit");
+
+        let out = runtime
+            .terminal_output(TerminalOutputRequest::new(
+                session_id.clone(),
+                terminal_id.clone(),
+            ))
+            .await
+            .expect("get output");
+        assert!(
+            out.output.contains("line-399"),
+            "tail output was missing after wait_for_exit returned"
+        );
+
+        runtime.release_all_for_session(session_id.0.as_ref()).await;
+    }
+
+    /// A brand-new executable that something still holds open for writing is
+    /// retried, not rejected. exec returns `ETXTBSY` while any write descriptor
+    /// to the file is open anywhere, and codeg forks constantly (git, agents,
+    /// other terminals), so a descriptor inherited across a `fork()` can make an
+    /// agent's just-written script briefly unrunnable — including in this test
+    /// binary, which is where the flake was first observed.
+    ///
+    /// Linux enforces `ETXTBSY` here, so this exercises the retry loop; macOS
+    /// does not enforce it for script exec, where the first attempt simply
+    /// succeeds and the assertion still holds.
+    #[tokio::test]
+    async fn spawn_rides_out_a_transient_text_file_busy() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let exe = dir.path().join("busy-tool");
+        std::fs::write(&exe, "#!/bin/sh\necho ran-after-busy\n").expect("write script");
+        let mut perms = std::fs::metadata(&exe).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&exe, perms).expect("chmod");
+
+        // Hold a write descriptor open, then release it while the spawn is still
+        // retrying — the shape of the real race, with the timing made explicit.
+        let writer = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&exe)
+            .expect("hold write handle");
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            drop(writer);
+        });
+
+        let runtime = TerminalRuntime::with_base_env(BTreeMap::new());
+        let session_id = SessionId::new("busy-exe".to_string());
+        // No whitespace in the command, so there is no shell fallback to mask a
+        // failed direct exec: if the retry does not ride out ETXTBSY,
+        // `create_terminal` errors and this test panics.
+        let request =
+            CreateTerminalRequest::new(session_id.clone(), exe.to_string_lossy().to_string());
+        let output = run_and_capture(&runtime, &session_id, request).await;
+        assert!(
+            output.contains("ran-after-busy"),
+            "transient ETXTBSY was not retried; got:\n{output}"
         );
     }
 }

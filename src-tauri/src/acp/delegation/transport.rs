@@ -55,6 +55,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+use crate::acp::chat_authoring::{NewAutomationSpec, NewWorkTaskSpec};
 use crate::acp::question::QuestionSpec;
 
 /// One delegation call's worth of input forwarded from the companion to the
@@ -183,6 +184,45 @@ pub struct BrokerSessionRequest {
     pub max_messages: Option<u32>,
 }
 
+/// Report a progress milestone for the work task driving the parent session.
+/// Backs the `task_progress` MCP tool. Authenticated by the per-launch `token`;
+/// the listener resolves the parent connection from it and the task engine maps
+/// that to the owning task + execution generation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrokerTaskProgressRequest {
+    pub token: String,
+    pub message: String,
+}
+
+/// Report the final verdict (+ optional summary) for the work task driving the
+/// parent session. Backs the `task_complete` MCP tool; the verdict decides how
+/// the task settles when the turn ends.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrokerTaskCompleteRequest {
+    pub token: String,
+    pub verdict: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+}
+
+/// Create an automation (scheduled or manual) from the chat the caller is in.
+/// Backs the `create_automation` MCP tool. Authenticated by the per-launch
+/// `token`; the listener resolves the caller's conversation + working directory
+/// from it so the target folder can default to the caller's own project.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrokerCreateAutomationRequest {
+    pub token: String,
+    pub spec: NewAutomationSpec,
+}
+
+/// Queue a task on the work-task board from the chat the caller is in. Backs the
+/// `create_work_task` MCP tool; same token scoping as the automation arm.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrokerCreateWorkTaskRequest {
+    pub token: String,
+    pub spec: NewWorkTaskSpec,
+}
+
 /// Tagged top-level message dispatched by the listener. Adding new variants
 /// is the wire-stable way to grow the broker protocol without touching the
 /// frame layer.
@@ -197,6 +237,10 @@ pub enum BrokerMessage {
     CommitFeedback(BrokerCommitFeedbackRequest),
     Ask(BrokerAskRequest),
     SessionInfo(BrokerSessionRequest),
+    TaskProgress(BrokerTaskProgressRequest),
+    TaskComplete(BrokerTaskCompleteRequest),
+    CreateAutomation(BrokerCreateAutomationRequest),
+    CreateWorkTask(BrokerCreateWorkTaskRequest),
 }
 
 /// The wrapped outcome the main process returns over the same socket.
@@ -344,6 +388,40 @@ pub async fn client_session_round_trip(
     req: &BrokerSessionRequest,
 ) -> io::Result<BrokerResponse> {
     message_round_trip(socket_path, &BrokerMessage::SessionInfo(req.clone())).await
+}
+
+/// Dispatch a `task_progress` report and read back the `{ recorded }` ack.
+pub async fn client_task_progress_round_trip(
+    socket_path: &str,
+    req: &BrokerTaskProgressRequest,
+) -> io::Result<BrokerResponse> {
+    message_round_trip(socket_path, &BrokerMessage::TaskProgress(req.clone())).await
+}
+
+/// Dispatch a `task_complete` report and read back the `{ recorded }` ack.
+pub async fn client_task_complete_round_trip(
+    socket_path: &str,
+    req: &BrokerTaskCompleteRequest,
+) -> io::Result<BrokerResponse> {
+    message_round_trip(socket_path, &BrokerMessage::TaskComplete(req.clone())).await
+}
+
+/// Dispatch a `create_automation` request and read back the serialized
+/// [`crate::acp::chat_authoring::AuthoringOutcome`].
+pub async fn client_create_automation_round_trip(
+    socket_path: &str,
+    req: &BrokerCreateAutomationRequest,
+) -> io::Result<BrokerResponse> {
+    message_round_trip(socket_path, &BrokerMessage::CreateAutomation(req.clone())).await
+}
+
+/// Dispatch a `create_work_task` request and read back the serialized
+/// [`crate::acp::chat_authoring::AuthoringOutcome`].
+pub async fn client_create_work_task_round_trip(
+    socket_path: &str,
+    req: &BrokerCreateWorkTaskRequest,
+) -> io::Result<BrokerResponse> {
+    message_round_trip(socket_path, &BrokerMessage::CreateWorkTask(req.clone())).await
 }
 
 /// Total budget for `open()` retries on Windows named pipes. Has to be

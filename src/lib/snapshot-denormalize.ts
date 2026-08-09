@@ -73,6 +73,11 @@ export interface SnapshotPatch {
   backgroundOutstanding: number
   /** Latest ACP runtime error carried by the snapshot. `null` means none. */
   lastError: string | null
+  /** Diagnostic evidence attached to `lastError` (agent stderr tail, unparsed
+   *  update counts) — only the inferred `turn_failed_empty*` family carries it.
+   *  Already redacted by the backend. Kept separate from `lastError` because
+   *  that string feeds the composer status tooltip, which must stay one line. */
+  lastErrorDetails: string | null
   eventSeq: number
   /** Live sub-agent delegations carried by the snapshot. Consumed directly at
    *  the attach call sites to re-seed `DelegationProvider` bindings (see
@@ -93,6 +98,9 @@ export function denormalizeSnapshot(wire: LiveSessionSnapshot): SnapshotPatch {
     toolMap.set(tc.id, tc)
   }
   const lastError = normalizeSnapshotLastError(wire.last_error)
+  const lastErrorDetails = wire.last_error?.details?.trim()
+    ? wire.last_error.details
+    : null
 
   return {
     connectionId: wire.connection_id,
@@ -134,6 +142,7 @@ export function denormalizeSnapshot(wire: LiveSessionSnapshot): SnapshotPatch {
     configStaleKind: wire.config_stale_kind ?? null,
     backgroundOutstanding: wire.background_outstanding ?? 0,
     lastError,
+    lastErrorDetails,
     eventSeq: wire.event_seq,
     activeDelegations: wire.active_delegations ?? [],
   }
@@ -169,10 +178,21 @@ function denormalizeBlock(
   toolMap: Map<string, ToolCallState>
 ): LocalLiveContentBlock | null {
   switch (wire.kind) {
+    // Subagent attribution must be forwarded explicitly — a mid-run attach
+    // (cold attach / refresh while a Claude subagent streams) rebuilds the
+    // capsule-vs-main routing from these fields alone.
     case "text":
-      return { type: "text", text: wire.text }
+      return {
+        type: "text",
+        text: wire.text,
+        parentToolUseId: wire.parent_tool_use_id ?? undefined,
+      }
     case "thinking":
-      return { type: "thinking", text: wire.text }
+      return {
+        type: "thinking",
+        text: wire.text,
+        parentToolUseId: wire.parent_tool_use_id ?? undefined,
+      }
     case "plan":
       // Wire `plan.entries` is `unknown` (passed through opaque from agent);
       // local shape expects PlanEntryInfo[]. We cast — backend's typed plan

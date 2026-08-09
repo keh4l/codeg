@@ -2,28 +2,42 @@ import { describe, expect, it } from "vitest"
 
 import {
   applyClaudeProviderToConfigText,
+  buildCodexSandboxConfig,
+  codexSandboxBaselineOf,
+  codexSandboxSaveConfig,
   buildGrokSaveOptions,
   buildGrokStructuredConfig,
   buildMergeConfigPayload,
+  buildAcpAdapterCheck,
   buildVersionCheck,
   configTextForClaudeSave,
   getAgentChecks,
   inferGrokMode,
   materializeClaudeHardeningFlags,
+  patchCodexConfigTomlText,
   patchImportantConfigText,
   setClaudeEnvFlagInConfigText,
 } from "./acp-agent-settings"
-import type { AcpAgentInfo, AgentType, PreflightResult } from "@/lib/types"
+import { parse as parseTomlDocument } from "smol-toml"
+import type {
+  AcpAgentInfo,
+  AdapterInfo,
+  AgentType,
+  PreflightResult,
+} from "@/lib/types"
 
 function makeAgent(overrides: Partial<AcpAgentInfo>): AcpAgentInfo {
   return {
     agent_type: "hermes" as AgentType,
+    skills_capable: true,
     registry_id: "hermes",
     registry_version: "0.16.0",
     name: "Hermes Agent",
     description: "",
     available: true,
     distribution_type: "uvx",
+    is_acp_adapter: false,
+    custom_source: null,
     enabled: true,
     sort_order: 0,
     installed_version: null,
@@ -35,12 +49,14 @@ function makeAgent(overrides: Partial<AcpAgentInfo>): AcpAgentInfo {
     cline_secrets_json: null,
     codex_config_toml: null,
     codex_model_catalog: null,
+    codex_sandbox_settings: null,
     grok_config_toml: null,
     grok_settings: null,
     hermes_config_yaml: null,
     cursor_cli_config_json: null,
     cursor_settings: null,
     model_provider_id: null,
+    icon_url: null,
     ...overrides,
   }
 }
@@ -84,6 +100,225 @@ const emptyCustoms = {
   customContextWindow: null,
   autoCompactThresholdPercent: null,
 }
+
+type CodexSandboxDraft = Parameters<typeof buildCodexSandboxConfig>[0]
+
+const CODEX_GRANULAR_SEED = {
+  sandbox_approval: true,
+  rules: true,
+  skill_approval: false,
+  request_permissions: false,
+  mcp_elicitations: true,
+}
+
+/** A draft whose baseline equals its current values — i.e. "nothing touched
+ * yet", exactly what `buildAgentDraft` produces from a freshly-read config. */
+function codexSandboxDraft(
+  disk: Partial<CodexSandboxDraft> = {},
+  edits: Partial<CodexSandboxDraft> = {}
+): CodexSandboxDraft {
+  const seeded = {
+    codexApprovalPolicy: "" as CodexSandboxDraft["codexApprovalPolicy"],
+    codexGranular: CODEX_GRANULAR_SEED,
+    codexSandboxMode: "" as CodexSandboxDraft["codexSandboxMode"],
+    codexWritableRootsText: "",
+    codexNetworkAccess: false,
+    codexExcludeTmpdirEnvVar: false,
+    codexExcludeSlashTmp: false,
+    ...disk,
+  }
+  return {
+    ...seeded,
+    ...edits,
+    codexSandboxBaseline: codexSandboxBaselineOf(seeded),
+  }
+}
+
+describe("buildCodexSandboxConfig — Codex sandbox/approval save patch", () => {
+  // The core contract. The panel also sends the raw config.toml text and the
+  // backend applies this patch last, so a field the user did not move must not
+  // appear at all — otherwise a hand-edit in the raw editor gets reverted by
+  // the panel's stale value for that key.
+  it("sends nothing when no control moved", () => {
+    expect(
+      buildCodexSandboxConfig(
+        codexSandboxDraft({
+          codexApprovalPolicy: "never",
+          codexSandboxMode: "workspace-write",
+          codexWritableRootsText: "/srv/one",
+          codexNetworkAccess: true,
+        })
+      )
+    ).toEqual({})
+  })
+
+  it("sends only the field that moved", () => {
+    expect(
+      buildCodexSandboxConfig(
+        codexSandboxDraft(
+          { codexApprovalPolicy: "never", codexSandboxMode: "read-only" },
+          { codexSandboxMode: "danger-full-access" }
+        )
+      )
+    ).toEqual({ sandboxMode: "danger-full-access" })
+  })
+
+  // Clearing a control back to "not set" must reach the backend as an explicit
+  // null (remove the key), not as an absent field (leave it alone).
+  it("clears a control with an explicit null", () => {
+    expect(
+      buildCodexSandboxConfig(
+        codexSandboxDraft(
+          { codexSandboxMode: "never" as never },
+          {
+            codexSandboxMode: "",
+          }
+        )
+      )
+    ).toEqual({ sandboxMode: null })
+  })
+
+  // Approval is one externally tagged key upstream, so both representations
+  // travel together whenever either side changes.
+  it("moves the approval preset and granular table as a pair", () => {
+    const toGranular = buildCodexSandboxConfig(
+      codexSandboxDraft(
+        { codexApprovalPolicy: "never" },
+        { codexApprovalPolicy: "granular" }
+      )
+    )
+    expect(toGranular).toEqual({
+      approvalPolicy: null,
+      granular: CODEX_GRANULAR_SEED,
+    })
+
+    const toPreset = buildCodexSandboxConfig(
+      codexSandboxDraft(
+        { codexApprovalPolicy: "granular" },
+        { codexApprovalPolicy: "on-request" }
+      )
+    )
+    expect(toPreset).toEqual({ approvalPolicy: "on-request", granular: null })
+  })
+
+  it("detects a flipped granular switch while staying on granular", () => {
+    const patch = buildCodexSandboxConfig(
+      codexSandboxDraft(
+        { codexApprovalPolicy: "granular" },
+        {
+          codexApprovalPolicy: "granular",
+          codexGranular: { ...CODEX_GRANULAR_SEED, rules: false },
+        }
+      )
+    )
+    expect(patch.granular).toEqual({ ...CODEX_GRANULAR_SEED, rules: false })
+    expect(patch.approvalPolicy).toBeNull()
+  })
+
+  // codex only reads the workspace-write group under `workspace-write`, so
+  // dormant values are inert — clearing them would destroy the user's roots on
+  // a round-trip through read-only or full-access.
+  it("does not touch dormant workspace-write values when the mode changes", () => {
+    expect(
+      buildCodexSandboxConfig(
+        codexSandboxDraft(
+          {
+            codexSandboxMode: "workspace-write",
+            codexWritableRootsText: "/srv/one",
+            codexNetworkAccess: true,
+          },
+          { codexSandboxMode: "danger-full-access" }
+        )
+      )
+    ).toEqual({ sandboxMode: "danger-full-access" })
+  })
+
+  it("sends a flag toggle without disturbing its siblings", () => {
+    expect(
+      buildCodexSandboxConfig(
+        codexSandboxDraft(
+          { codexWritableRootsText: "/srv/one", codexNetworkAccess: true },
+          { codexExcludeSlashTmp: true }
+        )
+      )
+    ).toEqual({ excludeSlashTmp: true })
+  })
+
+  it("normalizes the roots box and ignores cosmetic whitespace", () => {
+    expect(
+      buildCodexSandboxConfig(
+        codexSandboxDraft(
+          { codexWritableRootsText: "/srv/one" },
+          { codexWritableRootsText: "  /srv/one  \n\n" }
+        )
+      )
+    ).toEqual({})
+    expect(
+      buildCodexSandboxConfig(
+        codexSandboxDraft(
+          {},
+          { codexWritableRootsText: " /srv/one \n\n/srv/two\n" }
+        )
+      )
+    ).toEqual({ writableRoots: ["/srv/one", "/srv/two"] })
+  })
+
+  // codex does NOT reject a relative writable_roots entry — it resolves it
+  // against CODEX_HOME, so "docs" would silently grant write access to
+  // ~/.codex/docs. The save must fail loudly instead.
+  it("refuses relative writable roots the user just typed", () => {
+    expect(() =>
+      buildCodexSandboxConfig(
+        codexSandboxDraft({}, { codexWritableRootsText: "/srv/ok\ndocs/rel" })
+      )
+    ).toThrow(/docs\/rel/)
+  })
+
+  // A relative root already on disk is not this save's problem: the field is
+  // untouched, so it is not in the patch and must not block the save.
+  it("tolerates a pre-existing relative root while it stays untouched", () => {
+    expect(
+      buildCodexSandboxConfig(
+        codexSandboxDraft(
+          { codexWritableRootsText: "rel/dir" },
+          { codexNetworkAccess: true }
+        )
+      )
+    ).toEqual({ networkAccess: true })
+  })
+
+  it("accepts POSIX and Windows absolute roots", () => {
+    expect(
+      buildCodexSandboxConfig(
+        codexSandboxDraft(
+          {},
+          {
+            codexWritableRootsText:
+              "/srv/one\nC:\\work\\repo\n\\\\server\\share",
+          }
+        )
+      ).writableRoots
+    ).toHaveLength(3)
+  })
+})
+
+describe("codexSandboxSaveConfig — omit the field when nothing moved", () => {
+  it("returns undefined for an untouched group", () => {
+    expect(
+      codexSandboxSaveConfig(
+        codexSandboxDraft({ codexApprovalPolicy: "never" })
+      )
+    ).toBeUndefined()
+  })
+
+  it("returns the patch once a control moves", () => {
+    expect(
+      codexSandboxSaveConfig(
+        codexSandboxDraft({}, { codexSandboxMode: "read-only" })
+      )
+    ).toEqual({ sandboxMode: "read-only" })
+  })
+})
 
 describe("buildGrokStructuredConfig — Grok panel save payload", () => {
   // A chosen dropdown value passes through. These become [ui].permission_mode /
@@ -301,7 +536,198 @@ describe("inferGrokMode — Grok auth-method recognition", () => {
   })
 })
 
+describe("buildAcpAdapterCheck", () => {
+  function makeAdapter(overrides: Partial<AdapterInfo> = {}): AdapterInfo {
+    return {
+      adapter_package: "@agentclientprotocol/claude-agent-acp@0.63.0",
+      adapter_cmd: "claude-agent-acp",
+      adapter_installed: false,
+      native_cmd: "claude",
+      native_label: "Claude Code CLI",
+      native_path: "/opt/homebrew/bin/claude",
+      shared_config_dir: "~/.claude",
+      docs_url: "https://docs.codeg.app/guide/supported-agents#acp-adapters",
+      ...overrides,
+    }
+  }
+
+  // Nothing for the ten agents whose registry command IS the vendor CLI, and
+  // nothing before preflight resolves — the card must never appear speculatively.
+  it("produces nothing for non-adapter agents or before preflight resolves", () => {
+    expect(buildAcpAdapterCheck(null)).toBeNull()
+    expect(buildAcpAdapterCheck(undefined)).toBeNull()
+  })
+
+  // The whole point of the card: the user has `claude`, we say so by path, and
+  // name the different thing we actually need.
+  it("names the detected CLI, the adapter package and the shared config dir", () => {
+    const check = buildAcpAdapterCheck(makeAdapter())
+    expect(check?.check_id).toBe("acp_adapter")
+    // warn, not fail: Version Status below already fails: this one explains.
+    expect(check?.status).toBe("warn")
+    expect(check?.message).toContain("/opt/homebrew/bin/claude")
+    expect(check?.message).toContain(
+      "@agentclientprotocol/claude-agent-acp@0.63.0"
+    )
+    expect(check?.message).toContain("~/.claude")
+  })
+
+  // Undetected vendor CLI is not a dead end — the explanation still stands, it
+  // just can't point at a path.
+  it("still explains the split when no vendor CLI was found", () => {
+    const check = buildAcpAdapterCheck(makeAdapter({ native_path: null }))
+    expect(check?.status).toBe("warn")
+    expect(check?.message).toContain(
+      "@agentclientprotocol/claude-agent-acp@0.63.0"
+    )
+    expect(check?.message).not.toContain("/opt/homebrew/bin/claude")
+  })
+
+  // Installed → pass, so renderCheck collapses it and a working setup isn't
+  // nagged by an explainer it no longer needs.
+  it("passes once the adapter is installed", () => {
+    const check = buildAcpAdapterCheck(makeAdapter({ adapter_installed: true }))
+    expect(check?.status).toBe("pass")
+    expect(check?.message).toContain("claude-agent-acp")
+  })
+
+  // Exactly one action, and it never duplicates the Install button that lives
+  // on the Version Status card directly below.
+  it("offers only a docs link, never a second install button", () => {
+    const check = buildAcpAdapterCheck(makeAdapter())
+    expect(check?.fixes).toHaveLength(1)
+    expect(check?.fixes[0].kind).toBe("open_url")
+    expect(check?.fixes[0].payload).toContain("#acp-adapters")
+  })
+})
+
+describe("getAgentChecks adapter ordering", () => {
+  // The explainer answers "why does this say not installed?" and must be read
+  // BEFORE the Version Status card that offers the fix.
+  it("puts the adapter card first, then version, then backend checks", () => {
+    const checks = getAgentChecks(
+      makeAgent({
+        agent_type: "claude_code" as AgentType,
+        distribution_type: "npx",
+        is_acp_adapter: true,
+        registry_version: "0.63.0",
+        installed_version: null,
+      }),
+      {
+        result: {
+          agent_type: "claude_code" as AgentType,
+          agent_name: "Claude Code",
+          passed: true,
+          checks: [
+            {
+              check_id: "node_available",
+              label: "Node.js",
+              status: "pass",
+              message: "Node.js v22.0.0 available",
+              fixes: [],
+            },
+          ],
+          adapter: {
+            adapter_package: "@agentclientprotocol/claude-agent-acp@0.63.0",
+            adapter_cmd: "claude-agent-acp",
+            adapter_installed: false,
+            native_cmd: "claude",
+            native_label: "Claude Code CLI",
+            native_path: "/usr/local/bin/claude",
+            shared_config_dir: "~/.claude",
+            docs_url:
+              "https://docs.codeg.app/guide/supported-agents#acp-adapters",
+          },
+        },
+      }
+    )
+
+    expect(checks.map((c) => c.check_id)).toEqual([
+      "acp_adapter",
+      "version_status",
+      "node_available",
+    ])
+  })
+
+  // A plain agent's list is byte-for-byte what it was before this feature.
+  it("adds nothing for an agent with no adapter relation", () => {
+    const checks = getAgentChecks(
+      makeAgent({ distribution_type: "npx", installed_version: "1.0.0" }),
+      {
+        result: {
+          agent_type: "gemini" as AgentType,
+          agent_name: "Gemini CLI",
+          passed: true,
+          checks: [],
+          adapter: null,
+        },
+      }
+    )
+    expect(checks.some((c) => c.check_id === "acp_adapter")).toBe(false)
+  })
+})
+
 describe("buildVersionCheck", () => {
+  // A manually written definition has no registry behind it — its stored
+  // version is user-typed — so the check must show the local side alone and
+  // never manufacture an "upgrade available" against that noise.
+  it("shows only the local version for a manually added custom agent", () => {
+    const installed = buildVersionCheck(
+      makeAgent({
+        agent_type: "custom:goose" as AgentType,
+        distribution_type: "npx",
+        custom_source: "manual",
+        registry_version: "0.0.0",
+        installed_version: "1.44.0",
+      })
+    )
+    expect(installed?.status).toBe("pass")
+    // The manual pass message, not the generic "Already latest" (there is no
+    // "latest" to be at). The mocked translator returns raw templates, so
+    // assertions stay at the template level.
+    expect(installed?.message).toContain("Installed")
+    expect(installed?.message).not.toContain("Already latest")
+    // The registry-comparison flow would have produced an upgrade hint here
+    // (0.0.0 < 1.44.0 is "not latest" in the generic flow's terms).
+    expect(installed?.fixes.some((fix) => fix.kind === "upgrade_npx")).toBe(
+      false
+    )
+    expect(installed?.fixes.some((fix) => fix.kind === "uninstall_npx")).toBe(
+      true
+    )
+  })
+
+  it("still demands an install for a manual custom agent with no local version", () => {
+    const check = buildVersionCheck(
+      makeAgent({
+        agent_type: "custom:goose" as AgentType,
+        distribution_type: "npx",
+        custom_source: "manual",
+        registry_version: "0.0.0",
+        installed_version: null,
+      })
+    )
+    expect(check?.status).toBe("fail")
+    expect(check?.fixes.some((fix) => fix.kind === "install_npx")).toBe(true)
+  })
+
+  // A registry-added custom agent keeps the full remote/local comparison — its
+  // stored version is a real registry snapshot.
+  it("keeps the remote comparison for a registry-added custom agent", () => {
+    const check = buildVersionCheck(
+      makeAgent({
+        agent_type: "custom:goose" as AgentType,
+        distribution_type: "npx",
+        custom_source: "registry",
+        registry_version: "2.0.0",
+        installed_version: "1.0.0",
+      })
+    )
+    expect(check?.status).toBe("warn")
+    expect(check?.message).toContain("Upgrade available")
+    expect(check?.fixes.some((fix) => fix.kind === "upgrade_npx")).toBe(true)
+  })
+
   // uv runtime not ready: a uvx agent (Hermes) must surface a blocked
   // version-status with the agent-install action DISABLED — the actual install
   // happens via the separate "Install uv" preflight action, not here.
@@ -406,6 +832,7 @@ describe("getAgentChecks uv gating", () => {
           fixes: [{ label: "Install uv", kind: "install_uv", payload: "" }],
         },
       ],
+      adapter: null,
     },
   }
 
@@ -780,5 +1207,192 @@ describe("materializeClaudeHardeningFlags — save-time toggle defaults", () => 
     )
     expect(configText).toBe(invalid)
     expect(envText).toBe("EXISTING=1")
+  })
+})
+
+describe("patchCodexConfigTomlText — codeg's requires_openai_auth default", () => {
+  /** Read `model_providers.codeg.requires_openai_auth` back out of a result. */
+  function authFlagOf(configTomlText: string): boolean | undefined {
+    const parsed = parseTomlDocument(configTomlText) as {
+      model_providers?: Record<string, { requires_openai_auth?: unknown }>
+    }
+    const value = parsed.model_providers?.codeg?.requires_openai_auth
+    return typeof value === "boolean" ? value : undefined
+  }
+
+  // The three structured controls that reach ensureCodexProviderDefaults. Each
+  // must behave identically — the bug in issue #406 fired through all of them.
+  const ENTRY_POINTS: Array<{
+    label: string
+    patch: Parameters<typeof patchCodexConfigTomlText>[1]
+  }> = [
+    { label: "API base URL", patch: { apiBaseUrl: "https://new.example/v1" } },
+    { label: "WebSocket toggle", patch: { supportsWebsockets: true } },
+    { label: "model provider", patch: { modelProvider: "codeg" } },
+  ]
+
+  const BOUND_PROVIDER = [
+    'model_provider = "codeg"',
+    "",
+    "[model_providers.codeg]",
+    'base_url = "https://old.example/v1"',
+    'name = "codeg"',
+    'wire_api = "responses"',
+  ].join("\n")
+
+  for (const { label, patch } of ENTRY_POINTS) {
+    describe(`via the ${label} control`, () => {
+      it("keeps an explicit false", () => {
+        const toml = `${BOUND_PROVIDER}\nrequires_openai_auth = false\n`
+        expect(authFlagOf(patchCodexConfigTomlText(toml, patch))).toBe(false)
+      })
+
+      it("keeps an explicit true", () => {
+        const toml = `${BOUND_PROVIDER}\nrequires_openai_auth = true\n`
+        expect(authFlagOf(patchCodexConfigTomlText(toml, patch))).toBe(true)
+      })
+
+      it("supplies the default when the field is absent", () => {
+        expect(
+          authFlagOf(patchCodexConfigTomlText(BOUND_PROVIDER, patch))
+        ).toBe(true)
+      })
+
+      it("seeds a brand-new provider from an empty config", () => {
+        expect(authFlagOf(patchCodexConfigTomlText("", patch))).toBe(true)
+      })
+
+      it("stands down for a provider using actor authorization", () => {
+        const toml = [
+          BOUND_PROVIDER,
+          "",
+          "[model_providers.codeg.http_headers]",
+          'x-openai-actor-authorization = "local-image-extension"',
+        ].join("\n")
+        expect(
+          authFlagOf(patchCodexConfigTomlText(toml, patch))
+        ).toBeUndefined()
+      })
+    })
+  }
+
+  const ENTRY = ENTRY_POINTS[0].patch
+
+  it("preserves user comments around the managed provider", () => {
+    const toml = [
+      "# my hand-written codex config",
+      'model_provider = "codeg"',
+      "",
+      "[model_providers.codeg]",
+      'base_url = "https://old.example/v1"',
+      "# keep the actor-authorization arrangement intact",
+      "requires_openai_auth = false",
+    ].join("\n")
+    const result = patchCodexConfigTomlText(toml, ENTRY)
+    expect(result).toContain("# my hand-written codex config")
+    expect(result).toContain(
+      "# keep the actor-authorization arrangement intact"
+    )
+    expect(authFlagOf(result)).toBe(false)
+  })
+
+  it("matches the actor-authorization header case-insensitively", () => {
+    const toml = [
+      BOUND_PROVIDER,
+      "",
+      "[model_providers.codeg.http_headers]",
+      'X-OpenAI-Actor-Authorization = "local-image-extension"',
+    ].join("\n")
+    expect(authFlagOf(patchCodexConfigTomlText(toml, ENTRY))).toBeUndefined()
+  })
+
+  it("reads the header out of an inline table too", () => {
+    const toml = [
+      'model_provider = "codeg"',
+      "",
+      "[model_providers.codeg]",
+      'base_url = "https://old.example/v1"',
+      'http_headers = { "x-openai-actor-authorization" = "local-image-extension" }',
+    ].join("\n")
+    expect(authFlagOf(patchCodexConfigTomlText(toml, ENTRY))).toBeUndefined()
+  })
+
+  // Asserted on the text, not the parse: the text writers predate this change
+  // and cannot patch a provider spelled with root-level dotted keys — they
+  // append a `[model_providers.codeg]` section that redefines the same table.
+  // That limitation is pre-existing and out of scope here; what matters is
+  // that the header is still recognized, so no auth default is added.
+  it("reads the header out of a root-level dotted key too", () => {
+    const toml = [
+      'model_provider = "codeg"',
+      'model_providers.codeg.base_url = "https://old.example/v1"',
+      'model_providers.codeg.http_headers."x-openai-actor-authorization" = "local-image-extension"',
+    ].join("\n")
+    expect(patchCodexConfigTomlText(toml, ENTRY)).not.toContain(
+      "requires_openai_auth"
+    )
+  })
+
+  // Upstream's predicate is `!value.trim().is_empty()`, so a blank header does
+  // NOT enable actor authorization and the default still applies.
+  it("ignores an actor-authorization header with a blank value", () => {
+    const toml = [
+      BOUND_PROVIDER,
+      "",
+      "[model_providers.codeg.http_headers]",
+      'x-openai-actor-authorization = "   "',
+    ].join("\n")
+    expect(authFlagOf(patchCodexConfigTomlText(toml, ENTRY))).toBe(true)
+  })
+
+  it("never rewrites an explicit true that sits beside the header", () => {
+    const toml = [
+      BOUND_PROVIDER,
+      "requires_openai_auth = true",
+      "",
+      "[model_providers.codeg.http_headers]",
+      'x-openai-actor-authorization = "local-image-extension"',
+    ].join("\n")
+    expect(authFlagOf(patchCodexConfigTomlText(toml, ENTRY))).toBe(true)
+  })
+
+  it("ignores another provider's actor-authorization header", () => {
+    const toml = [
+      BOUND_PROVIDER,
+      "",
+      "[model_providers.other.http_headers]",
+      'x-openai-actor-authorization = "local-image-extension"',
+    ].join("\n")
+    expect(authFlagOf(patchCodexConfigTomlText(toml, ENTRY))).toBe(true)
+  })
+
+  // Regression (review round 1): `"http_headers.x-..." = "v"` is ONE literal
+  // key, not an http_headers sub-table. Mistaking it for the nested path would
+  // suppress the default and break codeg's own auth.json-based auth.
+  it("does not mistake a quoted dotted key for the header table", () => {
+    const toml = [
+      BOUND_PROVIDER,
+      '"http_headers.x-openai-actor-authorization" = "local-image-extension"',
+    ].join("\n")
+    expect(authFlagOf(patchCodexConfigTomlText(toml, ENTRY))).toBe(true)
+  })
+
+  // Regression (review round 2): an escaped key still declares the field, so
+  // writing the default would produce a duplicate-key TOML the backend rejects.
+  it("recognizes a field declared through an escaped quoted key", () => {
+    const toml = [BOUND_PROVIDER, '"requires\\u005fopenai_auth" = false'].join(
+      "\n"
+    )
+    const result = patchCodexConfigTomlText(toml, ENTRY)
+    expect(authFlagOf(result)).toBe(false)
+    expect(() => parseTomlDocument(result)).not.toThrow()
+  })
+
+  // A draft can be mid-edit in the raw editor. We cannot tell what is declared,
+  // so we touch nothing — the backend refuses to persist invalid TOML anyway.
+  it("leaves an unparsable draft's auth field alone", () => {
+    const toml = [BOUND_PROVIDER, 'base_url = "unterminated'].join("\n")
+    const result = patchCodexConfigTomlText(toml, ENTRY)
+    expect(result).not.toContain("requires_openai_auth")
   })
 })

@@ -41,15 +41,22 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::{oneshot, Mutex};
 
+use crate::acp::chat_authoring::{
+    NewAutomationSpec, NewWorkTaskSpec, MAX_PROMPT_CHARS, MAX_TITLE_CHARS,
+};
 use crate::acp::delegation::transport::{
     client_ask_round_trip, client_cancel, client_cancel_task_round_trip, client_commit_feedback,
+    client_create_automation_round_trip, client_create_work_task_round_trip,
     client_feedback_round_trip, client_round_trip, client_session_round_trip,
-    client_status_round_trip, BrokerAskRequest, BrokerCancelRequest, BrokerCancelTaskRequest,
-    BrokerCommitFeedbackRequest, BrokerFeedbackRequest, BrokerRequest, BrokerResponse,
-    BrokerSessionRequest, BrokerStatusRequest,
+    client_status_round_trip, client_task_complete_round_trip, client_task_progress_round_trip,
+    BrokerAskRequest, BrokerCancelRequest, BrokerCancelTaskRequest, BrokerCommitFeedbackRequest,
+    BrokerCreateAutomationRequest, BrokerCreateWorkTaskRequest, BrokerFeedbackRequest,
+    BrokerRequest, BrokerResponse, BrokerSessionRequest, BrokerStatusRequest,
+    BrokerTaskCompleteRequest, BrokerTaskProgressRequest,
 };
 use crate::acp::question::parse_questions;
 use crate::acp::session_info::MAX_SESSION_MESSAGES;
+use crate::models::AutomationAction;
 
 /// Upper bound on one broker-side cancel round-trip. Bounds both
 /// `handle_cancel_notification` (so stdin dispatch can't stall behind a
@@ -138,11 +145,19 @@ pub struct CompanionFeatures {
     pub feedback: bool,
     pub ask: bool,
     pub sessions: bool,
+    /// Work-task reporting tools (`task_progress` / `task_complete`) — injected
+    /// only into spawns launched by the task engine.
+    pub tasks: bool,
+    /// `create_automation` — save a scheduled/manual automation from chat.
+    pub automations: bool,
+    /// `create_work_task` — queue a card on the work-task board from chat.
+    pub taskboard: bool,
 }
 
 impl CompanionFeatures {
     /// Parse the comma-joined `--features` value (e.g.
-    /// `delegation,feedback,ask,sessions`). Unknown tokens are ignored. An absent
+    /// `delegation,feedback,ask,sessions,automations,taskboard`). Unknown tokens
+    /// are ignored. An absent
     /// value (`None`) defaults to delegation-only — backward compatible with a
     /// parent that predates feature gating (companion + listener ship together, so
     /// post-upgrade the parent always passes an explicit `--features`).
@@ -153,6 +168,9 @@ impl CompanionFeatures {
                 feedback: false,
                 ask: false,
                 sessions: false,
+                tasks: false,
+                automations: false,
+                taskboard: false,
             };
         };
         let mut f = Self {
@@ -160,6 +178,9 @@ impl CompanionFeatures {
             feedback: false,
             ask: false,
             sessions: false,
+            tasks: false,
+            automations: false,
+            taskboard: false,
         };
         for tok in s.split(',').map(str::trim).filter(|t| !t.is_empty()) {
             match tok {
@@ -167,6 +188,9 @@ impl CompanionFeatures {
                 "feedback" => f.feedback = true,
                 "ask" => f.ask = true,
                 "sessions" => f.sessions = true,
+                "tasks" => f.tasks = true,
+                "automations" => f.automations = true,
+                "taskboard" => f.taskboard = true,
                 _ => {}
             }
         }
@@ -179,6 +203,9 @@ impl CompanionFeatures {
             "check_user_feedback" => self.feedback,
             "ask_user_question" => self.ask,
             "get_session_info" => self.sessions,
+            "task_progress" | "task_complete" => self.tasks,
+            "create_automation" => self.automations,
+            "create_work_task" => self.taskboard,
             "delegate_to_agent" | "get_delegation_status" | "cancel_delegation" => self.delegation,
             _ => false,
         }
@@ -194,6 +221,21 @@ pub struct CompanionContext {
     pub token: String,
     /// Tool groups this launch exposes (see [`CompanionFeatures`]).
     pub features: CompanionFeatures,
+    /// Extra `agent_type` slugs (`custom:<id>` wire forms) appended to
+    /// `delegate_to_agent`'s enum at `tools/list` time. The embedded schema
+    /// only knows the built-in agents; the parent passes the custom agents
+    /// registered (and enabled) at injection time via `--custom-agents`.
+    /// Empty when the parent has none (or predates the flag) — the schema is
+    /// then served byte-identical to the embedded file.
+    pub custom_agents: Vec<String>,
+    /// Built-in `agent_type` slugs removed from `delegate_to_agent`'s enum at
+    /// `tools/list` time — the agents the user has disabled in settings,
+    /// passed via `--disabled-agents`. Subtracting companion-side keeps the
+    /// embedded schema the single source of truth for the builtin list and
+    /// its order. Empty when nothing is disabled (or the parent predates the
+    /// flag). Disabled customs never appear here: the parent just leaves them
+    /// out of `custom_agents`.
+    pub disabled_agents: Vec<String>,
 }
 
 /// Per-in-flight-call state. The companion stashes one of these per
@@ -349,7 +391,7 @@ pub async fn dispatch_line(
                     ));
                 }
             };
-            let tools = match all.as_array() {
+            let mut tools = match all.as_array() {
                 Some(arr) => Value::Array(
                     arr.iter()
                         .filter(|t| {
@@ -363,10 +405,71 @@ pub async fn dispatch_line(
                 ),
                 None => all,
             };
+            remove_disabled_agents_from_delegate_enum(&mut tools, &ctx.disabled_agents);
+            append_custom_agents_to_delegate_enum(&mut tools, &ctx.custom_agents);
             LineAction::Respond(ok(id, json!({ "tools": tools })))
         }
         "tools/call" => build_tools_call_spawn(ctx.clone(), inflight, id, req.params).await,
         _ => LineAction::Respond(err(id, -32601, format!("method not found: {}", req.method))),
+    }
+}
+
+/// Remove the parent-declared disabled agents from `delegate_to_agent`'s
+/// `agent_type` enum, so only targets the user can actually launch are
+/// advertised. Same defensive posture as the append below: a missing tool /
+/// property / enum array leaves the tools untouched, and a slug the embedded
+/// list doesn't contain is a no-op — a parent/companion version skew can
+/// narrow the enum, never corrupt it.
+fn remove_disabled_agents_from_delegate_enum(tools: &mut Value, disabled_agents: &[String]) {
+    if disabled_agents.is_empty() {
+        return;
+    }
+    let Some(arr) = tools.as_array_mut() else {
+        return;
+    };
+    let Some(variants) = arr
+        .iter_mut()
+        .find(|t| t.get("name").and_then(|v| v.as_str()) == Some("delegate_to_agent"))
+        .and_then(|t| t.pointer_mut("/inputSchema/properties/agent_type/enum"))
+        .and_then(|e| e.as_array_mut())
+    else {
+        return;
+    };
+    variants.retain(|variant| {
+        variant
+            .as_str()
+            .map(|slug| !disabled_agents.iter().any(|d| d == slug))
+            .unwrap_or(true)
+    });
+}
+
+/// Append the parent-provided custom-agent slugs to `delegate_to_agent`'s
+/// `agent_type` enum. The embedded schema stays the single source of truth
+/// for the built-in list (and its order); customs are appended after it,
+/// de-duplicated, so a stale double-send can never corrupt the schema. A
+/// missing tool / property / enum array (feature-filtered list, or a future
+/// schema shape change) leaves the tools untouched rather than erroring —
+/// serving the narrower built-in enum is strictly better than serving no
+/// tools at all.
+fn append_custom_agents_to_delegate_enum(tools: &mut Value, custom_agents: &[String]) {
+    if custom_agents.is_empty() {
+        return;
+    }
+    let Some(arr) = tools.as_array_mut() else {
+        return;
+    };
+    let Some(variants) = arr
+        .iter_mut()
+        .find(|t| t.get("name").and_then(|v| v.as_str()) == Some("delegate_to_agent"))
+        .and_then(|t| t.pointer_mut("/inputSchema/properties/agent_type/enum"))
+        .and_then(|e| e.as_array_mut())
+    else {
+        return;
+    };
+    for slug in custom_agents {
+        if !variants.iter().any(|v| v.as_str() == Some(slug)) {
+            variants.push(Value::String(slug.clone()));
+        }
     }
 }
 
@@ -538,6 +641,90 @@ async fn build_tools_call_spawn(
             let round_trip =
                 Box::pin(async move { client_session_round_trip(&socket, &req).await });
             register_and_spawn(inflight, id, None, round_trip, render_session_result).await
+        }
+        "task_progress" => {
+            let message = arguments
+                .get("message")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            let Some(message) = message else {
+                return LineAction::Respond(err(
+                    id,
+                    -32602,
+                    "task_progress requires a non-empty `message` string",
+                ));
+            };
+            let req = BrokerTaskProgressRequest {
+                token: ctx.token.clone(),
+                message,
+            };
+            // No external_handle: a fire-and-forget report has nothing to
+            // cancel broker-side.
+            let round_trip =
+                Box::pin(async move { client_task_progress_round_trip(&socket, &req).await });
+            register_and_spawn(inflight, id, None, round_trip, render_task_ack).await
+        }
+        "task_complete" => {
+            let verdict = arguments
+                .get("verdict")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .unwrap_or("");
+            if !matches!(verdict, "success" | "needs_review" | "blocked") {
+                return LineAction::Respond(err(
+                    id,
+                    -32602,
+                    "task_complete requires `verdict` of success | needs_review | blocked",
+                ));
+            }
+            let summary = arguments
+                .get("summary")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            let req = BrokerTaskCompleteRequest {
+                token: ctx.token.clone(),
+                verdict: verdict.to_string(),
+                summary,
+            };
+            let round_trip =
+                Box::pin(async move { client_task_complete_round_trip(&socket, &req).await });
+            register_and_spawn(inflight, id, None, round_trip, render_task_ack).await
+        }
+        "create_automation" => {
+            // Validate the shape HERE so a malformed call gets a synchronous
+            // -32602 the LLM can fix, rather than round-tripping bad data into
+            // the DB layer's error path.
+            let spec = match parse_automation_spec(&arguments) {
+                Ok(s) => s,
+                Err(msg) => return LineAction::Respond(err(id, -32602, msg)),
+            };
+            let req = BrokerCreateAutomationRequest {
+                token: ctx.token.clone(),
+                spec,
+            };
+            // No external_handle: a create either lands or it doesn't. Canceling
+            // only suppresses the response — there is no in-flight child to tear
+            // down broker-side.
+            let round_trip =
+                Box::pin(async move { client_create_automation_round_trip(&socket, &req).await });
+            register_and_spawn(inflight, id, None, round_trip, render_authoring_result).await
+        }
+        "create_work_task" => {
+            let spec = match parse_work_task_spec(&arguments) {
+                Ok(s) => s,
+                Err(msg) => return LineAction::Respond(err(id, -32602, msg)),
+            };
+            let req = BrokerCreateWorkTaskRequest {
+                token: ctx.token.clone(),
+                spec,
+            };
+            let round_trip =
+                Box::pin(async move { client_create_work_task_round_trip(&socket, &req).await });
+            register_and_spawn(inflight, id, None, round_trip, render_authoring_result).await
         }
         other => LineAction::Respond(err(id, -32602, format!("unknown tool: {other}"))),
     }
@@ -957,7 +1144,10 @@ pub fn render_ask_result(outcome: &Value) -> Value {
             } else {
                 selected.join(", ")
             };
-            s.push_str(&format!("{}. [{header}] {question}\n   → {joined}\n", i + 1));
+            s.push_str(&format!(
+                "{}. [{header}] {question}\n   → {joined}\n",
+                i + 1
+            ));
         }
         s
     };
@@ -966,6 +1156,105 @@ pub fn render_ask_result(outcome: &Value) -> Value {
         "isError": false,
         "structuredContent": { "answers": answers, "declined": declined },
     })
+}
+
+/// Read a required non-empty string argument, trimmed. `Err` carries the
+/// `-32602` message the dispatcher returns verbatim.
+fn required_string(arguments: &Value, field: &str, tool: &str) -> Result<String, String> {
+    arguments
+        .get(field)
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| format!("{tool} requires a non-empty `{field}` string"))
+}
+
+/// Read an optional string argument, trimmed. Absent, non-string, and
+/// whitespace-only all collapse to `None` — an LLM passing `""` to mean "use the
+/// default" gets the default rather than a validation error.
+fn optional_string(arguments: &Value, field: &str) -> Option<String> {
+    arguments
+        .get(field)
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+/// The only cron arity this tool accepts: `min hour dom mon dow`.
+///
+/// The evaluator (`automation_service::normalize_cron`) remaps the POSIX
+/// day-of-week field ONLY for 5-field input; a 6/7-field expression passes
+/// through to the `cron` crate untouched, where `1` means Sunday. So
+/// `0 0 9 * * 1-5` — which an LLM would write meaning "weekdays at 09:00" —
+/// would silently fire Sunday through Thursday. Rejecting the arity here keeps
+/// the tool's advertised contract (5 fields, POSIX weekdays) the only one that
+/// can reach the DB, without touching how already-stored schedules are read.
+const CRON_FIELDS: usize = 5;
+
+/// Validate `create_automation` arguments into a [`NewAutomationSpec`]. Length
+/// caps are applied here (truncating, never rejecting) so an over-long
+/// generation still produces the automation the user asked for. Cron *syntax*
+/// is NOT parsed here — the main process owns the one authoritative evaluator,
+/// and its error comes back as a soft outcome the LLM can correct; only the
+/// field count is checked, because that is the one shape that would be accepted
+/// and then mean something other than what was asked (see [`CRON_FIELDS`]).
+fn parse_automation_spec(arguments: &Value) -> Result<NewAutomationSpec, String> {
+    let name = required_string(arguments, "name", "create_automation")?;
+    let prompt = required_string(arguments, "prompt", "create_automation")?;
+    let action = match optional_string(arguments, "action").as_deref() {
+        None | Some("launch_session") => AutomationAction::LaunchSession,
+        Some("enqueue_task") => AutomationAction::EnqueueTask,
+        Some(other) => {
+            return Err(format!(
+                "create_automation `action` must be launch_session or enqueue_task (got {other})"
+            ));
+        }
+    };
+    let cron = optional_string(arguments, "cron");
+    if let Some(expr) = cron.as_deref() {
+        let fields = expr.split_whitespace().count();
+        if fields != CRON_FIELDS {
+            return Err(format!(
+                "create_automation `cron` must have exactly {CRON_FIELDS} fields \
+                 (min hour day-of-month month day-of-week), got {fields}. A seconds \
+                 field is not supported — write '0 9 * * 1-5', not '0 0 9 * * 1-5'."
+            ));
+        }
+    }
+    Ok(NewAutomationSpec {
+        name: truncate_chars(&name, MAX_TITLE_CHARS),
+        prompt: truncate_chars(&prompt, MAX_PROMPT_CHARS),
+        cron,
+        timezone: optional_string(arguments, "timezone"),
+        action,
+        agent_type: optional_string(arguments, "agent_type"),
+        folder_path: optional_string(arguments, "folder_path"),
+        // Absent means "live now" (the common ask); an explicit non-bool is
+        // treated as absent rather than failing the whole call.
+        enabled: arguments
+            .get("enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true),
+    })
+}
+
+/// Validate `create_work_task` arguments into a [`NewWorkTaskSpec`].
+fn parse_work_task_spec(arguments: &Value) -> Result<NewWorkTaskSpec, String> {
+    let title = required_string(arguments, "title", "create_work_task")?;
+    let prompt = required_string(arguments, "prompt", "create_work_task")?;
+    Ok(NewWorkTaskSpec {
+        title: truncate_chars(&title, MAX_TITLE_CHARS),
+        prompt: truncate_chars(&prompt, MAX_PROMPT_CHARS),
+        agent_type: optional_string(arguments, "agent_type"),
+        folder_path: optional_string(arguments, "folder_path"),
+    })
+}
+
+/// Character-safe truncation shared by both spec parsers.
+fn truncate_chars(s: &str, cap: usize) -> String {
+    crate::acp::chat_authoring::truncate_chars(s, cap)
 }
 
 /// Extract the `session_id` integer from the `get_session_info` arguments,
@@ -1042,6 +1331,83 @@ pub fn render_session_result(outcome: &Value) -> Value {
     })
 }
 
+/// Map a `task_progress` / `task_complete` round-trip outcome (a
+/// `{ recorded, note? }` ack) into an MCP `tools/call` result. A report that
+/// could not be attributed (no active work task for this session) is readable
+/// text with `isError: false` — the agent just carries on with its work.
+pub fn render_task_ack(outcome: &Value) -> Value {
+    let recorded = outcome
+        .get("recorded")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let text = outcome
+        .get("note")
+        .and_then(|v| v.as_str())
+        .unwrap_or(if recorded {
+            "Recorded."
+        } else {
+            "Not recorded."
+        })
+        .to_string();
+    json!({
+        "content": [{ "type": "text", "text": text }],
+        "isError": false,
+        "structuredContent": outcome.clone(),
+    })
+}
+
+/// Map a `create_automation` / `create_work_task` round-trip outcome (a
+/// serialized [`crate::acp::chat_authoring::AuthoringOutcome`]) into an MCP
+/// `tools/call` result.
+///
+/// A refusal (feature off, folder not resolvable, bad cron) renders as readable
+/// text with `isError: false`: the LLM reads the note, tells the user, or
+/// retries with corrected arguments. Making it a tool error would abort the turn
+/// over something the model can recover from on its own.
+pub fn render_authoring_result(outcome: &Value) -> Value {
+    let created = outcome
+        .get("created")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let s = |k: &str| outcome.get(k).and_then(|v| v.as_str());
+    let noun = match s("kind") {
+        Some("work_task") => "task",
+        _ => "automation",
+    };
+    let text = if created {
+        let id = outcome.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
+        let title = s("title").unwrap_or("(untitled)");
+        let mut out = format!("Created {noun} #{id}: {title}");
+        if let Some(folder) = s("folder_name") {
+            out.push_str(&format!("\nProject: {folder}"));
+        }
+        if let Some(agent) = s("agent_type") {
+            out.push_str(&format!("\nAgent: {agent}"));
+        }
+        match (s("cron"), s("timezone")) {
+            (Some(cron), Some(tz)) => out.push_str(&format!("\nSchedule: {cron} ({tz})")),
+            (Some(cron), None) => out.push_str(&format!("\nSchedule: {cron}")),
+            _ => {}
+        }
+        if let Some(next) = s("next_run_at") {
+            out.push_str(&format!("\nNext run: {next}"));
+        }
+        if let Some(note) = s("note") {
+            out.push_str(&format!("\n{note}"));
+        }
+        out
+    } else {
+        s("note")
+            .unwrap_or("Could not create it; no reason was reported.")
+            .to_string()
+    };
+    json!({
+        "content": [{ "type": "text", "text": text }],
+        "isError": false,
+        "structuredContent": outcome.clone(),
+    })
+}
+
 /// Build the human-readable summary block for a found session: a metadata header
 /// plus, when present, a "Recent messages" section.
 fn render_session_summary_text(o: &Value) -> String {
@@ -1100,8 +1466,14 @@ fn render_session_summary_text(o: &Value) -> String {
             .get("truncated")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        let suffix = if truncated { ", older turns omitted" } else { "" };
-        out.push_str(&format!("\nRecent messages ({included}/{total}{suffix}):\n"));
+        let suffix = if truncated {
+            ", older turns omitted"
+        } else {
+            ""
+        };
+        out.push_str(&format!(
+            "\nRecent messages ({included}/{total}{suffix}):\n"
+        ));
         if let Some(items) = messages.get("items").and_then(|v| v.as_array()) {
             for item in items {
                 let role = item.get("role").and_then(|v| v.as_str()).unwrap_or("?");
@@ -1164,6 +1536,9 @@ mod tests {
             feedback: false,
             ask: false,
             sessions: false,
+            tasks: false,
+            automations: false,
+            taskboard: false,
         })
     }
 
@@ -1173,6 +1548,8 @@ mod tests {
             socket_path: "/tmp/codeg-mcp-companion-test-nope.sock".into(),
             token: "tok".into(),
             features,
+            custom_agents: Vec::new(),
+            disabled_agents: Vec::new(),
         }
     }
 
@@ -1238,6 +1615,104 @@ mod tests {
         assert!(status["inputSchema"]["properties"]["wait_ms"].is_object());
         let required = status["inputSchema"]["required"].as_array().unwrap();
         assert!(required.iter().any(|v| v == "task_ids"));
+    }
+
+    #[tokio::test]
+    async fn custom_agents_extend_the_delegate_enum_after_the_builtins() {
+        let mut ctx = ctx();
+        // The duplicate and the already-built-in slug exercise the de-dup: a
+        // parent that double-sends (or somehow lists a builtin) must not
+        // produce a corrupted enum.
+        ctx.custom_agents = vec![
+            "custom:goose".into(),
+            "custom:amp".into(),
+            "custom:goose".into(),
+            "codex".into(),
+        ];
+        let line = r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#;
+        let resp = unwrap_respond(dispatch_line(&ctx, Arc::new(InflightCalls::new()), line).await);
+        let tools = resp.result.unwrap()["tools"].clone();
+        let delegate = tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "delegate_to_agent")
+            .cloned()
+            .unwrap();
+        let agents = delegate["inputSchema"]["properties"]["agent_type"]["enum"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(agents.len(), 14, "12 builtins + 2 distinct customs");
+        // Builtins keep the embedded order and come first.
+        assert_eq!(agents[0], "claude_code");
+        assert_eq!(agents[12], "custom:goose");
+        assert_eq!(agents[13], "custom:amp");
+        // The other delegation tools carry no agent_type and are untouched.
+        let status = tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "get_delegation_status")
+            .unwrap();
+        assert!(status["inputSchema"]["properties"]["agent_type"].is_null());
+    }
+
+    // Disabled builtins are subtracted from the enum (the user's settings
+    // toggles must narrow the advertised targets), the remaining builtins keep
+    // the embedded order, enabled customs still append after them, and a slug
+    // the embedded list doesn't know is a harmless no-op — version skew can
+    // narrow the enum, never corrupt it.
+    #[tokio::test]
+    async fn disabled_agents_are_subtracted_from_the_delegate_enum() {
+        let mut ctx = ctx();
+        ctx.disabled_agents = vec!["codex".into(), "grok".into(), "not-an-agent".into()];
+        ctx.custom_agents = vec!["custom:goose".into()];
+        let line = r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#;
+        let resp = unwrap_respond(dispatch_line(&ctx, Arc::new(InflightCalls::new()), line).await);
+        let tools = resp.result.unwrap()["tools"].clone();
+        let delegate = tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "delegate_to_agent")
+            .cloned()
+            .unwrap();
+        let agents = delegate["inputSchema"]["properties"]["agent_type"]["enum"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(agents.len(), 11, "12 builtins - 2 disabled + 1 custom");
+        assert!(!agents.contains(&serde_json::json!("codex")));
+        assert!(!agents.contains(&serde_json::json!("grok")));
+        // Survivors keep the embedded order, customs still come last.
+        assert_eq!(agents[0], "claude_code");
+        assert_eq!(agents[1], "open_code");
+        assert_eq!(agents[10], "custom:goose");
+    }
+
+    // An empty disabled list (the parent omitted `--disabled-agents`) leaves
+    // the schema byte-identical to the embedded builtin set — the exact
+    // behavior every pre-flag parent relies on.
+    #[tokio::test]
+    async fn empty_disabled_list_serves_the_embedded_builtin_enum_unchanged() {
+        let line = r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#;
+        let resp = unwrap_respond(dispatch_for_test(line).await);
+        let tools = resp.result.unwrap()["tools"].clone();
+        let delegate = tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "delegate_to_agent")
+            .cloned()
+            .unwrap();
+        let agents = delegate["inputSchema"]["properties"]["agent_type"]["enum"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(agents.len(), 12);
+        assert_eq!(agents[0], "claude_code");
+        assert_eq!(agents[11], "cursor");
     }
 
     #[tokio::test]
@@ -1636,24 +2111,36 @@ mod tests {
         feedback: true,
         ask: false,
         sessions: false,
+        tasks: false,
+        automations: false,
+        taskboard: false,
     };
     const BOTH: CompanionFeatures = CompanionFeatures {
         delegation: true,
         feedback: true,
         ask: false,
         sessions: false,
+        tasks: false,
+        automations: false,
+        taskboard: false,
     };
     const ASK_ONLY: CompanionFeatures = CompanionFeatures {
         delegation: false,
         feedback: false,
         ask: true,
         sessions: false,
+        tasks: false,
+        automations: false,
+        taskboard: false,
     };
     const SESSIONS_ONLY: CompanionFeatures = CompanionFeatures {
         delegation: false,
         feedback: false,
         ask: false,
         sessions: true,
+        tasks: false,
+        automations: false,
+        taskboard: false,
     };
 
     fn list_tool_names(action: LineAction) -> Vec<String> {
@@ -1767,8 +2254,11 @@ mod tests {
         );
         assert!(!off.contains(&"ask_user_question".to_string()));
         let on = list_tool_names(
-            dispatch_with_features(ASK_ONLY, r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#)
-                .await,
+            dispatch_with_features(
+                ASK_ONLY,
+                r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
+            )
+            .await,
         );
         assert_eq!(on, vec!["ask_user_question".to_string()]);
     }
@@ -1899,7 +2389,11 @@ mod tests {
 
     #[tokio::test]
     async fn get_session_info_missing_or_bad_id_rejected_synchronously() {
-        for args in [json!({}), json!({ "session_id": "abc" }), json!({ "session_id": true })] {
+        for args in [
+            json!({}),
+            json!({ "session_id": "abc" }),
+            json!({ "session_id": true }),
+        ] {
             let line = json!({
                 "jsonrpc": "2.0", "id": 32, "method": "tools/call",
                 "params": { "name": "get_session_info", "arguments": args }
@@ -1925,6 +2419,237 @@ mod tests {
         let e = resp.error.unwrap();
         assert_eq!(e.code, -32602);
         assert!(e.message.contains("unknown tool"));
+    }
+
+    // -- chat authoring: feature gating + parsing + rendering ---------------
+
+    const AUTOMATIONS_ONLY: CompanionFeatures = CompanionFeatures {
+        delegation: false,
+        feedback: false,
+        ask: false,
+        sessions: false,
+        tasks: false,
+        automations: true,
+        taskboard: false,
+    };
+    const TASKBOARD_ONLY: CompanionFeatures = CompanionFeatures {
+        delegation: false,
+        feedback: false,
+        ask: false,
+        sessions: false,
+        tasks: false,
+        automations: false,
+        taskboard: true,
+    };
+
+    /// The two authoring groups gate independently: enabling one must not
+    /// surface the other's tool.
+    #[tokio::test]
+    async fn tools_list_gates_authoring_tools_independently() {
+        let list = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+        // Default ctx is delegation-only: neither appears.
+        let names = list_tool_names(dispatch_for_test(list).await);
+        assert!(!names.contains(&"create_automation".to_string()));
+        assert!(!names.contains(&"create_work_task".to_string()));
+
+        let names = list_tool_names(dispatch_with_features(AUTOMATIONS_ONLY, list).await);
+        assert_eq!(names, vec!["create_automation".to_string()]);
+
+        let names = list_tool_names(dispatch_with_features(TASKBOARD_ONLY, list).await);
+        assert_eq!(names, vec!["create_work_task".to_string()]);
+    }
+
+    /// Calling a tool whose group is off is rejected as an unknown tool — same
+    /// no-leak shape as the other gated tools.
+    #[tokio::test]
+    async fn authoring_tools_rejected_as_unknown_when_feature_off() {
+        for (name, args) in [
+            ("create_automation", json!({ "name": "n", "prompt": "p" })),
+            ("create_work_task", json!({ "title": "t", "prompt": "p" })),
+        ] {
+            let line = json!({
+                "jsonrpc": "2.0", "id": 40, "method": "tools/call",
+                "params": { "name": name, "arguments": args }
+            })
+            .to_string();
+            let resp = unwrap_respond(dispatch_for_test(&line).await);
+            let e = resp.error.unwrap();
+            assert_eq!(e.code, -32602);
+            assert!(e.message.contains("unknown tool"));
+        }
+        // Cross-gating: the automations group must not unlock the board tool.
+        let line = json!({
+            "jsonrpc": "2.0", "id": 41, "method": "tools/call",
+            "params": { "name": "create_work_task", "arguments": { "title": "t", "prompt": "p" } }
+        })
+        .to_string();
+        let resp = unwrap_respond(dispatch_with_features(AUTOMATIONS_ONLY, &line).await);
+        assert!(resp.error.unwrap().message.contains("unknown tool"));
+    }
+
+    #[tokio::test]
+    async fn create_automation_spawns_when_valid_and_enabled() {
+        let line = json!({
+            "jsonrpc": "2.0", "id": 42, "method": "tools/call",
+            "params": { "name": "create_automation", "arguments": {
+                "name": "Nightly audit", "prompt": "audit deps", "cron": "0 3 * * *"
+            }}
+        })
+        .to_string();
+        assert!(matches!(
+            dispatch_with_features(AUTOMATIONS_ONLY, &line).await,
+            LineAction::Spawn(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn create_automation_missing_fields_rejected_synchronously() {
+        for (args, expect) in [
+            (json!({ "prompt": "p" }), "name"),
+            (json!({ "name": "n" }), "prompt"),
+            (json!({ "name": "  ", "prompt": "p" }), "name"),
+            (
+                json!({ "name": "n", "prompt": "p", "action": "delete_everything" }),
+                "action",
+            ),
+        ] {
+            let line = json!({
+                "jsonrpc": "2.0", "id": 43, "method": "tools/call",
+                "params": { "name": "create_automation", "arguments": args }
+            })
+            .to_string();
+            let resp = unwrap_respond(dispatch_with_features(AUTOMATIONS_ONLY, &line).await);
+            let e = resp.error.expect("bad arguments must be rejected");
+            assert_eq!(e.code, -32602);
+            assert!(e.message.contains(expect), "got: {}", e.message);
+        }
+    }
+
+    #[tokio::test]
+    async fn create_work_task_missing_fields_rejected_synchronously() {
+        for (args, expect) in [
+            (json!({ "prompt": "p" }), "title"),
+            (json!({ "title": "t" }), "prompt"),
+        ] {
+            let line = json!({
+                "jsonrpc": "2.0", "id": 44, "method": "tools/call",
+                "params": { "name": "create_work_task", "arguments": args }
+            })
+            .to_string();
+            let resp = unwrap_respond(dispatch_with_features(TASKBOARD_ONLY, &line).await);
+            let e = resp.error.expect("bad arguments must be rejected");
+            assert_eq!(e.code, -32602);
+            assert!(e.message.contains(expect), "got: {}", e.message);
+        }
+    }
+
+    #[test]
+    fn parse_automation_spec_defaults_and_normalizes() {
+        let spec = parse_automation_spec(&json!({
+            "name": "  Nightly  ", "prompt": " do it ",
+            "cron": "  ", "timezone": "", "folder_path": " /repo/app "
+        }))
+        .unwrap();
+        // Trimmed…
+        assert_eq!(spec.name, "Nightly");
+        assert_eq!(spec.prompt, "do it");
+        assert_eq!(spec.folder_path.as_deref(), Some("/repo/app"));
+        // …and whitespace-only optionals collapse to "use the default", not to
+        // an empty cron that would make this a broken scheduled automation.
+        assert!(spec.cron.is_none());
+        assert!(spec.timezone.is_none());
+        // Defaults.
+        assert!(spec.enabled);
+        assert_eq!(spec.action, AutomationAction::LaunchSession);
+
+        let spec = parse_automation_spec(&json!({
+            "name": "n", "prompt": "p", "action": "enqueue_task", "enabled": false
+        }))
+        .unwrap();
+        assert_eq!(spec.action, AutomationAction::EnqueueTask);
+        assert!(!spec.enabled);
+    }
+
+    /// A 6-field cron is REJECTED, not silently accepted.
+    ///
+    /// `normalize_cron` remaps POSIX weekdays only for 5-field input; a 6-field
+    /// expression reaches the `cron` crate verbatim, where `1` is Sunday. So the
+    /// natural-looking `0 0 9 * * 1-5` would be stored happily and then fire
+    /// Sun–Thu instead of Mon–Fri. Nothing downstream can detect that, so the
+    /// arity gate here is the only thing standing between the LLM and a
+    /// wrong-by-two-days schedule.
+    #[test]
+    fn parse_automation_spec_rejects_non_five_field_cron() {
+        for expr in [
+            "0 0 9 * * 1-5",
+            "0 0 9 * * 1-5 2027",
+            "9 * * *",
+            "* * * * * *",
+        ] {
+            let err = parse_automation_spec(&json!({
+                "name": "n", "prompt": "p", "cron": expr
+            }))
+            .expect_err("non-5-field cron must be rejected");
+            assert!(err.contains("5 fields"), "got: {err}");
+        }
+        // The advertised 5-field form still goes through, extra whitespace and all.
+        let spec = parse_automation_spec(&json!({
+            "name": "n", "prompt": "p", "cron": "  0   9 * * 1-5 "
+        }))
+        .unwrap();
+        assert_eq!(spec.cron.as_deref(), Some("0   9 * * 1-5"));
+    }
+
+    #[test]
+    fn parse_specs_truncate_over_long_input() {
+        let long_title = "x".repeat(MAX_TITLE_CHARS + 50);
+        let long_prompt = "y".repeat(MAX_PROMPT_CHARS + 50);
+        let spec = parse_automation_spec(&json!({
+            "name": long_title, "prompt": long_prompt
+        }))
+        .unwrap();
+        assert_eq!(spec.name.chars().count(), MAX_TITLE_CHARS);
+        assert_eq!(spec.prompt.chars().count(), MAX_PROMPT_CHARS);
+
+        let spec = parse_work_task_spec(&json!({
+            "title": "t", "prompt": "p", "agent_type": "codex"
+        }))
+        .unwrap();
+        assert_eq!(spec.agent_type.as_deref(), Some("codex"));
+        assert!(spec.folder_path.is_none());
+    }
+
+    #[test]
+    fn render_authoring_result_created_summarizes() {
+        let outcome = json!({
+            "created": true, "kind": "automation", "id": 12, "title": "Nightly audit",
+            "folder_name": "app", "agent_type": "claude_code",
+            "cron": "0 3 * * *", "timezone": "Asia/Shanghai",
+            "next_run_at": "2026-08-08T03:00:00Z"
+        });
+        let rendered = render_authoring_result(&outcome);
+        assert_eq!(rendered["isError"], false);
+        let text = rendered["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("Created automation #12"));
+        assert!(text.contains("Nightly audit"));
+        assert!(text.contains("0 3 * * * (Asia/Shanghai)"));
+        assert!(text.contains("2026-08-08T03:00:00Z"));
+        assert_eq!(rendered["structuredContent"]["id"], 12);
+    }
+
+    #[test]
+    fn render_authoring_result_refusal_is_soft_with_note() {
+        // A refusal must stay `isError: false` so the LLM reads the note and can
+        // tell the user / retry instead of the turn blowing up.
+        let outcome = json!({
+            "created": false, "kind": "work_task",
+            "note": "Creating board tasks from chat is turned off"
+        });
+        let rendered = render_authoring_result(&outcome);
+        assert_eq!(rendered["isError"], false);
+        let text = rendered["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("turned off"));
+        assert_eq!(rendered["structuredContent"]["created"], false);
     }
 
     #[test]
@@ -1955,10 +2680,7 @@ mod tests {
             parse_max_messages(&json!({ "max_messages": 4_294_967_296_u64 })),
             200
         );
-        assert_eq!(
-            parse_max_messages(&json!({ "max_messages": 1e30 })),
-            200
-        );
+        assert_eq!(parse_max_messages(&json!({ "max_messages": 1e30 })), 200);
         // Invalid / negative / fractional → default (optional knob, not an error).
         assert_eq!(parse_max_messages(&json!({ "max_messages": "abc" })), 20);
         assert_eq!(parse_max_messages(&json!({ "max_messages": -5 })), 20);
@@ -2091,8 +2813,12 @@ mod tests {
             let (mut c1, _) = listener.accept().await.unwrap();
             let _: BrokerResponse = match read_frame::<_, BrokerMessage>(&mut c1).await.unwrap() {
                 BrokerMessage::Feedback(_) => {
-                    write_frame(&mut c1, &feedback_resp_with_ids(&["f1"])).await.unwrap();
-                    BrokerResponse { outcome: Value::Null }
+                    write_frame(&mut c1, &feedback_resp_with_ids(&["f1"]))
+                        .await
+                        .unwrap();
+                    BrokerResponse {
+                        outcome: Value::Null,
+                    }
                 }
                 other => panic!("expected Feedback, got {other:?}"),
             };
@@ -2101,7 +2827,14 @@ mod tests {
             if let BrokerMessage::CommitFeedback(req) = read_frame(&mut c2).await.unwrap() {
                 committed2.lock().await.push(req.ids);
             }
-            write_frame(&mut c2, &BrokerResponse { outcome: Value::Null }).await.unwrap();
+            write_frame(
+                &mut c2,
+                &BrokerResponse {
+                    outcome: Value::Null,
+                },
+            )
+            .await
+            .unwrap();
         });
 
         let inflight = Arc::new(InflightCalls::new());
@@ -2110,7 +2843,9 @@ mod tests {
             Value::from(1),
             sock,
             "tok".into(),
-            BrokerFeedbackRequest { token: "tok".into() },
+            BrokerFeedbackRequest {
+                token: "tok".into(),
+            },
         )
         .await;
         let LineAction::Spawn(call) = action else {
@@ -2168,6 +2903,8 @@ mod tests {
             socket_path: sock,
             token: "tok".into(),
             features: FEEDBACK_ONLY,
+            custom_agents: Vec::new(),
+            disabled_agents: Vec::new(),
         };
         let inflight = Arc::new(InflightCalls::new());
         // tools/call → Spawn (registers the inflight entry).
@@ -2200,6 +2937,9 @@ mod tests {
         );
         server.abort();
         // Crucially: no commit was sent for a cancelled (undelivered) check.
-        assert!(!*saw_commit.lock().await, "a cancelled check must not commit");
+        assert!(
+            !*saw_commit.lock().await,
+            "a cancelled check must not commit"
+        );
     }
 }

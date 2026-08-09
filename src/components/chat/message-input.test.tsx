@@ -25,22 +25,6 @@ import { emitAttachFileToSession } from "@/lib/session-attachment-events"
 const composerHandle = vi.hoisted(() => ({
   current: null as RichComposerHandle | null,
 }))
-const uploadAttachmentMock = vi.hoisted(() => vi.fn())
-const readFileBase64Mock = vi.hoisted(() => vi.fn())
-const readLocalPathForAttachmentMock = vi.hoisted(() => vi.fn())
-const readLocalImagePathForAttachmentMock = vi.hoisted(() => vi.fn())
-const uploadLocalPathToRemoteMock = vi.hoisted(() => vi.fn())
-const toastErrorMock = vi.hoisted(() => vi.fn())
-const platformMock = vi.hoisted(() => ({
-  desktop: false,
-  openFileDialog: vi.fn(),
-}))
-const transportMock = vi.hoisted(() => ({
-  remoteId: null as string | null,
-}))
-const tauriListenerMock = vi.hoisted(() => ({
-  listeners: new Map<string, Array<(event: { payload: unknown }) => void>>(),
-}))
 vi.mock("./composer/rich-composer", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("./composer/rich-composer")>()
@@ -95,69 +79,16 @@ vi.mock("@/components/chat/conversation-context-bar", () => ({
   useConversationFolderBranchPickerVisible: () => false,
 }))
 vi.mock("@/lib/platform", () => ({
-  isDesktop: () => platformMock.desktop,
-  openFileDialog: platformMock.openFileDialog,
+  isDesktop: () => false,
+  openFileDialog: vi.fn(),
 }))
 vi.mock("@/lib/transport", () => ({
-  getActiveRemoteConnectionId: () => transportMock.remoteId,
+  getActiveRemoteConnectionId: () => null,
 }))
-vi.mock("@/lib/api", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/api")>()
-  return {
-    ...actual,
-    quickMessagesList: vi.fn().mockResolvedValue([]),
-    readFileBase64: readFileBase64Mock,
-    readLocalImagePathForAttachment: readLocalImagePathForAttachmentMock,
-    readLocalPathForAttachment: readLocalPathForAttachmentMock,
-    uploadAttachment: uploadAttachmentMock,
-    uploadLocalPathToRemote: uploadLocalPathToRemoteMock,
-  }
-})
-vi.mock("sonner", () => ({
-  toast: { error: toastErrorMock, success: vi.fn() },
-}))
-vi.mock("@/components/shared/server-file-browser-dialog", () => ({
-  ServerFileBrowserDialog: ({
-    open,
-    onSelect,
-  }: {
-    open: boolean
-    onSelect: (paths: string[]) => void
-  }) =>
-    open ? (
-      <button type="button" onClick={() => onSelect(["/server/outside.png"])}>
-        Select server image
-      </button>
-    ) : null,
-}))
-vi.mock("@tauri-apps/api/webview", () => ({
-  getCurrentWebview: () => ({
-    listen: vi.fn(
-      async (
-        event: string,
-        callback: (event: { payload: unknown }) => void
-      ) => {
-        const listeners = tauriListenerMock.listeners.get(event) ?? []
-        listeners.push(callback)
-        tauriListenerMock.listeners.set(event, listeners)
-        return () => {
-          const current = tauriListenerMock.listeners.get(event) ?? []
-          tauriListenerMock.listeners.set(
-            event,
-            current.filter((item) => item !== callback)
-          )
-        }
-      }
-    ),
-  }),
-}))
-vi.mock("@tauri-apps/api/event", () => ({
-  TauriEvent: {
-    DRAG_ENTER: "tauri://drag-enter",
-    DRAG_OVER: "tauri://drag-over",
-    DRAG_DROP: "tauri://drag-drop",
-    DRAG_LEAVE: "tauri://drag-leave",
-  },
+// Real classifier only recognizes actual backend NoActiveTurn payloads; the
+// steering tests flip this per-case to drive the enqueue fallback.
+vi.mock("@/lib/turn-busy", () => ({
+  isNoActiveTurnRejection: vi.fn(() => false),
 }))
 // virtua renders 0 rows under jsdom — render children directly so the large
 // (searchable + virtualized) model list is exercisable here too.
@@ -605,520 +536,143 @@ describe("MessageInput collapsed selectors popover", () => {
   })
 })
 
-describe("MessageInput local file upload", () => {
+describe("MessageInput native steering (insert into current turn)", () => {
   afterEach(() => {
     cleanup()
-    uploadAttachmentMock.mockReset()
+    composerHandle.current = null
+    vi.clearAllMocks()
   })
 
-  it("sends an uploaded image as inline image data", async () => {
-    const user = userEvent.setup()
-    const onSend = vi.fn()
-    const png = new File(["pixels"], "outside.png", { type: "image/png" })
-    const inputClick = vi
-      .spyOn(HTMLInputElement.prototype, "click")
-      .mockImplementation(function (this: HTMLInputElement) {
-        Object.defineProperty(this, "files", {
-          configurable: true,
-          value: [png],
-        })
-        this.dispatchEvent(new Event("change"))
-      })
+  const MI = enMessages.Folder.chat.messageInput
 
-    renderInput({ onSend })
-    await user.click(
-      screen.getByRole("button", {
-        name: enMessages.Folder.chat.messageInput.addActions,
-      })
-    )
-    await user.click(
-      await screen.findByRole("menuitem", {
-        name: enMessages.Folder.chat.messageInput.attachLocalUpload,
-      })
-    )
-
-    const send = screen.getByTitle(enMessages.Folder.chat.messageInput.send)
-    await waitFor(() => expect(send).toBeEnabled())
-    await user.click(send)
-
-    expect(onSend).toHaveBeenCalledWith(
-      expect.objectContaining({
-        blocks: [
-          expect.objectContaining({
-            type: "image",
-            mime_type: "image/png",
-            data: "cGl4ZWxz",
-          }),
-        ],
-      }),
-      null
-    )
-    expect(uploadAttachmentMock).not.toHaveBeenCalled()
-    expect(inputClick).toHaveBeenCalledOnce()
-    inputClick.mockRestore()
-  })
-
-  it("rejects an oversized uploaded image before it enters composer state", async () => {
-    const user = userEvent.setup()
-    const png = new File(["pixels"], "oversized.png", { type: "image/png" })
-    Object.defineProperty(png, "size", {
-      configurable: true,
-      value: 20_000_001,
-    })
-    const inputClick = vi
-      .spyOn(HTMLInputElement.prototype, "click")
-      .mockImplementation(function (this: HTMLInputElement) {
-        Object.defineProperty(this, "files", {
-          configurable: true,
-          value: [png],
-        })
-        this.dispatchEvent(new Event("change"))
-      })
-
-    renderInput({})
-    await user.click(
-      screen.getByRole("button", {
-        name: enMessages.Folder.chat.messageInput.addActions,
-      })
-    )
-    await user.click(
-      await screen.findByRole("menuitem", {
-        name: enMessages.Folder.chat.messageInput.attachLocalUpload,
-      })
-    )
-
-    await waitFor(() => expect(inputClick).toHaveBeenCalledOnce())
-    expect(
-      screen.getByTitle(enMessages.Folder.chat.messageInput.send)
-    ).toBeDisabled()
-    expect(uploadAttachmentMock).not.toHaveBeenCalled()
-    inputClick.mockRestore()
-  })
-
-  it("keeps successful attachments when another image read fails", async () => {
-    const user = userEvent.setup()
-    const onSend = vi.fn()
-    const good = new File(["good"], "good.png", { type: "image/png" })
-    const broken = new File(["broken"], "broken.png", {
-      type: "image/png",
-    })
-    const notes = new File(["notes"], "notes.txt", { type: "text/plain" })
-    uploadAttachmentMock.mockResolvedValue({ path: "/uploads/notes.txt" })
-    const nativeReadAsDataUrl = FileReader.prototype.readAsDataURL
-    const fileReaderSpy = vi
-      .spyOn(FileReader.prototype, "readAsDataURL")
-      .mockImplementation(function (this: FileReader, blob: Blob) {
-        if ((blob as File).name === "broken.png") {
-          queueMicrotask(() => {
-            this.onerror?.(new ProgressEvent("error"))
-          })
-          return
-        }
-        nativeReadAsDataUrl.call(this, blob)
-      })
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {})
-    const inputClick = vi
-      .spyOn(HTMLInputElement.prototype, "click")
-      .mockImplementation(function (this: HTMLInputElement) {
-        Object.defineProperty(this, "files", {
-          configurable: true,
-          value: [good, broken, notes],
-        })
-        this.dispatchEvent(new Event("change"))
-      })
-
-    renderInput({ onSend })
-    await user.click(
-      screen.getByRole("button", {
-        name: enMessages.Folder.chat.messageInput.addActions,
-      })
-    )
-    await user.click(
-      await screen.findByRole("menuitem", {
-        name: enMessages.Folder.chat.messageInput.attachLocalUpload,
-      })
-    )
-
-    await waitFor(() =>
-      expect(uploadAttachmentMock).toHaveBeenCalledWith(notes, null)
-    )
-    const send = screen.getByTitle(enMessages.Folder.chat.messageInput.send)
-    await waitFor(() => expect(send).toBeEnabled())
-    await user.click(send)
-
-    expect(onSend).toHaveBeenCalledWith(
-      expect.objectContaining({
-        blocks: expect.arrayContaining([
-          expect.objectContaining({
-            type: "image",
-            data: "Z29vZA==",
-          }),
-          expect.objectContaining({
-            type: "text",
-            text: "[notes.txt](file:///uploads/notes.txt)",
-          }),
-        ]),
-      }),
-      null
-    )
-    expect(consoleError).toHaveBeenCalledWith(
-      "[MessageInput] image attachment read failed (broken.png):",
-      expect.any(Error)
-    )
-    inputClick.mockRestore()
-    consoleError.mockRestore()
-    fileReaderSpy.mockRestore()
-  })
-
-  it("keeps uploaded non-image files on the resource path", async () => {
-    const user = userEvent.setup()
-    const onSend = vi.fn()
-    const text = new File(["notes"], "notes.txt", { type: "text/plain" })
-    uploadAttachmentMock.mockResolvedValue({ path: "/uploads/notes.txt" })
-    const inputClick = vi
-      .spyOn(HTMLInputElement.prototype, "click")
-      .mockImplementation(function (this: HTMLInputElement) {
-        Object.defineProperty(this, "files", {
-          configurable: true,
-          value: [text],
-        })
-        this.dispatchEvent(new Event("change"))
-      })
-
-    renderInput({ onSend })
-    await user.click(
-      screen.getByRole("button", {
-        name: enMessages.Folder.chat.messageInput.addActions,
-      })
-    )
-    await user.click(
-      await screen.findByRole("menuitem", {
-        name: enMessages.Folder.chat.messageInput.attachLocalUpload,
-      })
-    )
-
-    await waitFor(() =>
-      expect(uploadAttachmentMock).toHaveBeenCalledWith(text, null)
-    )
-    const send = screen.getByTitle(enMessages.Folder.chat.messageInput.send)
-    await waitFor(() => expect(send).toBeEnabled())
-    await user.click(send)
-
-    expect(onSend).toHaveBeenCalledWith(
-      expect.objectContaining({
-        blocks: [
-          expect.objectContaining({
-            type: "text",
-            text: "[notes.txt](file:///uploads/notes.txt)",
-          }),
-        ],
-      }),
-      null
-    )
-    inputClick.mockRestore()
-  })
-})
-
-describe("MessageInput selected image paths", () => {
-  afterEach(() => {
-    cleanup()
-    platformMock.desktop = false
-    platformMock.openFileDialog.mockReset()
-    readFileBase64Mock.mockReset()
-  })
-
-  it("reads a native-picker image as bounded inline data", async () => {
-    const user = userEvent.setup()
-    const onSend = vi.fn()
-    platformMock.desktop = true
-    platformMock.openFileDialog.mockResolvedValue([
-      "/outside/image.png",
-      "/outside/notes.txt",
-    ])
-    readFileBase64Mock.mockResolvedValue("bmF0aXZlLWltYWdl")
-
-    renderInput({ onSend })
-    await user.click(
-      screen.getByRole("button", {
-        name: enMessages.Folder.chat.messageInput.addActions,
-      })
-    )
-    await user.click(
-      await screen.findByRole("menuitem", {
-        name: enMessages.Folder.chat.messageInput.attachFiles,
-      })
-    )
-
-    await waitFor(() =>
-      expect(readFileBase64Mock).toHaveBeenCalledWith(
-        "/outside/image.png",
-        20_000_000
-      )
-    )
-    const send = screen.getByTitle(enMessages.Folder.chat.messageInput.send)
-    await waitFor(() => expect(send).toBeEnabled())
-    await user.click(send)
-
-    expect(onSend).toHaveBeenCalledWith(
-      expect.objectContaining({
-        blocks: expect.arrayContaining([
-          expect.objectContaining({
-            type: "image",
-            data: "bmF0aXZlLWltYWdl",
-          }),
-          expect.objectContaining({
-            type: "text",
-            text: "[notes.txt](file:///outside/notes.txt)",
-          }),
-        ]),
-      }),
-      null
-    )
-  })
-
-  it("routes a server-picker image through the bounded reader", async () => {
-    const user = userEvent.setup()
-    readFileBase64Mock.mockResolvedValue("c2VydmVyLWltYWdl")
-
-    renderInput({})
-    await user.click(
-      screen.getByRole("button", {
-        name: enMessages.Folder.chat.messageInput.addActions,
-      })
-    )
-    await user.click(
-      await screen.findByRole("menuitem", {
-        name: enMessages.Folder.chat.messageInput.attachServerFile,
-      })
-    )
-    await user.click(await screen.findByText("Select server image"))
-
-    await waitFor(() =>
-      expect(readFileBase64Mock).toHaveBeenCalledWith(
-        "/server/outside.png",
-        20_000_000
-      )
-    )
-  })
-
-  it("does not append an image when a selected path cannot be read", async () => {
-    const user = userEvent.setup()
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {})
-    platformMock.desktop = true
-    platformMock.openFileDialog.mockResolvedValue(["/outside/unreadable.png"])
-    readFileBase64Mock.mockRejectedValue(new Error("read denied"))
-
-    renderInput({})
-    await user.click(
-      screen.getByRole("button", {
-        name: enMessages.Folder.chat.messageInput.addActions,
-      })
-    )
-    await user.click(
-      await screen.findByRole("menuitem", {
-        name: enMessages.Folder.chat.messageInput.attachFiles,
-      })
-    )
-
-    await waitFor(() => expect(readFileBase64Mock).toHaveBeenCalledOnce())
-    expect(
-      screen.getByTitle(enMessages.Folder.chat.messageInput.send)
-    ).toBeDisabled()
-    expect(
-      screen.queryByRole("button", { name: /Remove unreadable\.png/ })
-    ).toBeNull()
-    expect(consoleError).toHaveBeenCalledWith(
-      "[MessageInput] drop image path failed (/outside/unreadable.png):",
-      expect.any(Error)
-    )
-    consoleError.mockRestore()
-  })
-
-  it("routes a whole-file session image through the bounded reader", async () => {
-    readFileBase64Mock.mockResolvedValue("c2Vzc2lvbi1pbWFnZQ==")
-    renderInput({ attachmentTabId: "tab-image" })
-
-    act(() => {
-      emitAttachFileToSession({
-        tabId: "tab-image",
-        path: "/outside/session.png",
-      })
-    })
-
-    await waitFor(() =>
-      expect(readFileBase64Mock).toHaveBeenCalledWith(
-        "/outside/session.png",
-        20_000_000
-      )
-    )
-  })
-})
-
-describe("MessageInput remote desktop paths", () => {
-  afterEach(() => {
-    cleanup()
-    platformMock.desktop = false
-    transportMock.remoteId = null
-    tauriListenerMock.listeners.clear()
-    readLocalImagePathForAttachmentMock.mockReset()
-    readLocalPathForAttachmentMock.mockReset()
-    uploadLocalPathToRemoteMock.mockReset()
-    toastErrorMock.mockReset()
-  })
-
-  async function renderRemoteAndDrop(
-    paths: string[],
-    props: Partial<ComponentProps<typeof MessageInput>> = {}
+  async function mountPrompting(
+    props: Partial<React.ComponentProps<typeof MessageInput>> = {}
   ) {
-    platformMock.desktop = true
-    transportMock.remoteId = "remote-1"
-    tauriListenerMock.listeners.clear()
-
-    const rendered = renderInput(props)
-    const host = rendered.container.firstElementChild as HTMLElement | null
-    expect(host).not.toBeNull()
-    vi.spyOn(host!, "getBoundingClientRect").mockReturnValue({
-      left: 0,
-      top: 0,
-      right: 100,
-      bottom: 100,
-      width: 100,
-      height: 100,
-      x: 0,
-      y: 0,
-      toJSON: () => ({}),
+    renderInput({
+      isPrompting: true,
+      disabled: true,
+      onCancel: vi.fn(),
+      onEnqueue: vi.fn(),
+      ...props,
     })
-    await waitFor(() =>
-      expect(
-        tauriListenerMock.listeners.get("tauri://drag-drop")?.length
-      ).toBeGreaterThan(0)
+    await waitFor(
+      () => expect(composerHandle.current?.getEditor()).toBeTruthy(),
+      { timeout: 5000 }
     )
-
-    act(() => {
-      tauriListenerMock.listeners.get("tauri://drag-drop")?.at(-1)?.({
-        payload: {
-          paths,
-          position: { x: 10, y: 10 },
-        },
-      })
-    })
-    return rendered
+    const editor = composerHandle.current?.getEditor()
+    if (!editor) throw new Error("composer editor not mounted")
+    return editor
   }
 
-  it("keeps remote desktop images inline and uploads only resources", async () => {
-    const onSend = vi.fn()
-    readLocalImagePathForAttachmentMock.mockResolvedValue({
-      fileName: "outside.png",
-      mimeType: "image/png",
-      size: 10_000_000,
-      dataBase64: "cmVtb3RlLWltYWdl",
+  function typeDraft(editor: Editor, text: string) {
+    // insertContent dispatches a real transaction, so the composer's
+    // empty-tracking flips (plain setContent doesn't emit an update).
+    act(() => {
+      editor.commands.insertContent(text)
     })
-    uploadLocalPathToRemoteMock.mockResolvedValue({
-      path: "/uploads/notes.txt",
-    })
+  }
 
-    await renderRemoteAndDrop(["/outside/outside.png", "/outside/notes.txt"], {
-      onSend,
-    })
+  it("keeps the historical Stop-only form when onSteer is absent", async () => {
+    const editor = await mountPrompting()
+    typeDraft(editor, "draft text")
+    // Stop is there; none of the split-button chrome is.
+    expect(screen.getByTitle(MI.cancel)).toBeInTheDocument()
+    expect(screen.queryByTitle(MI.queueMessage)).toBeNull()
+    expect(screen.queryByLabelText(MI.steerIntoTurn)).toBeNull()
+  })
 
+  it("shows the queue/steer split next to Stop once there is content", async () => {
+    const editor = await mountPrompting({ onSteer: vi.fn() })
+    // Empty draft: nothing to queue or steer — still Stop-only.
+    expect(screen.queryByTitle(MI.queueMessage)).toBeNull()
+
+    typeDraft(editor, "go left")
     await waitFor(() =>
-      expect(readLocalImagePathForAttachmentMock).toHaveBeenCalledWith(
-        "/outside/outside.png"
-      )
+      expect(screen.getByTitle(MI.queueMessage)).toBeInTheDocument()
     )
-    expect(readLocalPathForAttachmentMock).not.toHaveBeenCalled()
-    expect(uploadLocalPathToRemoteMock).toHaveBeenCalledTimes(1)
-    expect(uploadLocalPathToRemoteMock).toHaveBeenCalledWith(
-      "/outside/notes.txt",
-      null
-    )
-
-    const send = screen.getByTitle(enMessages.Folder.chat.messageInput.send)
-    await waitFor(() => expect(send).toBeEnabled())
-    await userEvent.setup().click(send)
-    expect(onSend).toHaveBeenCalledWith(
-      expect.objectContaining({
-        blocks: expect.arrayContaining([
-          expect.objectContaining({
-            type: "image",
-            mime_type: "image/png",
-            data: "cmVtb3RlLWltYWdl",
-          }),
-          expect.objectContaining({
-            type: "text",
-            text: "[notes.txt](file:///uploads/notes.txt)",
-          }),
-        ]),
-      }),
-      null
-    )
-    expect(send).toBeDisabled()
-    await userEvent.setup().click(send)
-    expect(onSend).toHaveBeenCalledOnce()
+    expect(screen.getByLabelText(MI.steerIntoTurn)).toBeInTheDocument()
+    expect(screen.getByTitle(MI.cancel)).toBeInTheDocument()
   })
 
-  it("removes remote image bytes from the draft", async () => {
-    readLocalImagePathForAttachmentMock.mockResolvedValue({
-      fileName: "outside.png",
-      mimeType: "image/png",
-      size: 6,
-      dataBase64: "cmVtb3RlLWltYWdl",
-    })
-
-    await renderRemoteAndDrop(["/outside/outside.png"])
-    const remove = await screen.findByRole("button", {
-      name: "Remove outside.png",
-    })
-    await userEvent.setup().click(remove)
-
-    expect(
-      screen.getByTitle(enMessages.Folder.chat.messageInput.send)
-    ).toBeDisabled()
-  })
-
-  it("does not upload a remote image after its local read fails", async () => {
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {})
-    readLocalImagePathForAttachmentMock.mockRejectedValue(
-      new Error("read denied")
+  it("steers the draft text and clears the composer on success", async () => {
+    const user = userEvent.setup()
+    let resolveSteer: () => void = () => {}
+    const onSteer = vi.fn(
+      () =>
+        new Promise<void>((r) => {
+          resolveSteer = r
+        })
     )
-
-    await renderRemoteAndDrop(["/outside/unreadable.png"])
+    const editor = await mountPrompting({ onSteer })
+    typeDraft(editor, "go left")
     await waitFor(() =>
-      expect(readLocalImagePathForAttachmentMock).toHaveBeenCalledOnce()
+      expect(screen.getByLabelText(MI.steerIntoTurn)).toBeInTheDocument()
     )
 
-    expect(uploadLocalPathToRemoteMock).not.toHaveBeenCalled()
-    expect(
-      screen.getByTitle(enMessages.Folder.chat.messageInput.send)
-    ).toBeDisabled()
-    expect(consoleError).toHaveBeenCalledWith(
-      "[MessageInput] remote path upload failed (unreadable.png):",
-      expect.any(Error)
+    await user.click(screen.getByLabelText(MI.steerIntoTurn))
+    await user.click(
+      await screen.findByRole("menuitem", { name: MI.steerIntoTurn })
     )
-    consoleError.mockRestore()
+    await waitFor(() => expect(onSteer).toHaveBeenCalledWith("go left"))
+    // Unsettled: the draft must survive until the backend confirms.
+    expect(serializeDocToText(editor.state.doc)).toContain("go left")
+
+    await act(async () => {
+      resolveSteer()
+    })
+    // Confirmed: the composer clears (the split collapses back to Stop-only).
+    await waitFor(() =>
+      expect(serializeDocToText(editor.state.doc)).not.toContain("go left")
+    )
+    await waitFor(() => expect(screen.queryByTitle(MI.queueMessage)).toBeNull())
   })
 
-  it("shows separate 20 MB image and 2 MB resource limits", async () => {
-    const tooLarge = (limit: number) => ({
-      code: "io_error",
-      message: "Local file exceeds the size limit",
-      i18n_key: "errors.upload.tooLarge",
-      i18n_params: { limit: String(limit) },
-    })
-    readLocalImagePathForAttachmentMock.mockRejectedValue(tooLarge(20_000_000))
-    uploadLocalPathToRemoteMock.mockRejectedValue(tooLarge(2 * 1024 * 1024))
-
-    await renderRemoteAndDrop([
-      "/outside/oversize.png",
-      "/outside/oversize.txt",
-    ])
-
-    await waitFor(() => expect(toastErrorMock).toHaveBeenCalledTimes(2))
-    expect(toastErrorMock).toHaveBeenCalledWith(
-      "oversize.png exceeds the 20MB upload limit and was skipped."
+  it("falls back to the queue when the turn ends in the race window", async () => {
+    const user = userEvent.setup()
+    const { isNoActiveTurnRejection } = await import("@/lib/turn-busy")
+    vi.mocked(isNoActiveTurnRejection).mockReturnValue(true)
+    const onSteer = vi.fn().mockRejectedValue(new Error("no active turn"))
+    const onEnqueue = vi.fn()
+    const editor = await mountPrompting({ onSteer, onEnqueue })
+    typeDraft(editor, "late note")
+    await waitFor(() =>
+      expect(screen.getByLabelText(MI.steerIntoTurn)).toBeInTheDocument()
     )
-    expect(toastErrorMock).toHaveBeenCalledWith(
-      "oversize.txt exceeds the 2MB upload limit and was skipped."
+
+    await user.click(screen.getByLabelText(MI.steerIntoTurn))
+    await user.click(
+      await screen.findByRole("menuitem", { name: MI.steerIntoTurn })
     )
+
+    await waitFor(() => expect(onEnqueue).toHaveBeenCalled())
+    const [draft] = onEnqueue.mock.calls[0]
+    expect(draft.blocks).toEqual([{ type: "text", text: "late note" }])
+    // Draft consumed by the queue, not lost and not duplicated.
+    await waitFor(() =>
+      expect(serializeDocToText(editor.state.doc)).not.toContain("late note")
+    )
+  })
+
+  it("keeps the draft on a non-turn-end failure", async () => {
+    const user = userEvent.setup()
+    const { isNoActiveTurnRejection } = await import("@/lib/turn-busy")
+    vi.mocked(isNoActiveTurnRejection).mockReturnValue(false)
+    const onSteer = vi.fn().mockRejectedValue(new Error("boom"))
+    const onEnqueue = vi.fn()
+    const editor = await mountPrompting({ onSteer, onEnqueue })
+    typeDraft(editor, "keep me")
+    await waitFor(() =>
+      expect(screen.getByLabelText(MI.steerIntoTurn)).toBeInTheDocument()
+    )
+
+    await user.click(screen.getByLabelText(MI.steerIntoTurn))
+    await user.click(
+      await screen.findByRole("menuitem", { name: MI.steerIntoTurn })
+    )
+
+    await waitFor(() => expect(onSteer).toHaveBeenCalled())
+    // Real failure: nothing queued, draft intact for retry.
+    expect(onEnqueue).not.toHaveBeenCalled()
+    expect(serializeDocToText(editor.state.doc)).toContain("keep me")
   })
 })

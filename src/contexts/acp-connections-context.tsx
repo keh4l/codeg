@@ -35,6 +35,7 @@ import {
 } from "@/lib/api"
 import { denormalizeSnapshot } from "@/lib/snapshot-denormalize"
 import { buildDelegationSeedEnvelopes } from "@/lib/delegation-seed"
+import { isConnectionBusy } from "@/lib/connection-teardown"
 import {
   getConversationIdByExternalIdFromStore,
   useConversationRuntimeStore,
@@ -63,13 +64,18 @@ import type {
   ToolCallImageWire,
   UserMessageBlock,
 } from "@/lib/types"
-import { AGENT_LABELS } from "@/lib/types"
+import { getAgentLabel } from "@/lib/custom-agents"
 import {
   CONNECTION_IDLE_TIMEOUT_MS,
   CONNECTION_KEEPALIVE_INTERVAL_MS,
   IDLE_SWEEP_INTERVAL_MS,
 } from "@/lib/constants"
 import { sendSystemNotification } from "@/lib/notification"
+import {
+  playEventSound,
+  primeNotificationSoundOutput,
+  withEventSoundsSuppressed,
+} from "@/lib/notification-sound"
 import {
   getSavedPrefsForConnect,
   saveModePreference,
@@ -143,8 +149,14 @@ export interface ClaudeApiRetryState {
 }
 
 export type LiveContentBlock =
-  | { type: "text"; text: string }
-  | { type: "thinking"; text: string }
+  /**
+   * `parentToolUseId`: subagent attribution (claude-agent-acp ≥0.63,
+   * `_meta.claudeCode.parentToolUseId`). Parented text/thinking belongs to
+   * the live Agent capsule of that tool call — the runtime store routes it
+   * out of the main thread. `undefined` = main-thread content.
+   */
+  | { type: "text"; text: string; parentToolUseId?: string }
+  | { type: "thinking"; text: string; parentToolUseId?: string }
   | { type: "plan"; entries: PlanEntryInfo[] }
   | { type: "tool_call"; info: ToolCallInfo }
 
@@ -562,8 +574,18 @@ type Action =
     }
 
 type StreamingAction =
-  | { type: "CONTENT_DELTA"; contextKey: string; text: string }
-  | { type: "THINKING"; contextKey: string; text: string }
+  | {
+      type: "CONTENT_DELTA"
+      contextKey: string
+      text: string
+      parentToolUseId?: string
+    }
+  | {
+      type: "THINKING"
+      contextKey: string
+      text: string
+      parentToolUseId?: string
+    }
 
 type ConnectionsMap = Map<string, ConnectionState>
 const MAX_LIVE_TOOL_RAW_OUTPUT_CHARS = 200_000
@@ -1045,31 +1067,86 @@ function applyStreamingAction(
   // redact thinking text entirely, keeping the empty block as the signal).
   if (action.type === "CONTENT_DELTA" && action.text.length === 0) return null
 
+  // Orphan gate for subagent-attributed chunks: the parent Agent tool_call
+  // always precedes its subagent's chunks on the seq-ordered wire (and
+  // `tool_call` dispatch flushes the streaming queue first), so a parented
+  // delta whose parent is absent from liveMessage is out-of-turn residue —
+  // e.g. an async subagent still streaming after its parent turn settled.
+  // Dropping it here keeps liveMessage, its runtime-store sinks, and
+  // COMPLETE_TURN promotion consistent, and bounds memory (orphan text never
+  // accumulates).
+  if (action.parentToolUseId) {
+    const parentPresent = conn.liveMessage?.content.some(
+      (b) =>
+        b.type === "tool_call" && b.info.tool_call_id === action.parentToolUseId
+    )
+    if (!parentPresent) return null
+  }
+
   const prev = ensureLiveMessage(conn.liveMessage)
   const lastBlock = prev.content[prev.content.length - 1]
   let newContent: LiveContentBlock[] | null = null
 
+  // Merge only into a trailing block of the same kind AND the same subagent
+  // attribution — main → subagent → main must produce three blocks. Mirrors
+  // the backend's `append_text_delta` predicate so a snapshot-hydrated client
+  // converges on identical block boundaries.
   if (action.type === "CONTENT_DELTA") {
-    if (lastBlock?.type === "text") {
+    if (
+      lastBlock?.type === "text" &&
+      lastBlock.parentToolUseId === action.parentToolUseId
+    ) {
       newContent = [
         ...prev.content.slice(0, -1),
-        { type: "text", text: lastBlock.text + action.text },
+        {
+          type: "text",
+          text: lastBlock.text + action.text,
+          parentToolUseId: action.parentToolUseId,
+        },
       ]
     } else {
-      newContent = [...prev.content, { type: "text", text: action.text }]
+      newContent = [
+        ...prev.content,
+        {
+          type: "text",
+          text: action.text,
+          parentToolUseId: action.parentToolUseId,
+        },
+      ]
     }
   } else {
-    if (action.text.length === 0 && lastBlock?.type === "thinking") {
-      // Already have a thinking block; an empty follow-up event is a no-op.
+    if (
+      action.text.length === 0 &&
+      lastBlock?.type === "thinking" &&
+      lastBlock.parentToolUseId === action.parentToolUseId
+    ) {
+      // Already have a thinking block of this attribution; an empty
+      // follow-up event is a no-op. (A parented empty chunk must not
+      // suppress the main thread's "Thinking..." placeholder, nor vice
+      // versa — hence the attribution check.)
       return null
     }
-    if (lastBlock?.type === "thinking") {
+    if (
+      lastBlock?.type === "thinking" &&
+      lastBlock.parentToolUseId === action.parentToolUseId
+    ) {
       newContent = [
         ...prev.content.slice(0, -1),
-        { type: "thinking", text: lastBlock.text + action.text },
+        {
+          type: "thinking",
+          text: lastBlock.text + action.text,
+          parentToolUseId: action.parentToolUseId,
+        },
       ]
     } else {
-      newContent = [...prev.content, { type: "thinking", text: action.text }]
+      newContent = [
+        ...prev.content,
+        {
+          type: "thinking",
+          text: action.text,
+          parentToolUseId: action.parentToolUseId,
+        },
+      ]
     }
   }
 
@@ -2300,6 +2377,16 @@ export interface AcpActionsValue {
     conversationId?: number
   ): Promise<void>
   disconnect(contextKey: string): Promise<void>
+  /**
+   * Release a connection whose SURFACE went away on its own (a preview tab
+   * replaced by the next single-click in the sidebar) — never a user-intent
+   * teardown. Disconnects viewers and idle owners; a busy owner (prompting
+   * turn, or unresolved background tasks) is left running for the idle sweep,
+   * because `acpDisconnect` kills the agent CLI mid-turn and the agent records
+   * that as an interrupted request. Use `disconnect` when the user asked to
+   * stop.
+   */
+  disconnectIfIdle(contextKey: string): Promise<void>
   disconnectAll(): Promise<void>
   sendPrompt(
     contextKey: string,
@@ -2368,6 +2455,18 @@ export interface AcpActionsValue {
     parentConnectionId: string
     parentToolUseId: string
     agentType: AgentType
+    /**
+     * Backfill the in-flight turn from a session snapshot before routing
+     * live events. Required when attaching MID-TURN, which the desktop
+     * firehose cannot serve on its own: `acp://event` only carries FUTURE
+     * events, so without a snapshot the viewer misses everything the turn
+     * already produced and its status stays `connected` instead of
+     * `prompting` (no streaming affordance, empty live message). Real
+     * delegation children attach at `delegation_started` — before the
+     * child's first event — and leave this off. No effect on web/remote:
+     * the attach protocol always opens with a snapshot.
+     */
+    hydrate?: boolean
   }): void
   /**
    * Tear down a previously-attached delegation child. Releases the
@@ -2503,6 +2602,14 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
     pushAlertRef.current = pushAlert
   }, [pushAlert])
 
+  // Notification sounds: browsers only open audio output from inside a user
+  // gesture, so start watching for one now. The user's ordinary first click in
+  // the workspace unlocks it, well before an agent event needs it — otherwise
+  // the session's first cue is lost (the Settings preview cannot stand in for
+  // it: that is a different window with its own audio context). No-op while
+  // sounds are disabled.
+  useEffect(() => primeNotificationSoundOutput(), [])
+
   // Ref-based store — mutations don't trigger React state updates
   const storeRef = useRef<InternalStore>({
     connections: new Map(),
@@ -2516,6 +2623,12 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
   // bypass this entirely — their events are routed by the per-subscription
   // handlers registered in `attachSubscriptionsRef`.
   const reverseMapRef = useRef(new Map<string, string>())
+
+  // contextKey → diagnostic evidence already surfaced as an alert. The same
+  // error reaches us twice: live on the wire, and again in `last_error` on
+  // every re-attach snapshot. Without this a browser refresh would re-raise
+  // the alert each time.
+  const alertedErrorDetailsRef = useRef(new Map<string, string>())
 
   // contextKey → active EventStream subscription handle. Populated only for
   // connections established via the Subscribe-with-Snapshot attach
@@ -2567,7 +2680,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
         return { kind: "missing_config", reason: t("blocked.missingConfig") }
       }
 
-      const agentLabel = AGENT_LABELS[agent.agent_type]
+      const agentLabel = getAgentLabel(agent.agent_type)
       if (!agent.enabled) {
         return {
           kind: "disabled",
@@ -2588,7 +2701,13 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
 
       return {
         kind: "sdk_missing",
-        reason: t("blocked.sdkMissing", { agent: agentLabel }),
+        // Claude Code / Codex install a separate ACP adapter package, not the
+        // vendor CLI — saying "{agent} is not installed" to someone who has
+        // `claude` on their PATH reads as a bug in codeg. Name what's actually
+        // missing instead.
+        reason: agent.is_acp_adapter
+          ? t("blocked.adapterMissing", { agent: agentLabel })
+          : t("blocked.sdkMissing", { agent: agentLabel }),
       }
     },
     [t]
@@ -2791,7 +2910,15 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
         continue
       }
       const last = list[list.length - 1]
-      if (last && last.type === action.type) {
+      // Same-type AND same subagent attribution: within one flush window,
+      // main-thread and parented deltas (or two different subagents') must
+      // not concatenate — this pre-coalescing runs BEFORE the reducer's
+      // attribution-aware merge and would otherwise defeat it.
+      if (
+        last &&
+        last.type === action.type &&
+        last.parentToolUseId === action.parentToolUseId
+      ) {
         last.text += action.text
       } else {
         list.push({ ...action })
@@ -2912,6 +3039,13 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
 
   const handleMappedEvent = useCallback(
     (contextKey: string, e: EventEnvelope) => {
+      // Audible cue for the events the user opted into (Settings → General →
+      // notification sounds). One call for the whole catalogue rather than a
+      // line per case: the mapping — including which events are cues at all —
+      // lives in `soundEventIdForEnvelope`, alongside the preference schema it
+      // mirrors. Off unless configured, and self-throttling, so this is a
+      // cheap no-op on the hot path.
+      playEventSound(e)
       switch (e.type) {
         case "status_changed":
           flushStreamingQueue()
@@ -2922,10 +3056,18 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
             type: "CONTENT_DELTA",
             contextKey,
             text: e.text,
+            // Wire `null` normalizes to `undefined` so the reducer's strict
+            // attribution equality works on one representation.
+            parentToolUseId: e.parent_tool_use_id ?? undefined,
           })
           break
         case "thinking":
-          enqueueStreamingAction({ type: "THINKING", contextKey, text: e.text })
+          enqueueStreamingAction({
+            type: "THINKING",
+            contextKey,
+            text: e.text,
+            parentToolUseId: e.parent_tool_use_id ?? undefined,
+          })
           break
         case "claude_sdk_message":
           flushStreamingQueue()
@@ -3096,7 +3238,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           //    sendSystemNotification).
           if (e.settled && e.settled.length > 0) {
             const nc = storeRef.current.connections.get(contextKey)
-            const agentLabel = nc ? AGENT_LABELS[nc.agentType] : "Agent"
+            const agentLabel = nc ? getAgentLabel(nc.agentType) : "Agent"
             const fn = folderNameRef.current
             const title = fn ? `${fn} - Codeg` : "Codeg"
             for (const settled of e.settled) {
@@ -3156,7 +3298,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           {
             const nc = storeRef.current.connections.get(contextKey)
             if (nc) {
-              const agentLabel = AGENT_LABELS[nc.agentType]
+              const agentLabel = getAgentLabel(nc.agentType)
               const fn = folderNameRef.current
               const title = fn ? `${fn} - Codeg` : "Codeg"
               sendSystemNotification(
@@ -3349,7 +3491,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           {
             const nc = storeRef.current.connections.get(contextKey)
             if (nc) {
-              const agentLabel = AGENT_LABELS[nc.agentType]
+              const agentLabel = getAgentLabel(nc.agentType)
               const fn = folderNameRef.current
               const title = fn ? `${fn} - Codeg` : "Codeg"
               sendSystemNotification(
@@ -3364,7 +3506,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           flushStreamingQueue()
           const nc = storeRef.current.connections.get(contextKey)
           const agentLabel = nc
-            ? AGENT_LABELS[nc.agentType]
+            ? getAgentLabel(nc.agentType)
             : (e.agent_type as string)
 
           // Localize backend errors via their stable `code` identifier.
@@ -3412,6 +3554,20 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
                 return t("backendErrors.turnFailedEmpty", {
                   agent: agentLabel,
                 })
+              // The agent did emit something, but the backend couldn't parse
+              // it — points at an agent/protocol version mismatch rather than
+              // at the agent's configuration.
+              case "turn_failed_empty_protocol":
+                return t("backendErrors.turnFailedEmptyProtocol", {
+                  agent: agentLabel,
+                })
+              // Only metadata (plan / mode / usage) arrived. Reported as an
+              // observation, NOT as "this turn was fine" — a real failure can
+              // follow a plan or usage update.
+              case "turn_failed_empty_metadata":
+                return t("backendErrors.turnFailedEmptyMetadata", {
+                  agent: agentLabel,
+                })
               case "grok_model_switch_incompatible_agent":
                 return t("backendErrors.grokModelSwitchIncompatibleAgent", {
                   agent: agentLabel,
@@ -3421,9 +3577,27 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
             }
           })()
 
+          // Backend-supplied diagnostic evidence (agent stderr tail, unparsed
+          // update counts), already redacted and bounded there. The alert's
+          // `detail` slot already carries the localized message, so append
+          // below it — `StatusBarAlerts` renders that slot `whitespace-pre-wrap`.
+          const evidence = e.details?.trim()
+          const alertDetail = evidence
+            ? `${localizedMessage}\n\n${evidence}`
+            : localizedMessage
+
+          // `conn.error` feeds the composer status tooltip — keep it the
+          // one-line localized message, never the multi-line evidence.
           dispatch({ type: "ERROR", contextKey, message: localizedMessage })
-          pushAlertRef.current("error", t("eventErrorTitle"), localizedMessage)
-          // Send OS notification for agent errors
+          pushAlertRef.current("error", t("eventErrorTitle"), alertDetail)
+          // Remember what we surfaced so the snapshot path doesn't repeat it
+          // when this client re-attaches.
+          if (evidence) {
+            alertedErrorDetailsRef.current.set(contextKey, evidence)
+          }
+          // Send OS notification for agent errors. Deliberately message-only:
+          // notification centers persist their payload outside the app, so
+          // agent output must not be forwarded there.
           if (nc) {
             const fn = folderNameRef.current
             const title = fn ? `${fn} - Codeg` : "Codeg"
@@ -3444,7 +3618,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           // agent message so an unknown future code still surfaces something
           // intelligible rather than getting swallowed.
           const nc = storeRef.current.connections.get(contextKey)
-          const agentLabel = nc ? AGENT_LABELS[nc.agentType] : ""
+          const agentLabel = nc ? getAgentLabel(nc.agentType) : ""
           const localizedMessage = (() => {
             switch (e.code) {
               case "resource_not_found":
@@ -3498,6 +3672,24 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
     ]
   )
 
+  // Latest-ref for the event handler, so nothing downstream has to depend on
+  // `handleMappedEvent`'s identity. It closes over the i18n `t` / `tChat`,
+  // which are only stable while the locale is unchanged — a language switch
+  // (or any future unstable dep added to the callback) would otherwise churn
+  // both the global `acp://event` subscription below and every
+  // `setupAttachSubscription` consumer that hangs off `applyMappedEnvelope`.
+  // Tauri's `listen` / `unlisten` are both async IPC, so re-running that
+  // effect briefly leaves two listeners registered and every envelope is
+  // delivered twice. Duplicate delivery is already idempotent — the
+  // `lastAppliedSeq` guard below runs before the synchronous `EVENT_APPLIED`
+  // dispatch — but the subscription should simply never churn in the first
+  // place. See the mount-once regression test.
+  const handleMappedEventRef = useRef(handleMappedEvent)
+  // Re-sync each render so the latest closure is used at fire time.
+  useEffect(() => {
+    handleMappedEventRef.current = handleMappedEvent
+  })
+
   // Apply a single envelope to the store. Shared by the legacy global
   // listener and the attach-protocol per-subscription handlers so dedup +
   // dispatch ordering + JS subscriber fan-out stays identical between
@@ -3507,7 +3699,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       const conn = storeRef.current.connections.get(contextKey)
       if (conn && envelope.seq <= conn.lastAppliedSeq) return
       lastActivityRef.current.set(contextKey, Date.now())
-      handleMappedEvent(contextKey, envelope)
+      handleMappedEventRef.current(contextKey, envelope)
       dispatch({ type: "EVENT_APPLIED", contextKey, seq: envelope.seq })
       for (const ref of eventSubscribersRef.current) {
         try {
@@ -3517,7 +3709,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [dispatch, handleMappedEvent]
+    [dispatch]
   )
 
   // Re-seed `DelegationProvider` bindings from a snapshot's active_delegations.
@@ -3560,6 +3752,43 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
     []
   )
 
+  // Surface diagnostic evidence carried by a snapshot's `last_error`.
+  //
+  // Alerts are live-only, so a client that attached AFTER the error fired
+  // (browser refresh, second tab, cold attach mid-session) would otherwise
+  // never learn why the turn came back empty — the snapshot is its only
+  // channel. Scoped to errors that actually carry evidence, i.e. the inferred
+  // `turn_failed_empty*` family, so attaching to a connection with any older
+  // error doesn't start raising alerts it never used to.
+  //
+  // Same routing rules as the live path: evidence goes to the alert only,
+  // never to `conn.error` (composer tooltip) and never to an OS notification.
+  // Held in a ref, following `pushAlertRef` above: the attach/hydrate
+  // callbacks below are deliberately identity-stable (an empty dep array keeps
+  // a re-render from tearing down and re-establishing live subscriptions), so
+  // they must not close over a `t`-dependent callback directly.
+  const surfaceSnapshotErrorDetails = useCallback(
+    (
+      contextKey: string,
+      patch: import("@/lib/snapshot-denormalize").SnapshotPatch
+    ) => {
+      const evidence = patch.lastErrorDetails?.trim()
+      if (!evidence) return
+      if (alertedErrorDetailsRef.current.get(contextKey) === evidence) return
+      alertedErrorDetailsRef.current.set(contextKey, evidence)
+      pushAlertRef.current(
+        "error",
+        t("eventErrorTitle"),
+        patch.lastError ? `${patch.lastError}\n\n${evidence}` : evidence
+      )
+    },
+    [t]
+  )
+  const surfaceSnapshotErrorDetailsRef = useRef(surfaceSnapshotErrorDetails)
+  useEffect(() => {
+    surfaceSnapshotErrorDetailsRef.current = surfaceSnapshotErrorDetails
+  }, [surfaceSnapshotErrorDetails])
+
   // Open a Subscribe-with-Snapshot stream for `connectionId` and route its
   // frames into the store under `contextKey`. Returns the subscription
   // handle for cleanup, or `null` when the active transport doesn't
@@ -3586,6 +3815,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
         onSnapshot: (snapshot) => {
           const patch = denormalizeSnapshot(snapshot)
           dispatch({ type: "HYDRATE_FROM_SNAPSHOT", contextKey, patch })
+          surfaceSnapshotErrorDetailsRef.current(contextKey, patch)
           lastActivityRef.current.set(contextKey, Date.now())
           // Recover delegation bindings the snapshot carries but the transient
           // events don't (the load-bearing fix for the web-only "running shows
@@ -3598,9 +3828,15 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           )
         },
         onReplay: (events) => {
-          for (const envelope of events) {
-            applyMappedEnvelope(contextKey, envelope)
-          }
+          // Catching up on a gap (reconnect / lagged detach) re-delivers events
+          // that already happened. They belong in the UI, but replaying them
+          // must not fire a burst of notification sounds for turns that
+          // finished minutes ago.
+          withEventSoundsSuppressed(() => {
+            for (const envelope of events) {
+              applyMappedEnvelope(contextKey, envelope)
+            }
+          })
         },
         onEvent: (envelope) => {
           applyMappedEnvelope(contextKey, envelope)
@@ -3695,7 +3931,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
 
       // Touch activity on every incoming event
       lastActivityRef.current.set(contextKey, Date.now())
-      handleMappedEvent(contextKey, envelope)
+      handleMappedEventRef.current(contextKey, envelope)
 
       // Advance lastAppliedSeq after the event's effects have dispatched.
       // EVENT_APPLIED is idempotent (only advances if higher).
@@ -3742,12 +3978,11 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       }
       unlisten?.()
     }
-  }, [
-    bufferUnmappedEvent,
-    dispatch,
-    handleMappedEvent,
-    resolveListenerReadyWaiters,
-  ])
+    // Every dep here is a `useCallback(..., [])` — the subscription is
+    // registered once per mount and torn down only on unmount. The event
+    // handler deliberately isn't a dep; it's reached through
+    // `handleMappedEventRef` so a changing closure can't churn the listener.
+  }, [bufferUnmappedEvent, dispatch, resolveListenerReadyWaiters])
 
   // ── Backend keepalive timer ──
   // Frontend is the only side that knows which conversation tabs the
@@ -3964,6 +4199,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       }
       if (patch) {
         dispatch({ type: "HYDRATE_FROM_SNAPSHOT", contextKey, patch })
+        surfaceSnapshotErrorDetailsRef.current(contextKey, patch)
         seedDelegationsFromSnapshot(
           patch.connectionId,
           patch.activeDelegations,
@@ -4004,12 +4240,15 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       }
       connectingKeysRef.current.add(contextKey)
 
+      // Declared outside the try so the catch below can still tell whether this
+      // agent is an ACP adapter when picking its "not installed" wording.
+      let configuredAgent: AcpAgentStatus | null = null
+
       try {
         // Preflight: read agent status and block if the SDK / binary is
         // not installed. The session page must never trigger a download
         // or install — if the agent is not ready, prompt the user to
         // install it from Agent Settings instead.
-        let configuredAgent: AcpAgentStatus | null = null
         try {
           configuredAgent = await acpGetAgentStatus(agentType)
         } catch (error) {
@@ -4017,7 +4256,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
             message: normalizeErrorMessage(error),
           })
           const failedTitle = t("connectFailedTitle", {
-            agent: AGENT_LABELS[agentType],
+            agent: getAgentLabel(agentType),
           })
           pushAlertRef.current(
             "error",
@@ -4031,7 +4270,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
         const blocked = resolveConnectBlockState(configuredAgent)
         if (blocked.kind !== "none") {
           const failedTitle = t("connectFailedTitle", {
-            agent: AGENT_LABELS[agentType],
+            agent: getAgentLabel(agentType),
           })
           const detail =
             blocked.kind === "sdk_missing"
@@ -4218,15 +4457,25 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           savedPrefs.configValues
         )
 
-        // If disconnect was requested while connect was in flight,
-        // tear down immediately instead of registering the connection.
+        // If disconnect was requested while connect was in flight, tear down
+        // immediately instead of registering the connection — but tear down
+        // ONLY what this connect actually created. The backend dedups by
+        // (agent, cwd, session), so `acpConnect` may have handed back a
+        // connection this client already holds under another contextKey (a
+        // session still running in / behind another tab). Killing that one
+        // would end a turn nobody asked to stop; it stays reachable at its own
+        // key and is reclaimed by the sweeps.
         if (abandonedKeysRef.current.delete(contextKey)) {
-          acpDisconnect(connectionId).catch(() => {})
+          if (!isConnectionOwnedLocally(connectionId)) {
+            acpDisconnect(connectionId).catch(() => {})
+          }
           return
         }
         const pendingRequest = pendingConnectRequestsRef.current.get(contextKey)
         if (pendingRequest && !sameConnectRequest(pendingRequest, request)) {
-          acpDisconnect(connectionId).catch(() => {})
+          if (!isConnectionOwnedLocally(connectionId)) {
+            acpDisconnect(connectionId).catch(() => {})
+          }
           return
         }
 
@@ -4280,6 +4529,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
               contextKey,
               patch: snapshotPatch,
             })
+            surfaceSnapshotErrorDetailsRef.current(contextKey, snapshotPatch)
             // Recover delegation bindings from the snapshot here too. On
             // Tauri the firehose also delivers the events (so this is an
             // idempotent no-op), but it keeps RemoteDesktop and the legacy
@@ -4306,7 +4556,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           pendingRequest != null && !sameConnectRequest(pendingRequest, request)
         if (!superseded && !isAlertedError(err)) {
           const message = normalizeErrorMessage(err)
-          const agentLabel = AGENT_LABELS[agentType]
+          const agentLabel = getAgentLabel(agentType)
           // Backend safety net: if the agent turned out to be not
           // installed (e.g. the binary was removed between preflight
           // and spawn), surface the same install prompt with a direct
@@ -4326,7 +4576,9 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           if (message.includes("is not installed")) {
             pushAlertRef.current(
               "error",
-              t("blocked.sdkMissing", { agent: agentLabel }),
+              configuredAgent?.is_acp_adapter
+                ? t("blocked.adapterMissing", { agent: agentLabel })
+                : t("blocked.sdkMissing", { agent: agentLabel }),
               t("agentsSetupHint"),
               [buildOpenAgentsSettingsAction(agentType)]
             )
@@ -4416,6 +4668,26 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
     [dispatch, teardownAttachSubscription]
   )
 
+  // Lifecycle release for a surface that vanished on its own — currently the
+  // preview tab replaced by the next single-click in the sidebar. `disconnect`
+  // stays unconditional because its other callers express user INTENT (agent
+  // switch, restart-to-apply, an explicit close); this one must not destroy
+  // work nobody asked to stop. Same policy as the unmount cleanup
+  // (`shouldDisconnectOnUnmount`): a busy owner keeps running and the idle
+  // sweep reclaims it once its turn / background work settles — it is no
+  // longer in `openTabKeys`, so nothing else keeps it alive.
+  const disconnectIfIdle = useCallback(
+    async (contextKey: string) => {
+      const conn = storeRef.current.connections.get(contextKey)
+      // Owners only: a viewer's disconnect just detaches (it never
+      // acpDisconnects), and leaving one attached would leak its subscription
+      // — the idle sweep skips viewers.
+      if (conn && !conn.isViewer && isConnectionBusy(conn)) return
+      await disconnect(contextKey)
+    },
+    [disconnect]
+  )
+
   const reapplyConfig = useCallback(
     async (contextKey: string): Promise<boolean> => {
       const conn = storeRef.current.connections.get(contextKey)
@@ -4461,6 +4733,9 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       pendingUnmappedEventsRef.current.delete(conn.connectionId)
     }
     lastActivityRef.current.clear()
+    // Context keys are reused across backends, so a surviving entry here would
+    // suppress the first snapshot alert of an unrelated session.
+    alertedErrorDetailsRef.current.clear()
     await Promise.all(promises)
     dispatch({ type: "REMOVE_ALL" })
   }, [dispatch, teardownAttachSubscription])
@@ -4631,9 +4906,15 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       parentConnectionId: string
       parentToolUseId: string
       agentType: AgentType
+      hydrate?: boolean
     }) => {
-      const { connectionId, parentConnectionId, parentToolUseId, agentType } =
-        args
+      const {
+        connectionId,
+        parentConnectionId,
+        parentToolUseId,
+        agentType,
+        hydrate,
+      } = args
       const existing = storeRef.current.connections.get(connectionId)
       if (
         existing &&
@@ -4668,11 +4949,48 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       // Tauri desktop: the global acp://event listener routes by
       // reverseMap. Register the identity mapping and drain any
       // envelopes that arrived between the child's spawn and now.
-      reverseMapRef.current.set(connectionId, connectionId)
-      const buffered = consumeBufferedEvents(connectionId)
-      for (const env of buffered) {
-        applyMappedEnvelope(connectionId, env)
+      const route = () => {
+        reverseMapRef.current.set(connectionId, connectionId)
+        for (const env of consumeBufferedEvents(connectionId)) {
+          applyMappedEnvelope(connectionId, env)
+        }
       }
+      if (!hydrate) {
+        route()
+        return
+      }
+      // Mid-turn attach: the firehose carries only future events, so backfill
+      // the turn already in flight from a snapshot FIRST, then route (same
+      // order as `connectAsViewer` — anything that lands while the fetch is in
+      // flight stays in the unmapped buffer and is deduped by seq on drain).
+      void (async () => {
+        let patch: import("@/lib/snapshot-denormalize").SnapshotPatch | null =
+          null
+        try {
+          const snapshot = await acpGetSessionSnapshot(connectionId)
+          if (snapshot) patch = denormalizeSnapshot(snapshot)
+        } catch (e) {
+          console.warn(
+            "[acp-context] child snapshot fetch failed for",
+            connectionId,
+            e
+          )
+        }
+        // The viewer may have closed while the snapshot was in flight —
+        // never hydrate or install routing for a detached child.
+        const still = storeRef.current.connections.get(connectionId)
+        if (!still?.isDelegationChild || still.connectionId !== connectionId) {
+          return
+        }
+        if (patch) {
+          dispatch({
+            type: "HYDRATE_FROM_SNAPSHOT",
+            contextKey: connectionId,
+            patch,
+          })
+        }
+        route()
+      })()
     },
     [
       applyMappedEnvelope,
@@ -4699,6 +5017,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
     () => ({
       connect,
       disconnect,
+      disconnectIfIdle,
       disconnectAll,
       sendPrompt,
       setMode,
@@ -4721,6 +5040,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
     [
       connect,
       disconnect,
+      disconnectIfIdle,
       disconnectAll,
       sendPrompt,
       setMode,

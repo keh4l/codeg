@@ -30,8 +30,9 @@ pub struct DbConversationSummary {
     pub id: i32,
     pub folder_id: i32,
     pub title: Option<String>,
-    /// Mirror of `conversation.title_locked`: the user renamed this row by hand,
-    /// so the auto-title backfill must leave it alone.
+    /// Mirror of `conversation.title_locked`: a user action named this row (a
+    /// rename, or a fork's `[Fork] ` prefix), so the auto-title backfill must
+    /// leave it alone.
     pub title_locked: bool,
     pub agent_type: AgentType,
     pub status: String,
@@ -62,6 +63,11 @@ pub struct DbConversationSummary {
     pub parent_tool_use_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delegation_call_id: Option<String>,
+    /// Mirror of `conversation.origin_cwd`: the working directory this
+    /// conversation actually ran in when it differs from its current folder's
+    /// path (set when a removed task worktree's conversations were re-parented).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin_cwd: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,12 +105,6 @@ pub struct ConversationDetail {
 pub struct DbConversationDetail {
     pub summary: DbConversationSummary,
     pub turns: Vec<MessageTurn>,
-    /// Whether turns older than this page are available. The DB-backed detail
-    /// endpoint returns the newest page first and uses `older_turns_cursor` as
-    /// the exclusive end index for the next page.
-    pub has_older_turns: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub older_turns_cursor: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_stats: Option<SessionStats>,
     /// See [`ConversationDetail::transcript_watermark`] — threaded through from
