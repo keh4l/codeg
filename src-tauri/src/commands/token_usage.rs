@@ -1332,11 +1332,14 @@ mod tests {
                 origin_cwd: None,
             },
             turns,
-            has_older_turns: false,
-            older_turns_cursor: None,
             session_stats: stats,
             transcript_watermark: None,
             in_flight_user_turn_id: None,
+            turns_offset: None,
+            turns_total: None,
+            assistant_turns_before_offset: None,
+            prefix_hash: None,
+            uncovered_prefix_max_ts: None,
         }
     }
 
