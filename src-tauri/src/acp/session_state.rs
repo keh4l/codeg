@@ -641,7 +641,7 @@ impl SessionState {
                     modes.current_mode_id = mode_id.clone();
                 }
             }
-            AcpEvent::SessionConfigOptions { config_options } => {
+            AcpEvent::SessionConfigOptions { config_options, .. } => {
                 self.config_options = Some(config_options.clone());
             }
             AcpEvent::SessionConfigStale { stale, kind } => {
@@ -3084,6 +3084,8 @@ mod tests {
                     groups: vec![],
                 }),
             }],
+            operation_id: None,
+            operation_status: None,
         });
         s.apply_event(&AcpEvent::UsageUpdate {
             used: 1234,
