@@ -2657,6 +2657,8 @@
         "toggleOn": "Ein",
         "toggleOff": "Aus",
         "agentSettings": "Agent-Einstellungen",
+        "cliDefaultSettings": "CLI-Standardeinstellungen",
+        "autoDefault": "Auto (default)",
         "searchModel": "Modelle suchen...",
         "searchModelAria": "Modelle suchen",
         "modelListLabel": "Modelle",

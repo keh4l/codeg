@@ -2657,6 +2657,8 @@
         "toggleOn": "Ligado",
         "toggleOff": "Desligado",
         "agentSettings": "Configurações do agente",
+        "cliDefaultSettings": "Padrões da CLI",
+        "autoDefault": "Auto (default)",
         "searchModel": "Buscar modelos...",
         "searchModelAria": "Buscar modelos",
         "modelListLabel": "Modelos",

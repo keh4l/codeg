@@ -2657,6 +2657,8 @@
         "toggleOn": "تشغيل",
         "toggleOff": "إيقاف",
         "agentSettings": "إعدادات الوكيل",
+        "cliDefaultSettings": "إعدادات CLI الافتراضية",
+        "autoDefault": "Auto (default)",
         "searchModel": "البحث عن النماذج...",
         "searchModelAria": "البحث عن النماذج",
         "modelListLabel": "النماذج",

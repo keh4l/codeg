@@ -2917,6 +2917,7 @@ async fn apply_and_emit_session_config_options(
         session,
         state,
         emitter,
+        agent_type,
         preferred_mode_id,
         preferred_config_values,
         initial_config_options,
@@ -3037,6 +3038,11 @@ fn claude_raw_sdk_session_meta(
 ///   `claude_chunk_parent_tool_use_id`). The adapter checks strictly
 ///   `=== true`, and a pre-0.63 binary ignores the unknown key, so this is
 ///   inert everywhere it isn't understood.
+/// - Cursor only: `_meta["parameterizedModelPicker"] = true` — request the
+///   native base-model catalog plus model-specific reasoning / thinking /
+///   context / fast config options. Cursor checks this key strictly; without
+///   it the ACP adapter exposes only one compatibility tuple per base model.
+///   Older Cursor builds ignore the extension metadata.
 fn build_client_capabilities(
     agent_type: AgentType,
     host_tools: HostToolsPolicy,
@@ -3056,6 +3062,14 @@ fn build_client_capabilities(
     if agent_type == AgentType::ClaudeCode {
         let mut meta = serde_json::Map::new();
         meta.insert("subagent-transcript".to_string(), serde_json::Value::Bool(true));
+        client_capabilities = client_capabilities.meta(meta);
+    }
+    if agent_type == AgentType::Cursor {
+        let mut meta = serde_json::Map::new();
+        meta.insert(
+            "parameterizedModelPicker".to_string(),
+            serde_json::Value::Bool(true),
+        );
         client_capabilities = client_capabilities.meta(meta);
     }
     client_capabilities
@@ -5683,6 +5697,7 @@ async fn apply_preferred_session_options(
     session: &mut sacp::ActiveSession<'_, Agent>,
     state: &Arc<RwLock<SessionState>>,
     emitter: &EventEmitter,
+    agent_type: AgentType,
     preferred_mode_id: Option<&str>,
     preferred_config_values: &BTreeMap<String, String>,
     initial_config_options: Vec<SessionConfigOption>,
@@ -5706,7 +5721,7 @@ async fn apply_preferred_session_options(
 
     let session_id = session.session_id().clone();
     let mut options = initial_config_options;
-    for (config_id, value_id) in preferred_config_values {
+    for (config_id, value_id) in preferred_config_apply_order(agent_type, preferred_config_values) {
         // Skip the round-trip when the agent's current value already matches.
         // Note: codex-acp 1.0.0 advertises "mode" as a config option (so the
         // match check below normally fires), but we still do NOT skip when a
@@ -5735,6 +5750,29 @@ async fn apply_preferred_session_options(
     }
 
     options
+}
+
+/// Cursor's parameterized picker advertises only `model` while Auto is active.
+/// Applying a saved model makes Cursor return that model's reasoning / thinking
+/// / context / fast options, so model must be the first preference on a new or
+/// restored connection. Every other agent retains the BTreeMap's historical
+/// stable ordering.
+fn preferred_config_apply_order(
+    agent_type: AgentType,
+    values: &BTreeMap<String, String>,
+) -> Vec<(&String, &String)> {
+    let mut ordered = Vec::with_capacity(values.len());
+    if agent_type == AgentType::Cursor {
+        if let Some(entry) = values.get_key_value("model") {
+            ordered.push(entry);
+        }
+    }
+    ordered.extend(
+        values
+            .iter()
+            .filter(|(key, _)| agent_type != AgentType::Cursor || key.as_str() != "model"),
+    );
+    ordered
 }
 
 const TERMINAL_POLL_INTERVAL_MS: u64 = 200;
@@ -11387,6 +11425,17 @@ mod tests {
         assert!(codex.get("elicitation").is_some());
         assert!(codex.get("_meta").is_none());
 
+        // Cursor: opt into its parameterized model picker. Without this exact
+        // capability Cursor falls back to a compatibility catalog that exposes
+        // only one preselected parameter tuple per base model, hiding the
+        // model-specific reasoning / thinking / context / fast controls.
+        let cursor = caps_of(AgentType::Cursor);
+        assert_eq!(
+            cursor["_meta"]["parameterizedModelPicker"],
+            serde_json::Value::Bool(true)
+        );
+        assert!(cursor.get("elicitation").is_none());
+
         // Everyone else: neither gate; fs + terminal always advertised.
         let other = caps_of(AgentType::Gemini);
         assert!(other.get("_meta").is_none());
@@ -11486,6 +11535,30 @@ mod tests {
         let permissive =
             FsAccessPolicy::permissive(Path::new("/workspace"), AgentType::Grok, &BTreeMap::new());
         assert!(!permissive.confines_reads());
+    }
+
+    #[test]
+    fn cursor_saved_model_is_applied_before_its_dynamic_parameters() {
+        let values = BTreeMap::from([
+            ("context".to_string(), "1m".to_string()),
+            ("fast".to_string(), "true".to_string()),
+            ("model".to_string(), "provider/model-v1".to_string()),
+            ("reasoning".to_string(), "extra-high".to_string()),
+        ]);
+
+        let cursor_ids: Vec<&str> = preferred_config_apply_order(AgentType::Cursor, &values)
+            .into_iter()
+            .map(|(id, _)| id.as_str())
+            .collect();
+        assert_eq!(cursor_ids, ["model", "context", "fast", "reasoning"]);
+
+        // No global behavior change: other agents retain the prior BTreeMap
+        // ordering even when they happen to expose a `model` config option.
+        let other_ids: Vec<&str> = preferred_config_apply_order(AgentType::Gemini, &values)
+            .into_iter()
+            .map(|(id, _)| id.as_str())
+            .collect();
+        assert_eq!(other_ids, ["context", "fast", "model", "reasoning"]);
     }
 
     #[test]
@@ -15145,6 +15218,28 @@ mod tests {
                 "value": "anthropic/claude-sonnet-5"
             })
         );
+    }
+
+    #[test]
+    fn cursor_parameterized_values_reach_the_wire_without_rewriting() {
+        let cases = [
+            ("model", "provider/model-v1"),
+            ("model", "default"),
+            ("reasoning", "extra-high"),
+            ("context", "1m"),
+            ("fast", "true"),
+        ];
+
+        for (config_id, raw_value) in cases {
+            let req = SetSessionConfigOptionRequest::new(
+                SessionId::new("cursor-session"),
+                SessionConfigId::new(config_id),
+                encode_config_option_value(false, raw_value),
+            );
+            let wire = serde_json::to_value(&req).unwrap();
+            assert_eq!(wire["configId"], config_id);
+            assert_eq!(wire["value"], raw_value);
+        }
     }
 
     #[test]

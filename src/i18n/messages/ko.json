@@ -2657,6 +2657,8 @@
         "toggleOn": "켬",
         "toggleOff": "끔",
         "agentSettings": "에이전트 설정",
+        "cliDefaultSettings": "CLI 기본 설정",
+        "autoDefault": "Auto (default)",
         "searchModel": "모델 검색...",
         "searchModelAria": "모델 검색",
         "modelListLabel": "모델",
