@@ -1,11 +1,15 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::process::Stdio;
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant, SystemTime};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 #[cfg(feature = "tauri-runtime")]
 use tauri::{Manager, State};
+use tokio::io::AsyncReadExt;
 
 use crate::acp::binary_cache;
 use crate::acp::custom_registry;
@@ -31,6 +35,11 @@ use crate::web::event_bridge::EventEmitter;
 
 const ACP_AGENTS_UPDATED_EVENT: &str = "app://acp-agents-updated";
 const NPM_PREFIX_TIMEOUT: Duration = Duration::from_millis(1500);
+const CURSOR_PROBE_STDOUT_LIMIT: usize = 1024 * 1024;
+const CURSOR_PROBE_STDERR_LIMIT: usize = 256 * 1024;
+const CURSOR_PROBE_CACHE_MAX_ENTRIES: usize = 16;
+const CURSOR_PROBE_SUCCESS_TTL: Duration = Duration::from_secs(300);
+const CURSOR_PROBE_FAILURE_BACKOFF: Duration = Duration::from_secs(3);
 
 static NPM_GLOBAL_PREFIX_CACHE: tokio::sync::OnceCell<PathBuf> = tokio::sync::OnceCell::const_new();
 
@@ -7541,12 +7550,37 @@ fn persist_cursor_cli_config(text: &str) -> Result<(), AcpError> {
 /// The cursor-agent binary codeg would launch: managed cache first, then the
 /// user's own install (PATH / ~/.local/bin) — the same order as `build_agent`.
 fn resolve_cursor_binary() -> Option<PathBuf> {
-    if let Ok(Some((path, _))) =
+    resolve_cursor_binary_identity().map(|(path, _)| path)
+}
+
+fn resolve_cursor_binary_identity() -> Option<(PathBuf, Option<String>)> {
+    if let Ok(Some((path, version))) =
         binary_cache::find_best_cached_binary_for_agent(AgentType::Cursor, "cursor-agent")
     {
-        return Some(path);
+        return Some((path, Some(version)));
     }
-    resolve_system_agent_binary("cursor-agent")
+    resolve_system_agent_binary("cursor-agent").map(|path| (path, None))
+}
+
+/// Resolve the Cursor credential environment once for both the long-lived ACP
+/// process and transient catalog/status probes. Empty values are an internal
+/// `env_remove` sentinel. Subscription mode is authoritative and always clears
+/// both custom credential variables; custom/API-key mode preserves explicit
+/// values byte-for-byte.
+pub(crate) fn cursor_effective_runtime_env(
+    runtime_env: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let mut effective = runtime_env.clone();
+    // `merge_agent_env` applies Codeg's live proxy overrides after saved env;
+    // probes must observe the same network route and precedence.
+    for (key, value) in crate::network::proxy::current_proxy_env_vars() {
+        effective.insert(key, value);
+    }
+    if runtime_env.get("CURSOR_AUTH_MODE").map(String::as_str) == Some("subscription") {
+        effective.insert("CURSOR_API_KEY".to_string(), String::new());
+        effective.insert("CURSOR_API_BASE_URL".to_string(), String::new());
+    }
+    effective
 }
 
 /// The Cursor agent's effective probe env: the saved env (env_json) with the
@@ -7558,8 +7592,6 @@ fn resolve_cursor_binary() -> Option<PathBuf> {
 /// `CURSOR_API_KEY` is always materialized (empty when unset) so
 /// `run_cursor_probe` makes an explicit set-or-remove decision and a stale
 /// inherited key can never leak in and produce a bogus "invalid API key".
-/// `CURSOR_API_BASE_URL` is always cleared — the CLI has no custom-endpoint
-/// support, so a base URL is never a valid probe input.
 async fn cursor_probe_env(db: &AppDatabase, api_key: Option<&str>) -> BTreeMap<String, String> {
     let mut env: BTreeMap<String, String> =
         agent_setting_service::get_by_agent_type(&db.conn, AgentType::Cursor)
@@ -7570,25 +7602,125 @@ async fn cursor_probe_env(db: &AppDatabase, api_key: Option<&str>) -> BTreeMap<S
             .and_then(|raw| serde_json::from_str::<BTreeMap<String, String>>(&raw).ok())
             .unwrap_or_default();
     if let Some(key) = api_key {
-        env.insert("CURSOR_API_KEY".to_string(), key.trim().to_string());
+        let key = key.trim();
+        env.insert("CURSOR_API_KEY".to_string(), key.to_string());
+        env.insert(
+            "CURSOR_AUTH_MODE".to_string(),
+            if key.is_empty() {
+                "subscription"
+            } else {
+                "custom"
+            }
+            .to_string(),
+        );
     }
-    // Materialize the key so an unset one becomes an explicit empty ⇒ removed.
-    env.entry("CURSOR_API_KEY".to_string()).or_default();
-    // Scrub any stale base URL (legacy env_json row or inherited dev-shell
-    // export): empty ⇒ removed by run_cursor_probe.
-    env.insert("CURSOR_API_BASE_URL".to_string(), String::new());
-    env
+    cursor_effective_runtime_env(&env)
 }
 
-/// Run a cursor-agent subcommand with a timeout, capturing stdout.
-async fn run_cursor_probe(
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CursorProbeError {
+    NotInstalled,
+    Spawn,
+    Timeout,
+    OutputTooLarge,
+    NonZeroExit,
+    InvalidUtf8,
+    EmptyOutput,
+    InvalidFormat,
+}
+
+impl CursorProbeError {
+    fn code(&self) -> &'static str {
+        match self {
+            Self::NotInstalled => "cursor_probe_not_installed",
+            Self::Spawn => "cursor_probe_spawn_failed",
+            Self::Timeout => "cursor_probe_timeout",
+            Self::OutputTooLarge => "cursor_probe_output_too_large",
+            Self::NonZeroExit => "cursor_probe_nonzero_exit",
+            Self::InvalidUtf8 => "cursor_probe_invalid_utf8",
+            Self::EmptyOutput => "cursor_probe_empty_output",
+            Self::InvalidFormat => "cursor_probe_invalid_format",
+        }
+    }
+}
+
+impl std::fmt::Display for CursorProbeError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let message = match self {
+            Self::NotInstalled => "Cursor CLI is not installed.",
+            Self::Spawn => "Cursor CLI probe could not be started.",
+            Self::Timeout => "Cursor CLI probe timed out.",
+            Self::OutputTooLarge => "Cursor CLI probe output exceeded the safety limit.",
+            Self::NonZeroExit => "Cursor CLI probe exited unsuccessfully.",
+            Self::InvalidUtf8 => "Cursor CLI probe returned invalid UTF-8.",
+            Self::EmptyOutput => "Cursor CLI probe returned no output.",
+            Self::InvalidFormat => "Cursor CLI probe returned an unsupported format.",
+        };
+        formatter.write_str(message)
+    }
+}
+
+async fn read_cursor_probe_stream<R: tokio::io::AsyncRead + Unpin>(
+    mut reader: R,
+    limit: usize,
+) -> Result<Vec<u8>, CursorProbeError> {
+    let mut output = Vec::with_capacity(limit.min(16 * 1024));
+    let mut chunk = [0_u8; 8 * 1024];
+    loop {
+        let read = reader
+            .read(&mut chunk)
+            .await
+            .map_err(|_| CursorProbeError::Spawn)?;
+        if read == 0 {
+            return Ok(output);
+        }
+        if output.len().saturating_add(read) > limit {
+            return Err(CursorProbeError::OutputTooLarge);
+        }
+        output.extend_from_slice(&chunk[..read]);
+    }
+}
+
+async fn terminate_cursor_probe(child: &mut tokio::process::Child, pid: Option<u32>) {
+    let mut signalled = Vec::new();
+    if let Some(pid) = pid {
+        let config = kill_tree::Config {
+            signal: "SIGTERM".to_string(),
+            include_target: true,
+        };
+        if let Ok(outputs) = kill_tree::tokio::kill_tree_with_config(pid, &config).await {
+            signalled.extend(outputs.into_iter().filter_map(|output| match output {
+                kill_tree::Output::Killed { process_id, .. } => Some(process_id),
+                kill_tree::Output::MaybeAlreadyTerminated { .. } => None,
+            }));
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        for process_id in signalled {
+            let config = kill_tree::Config {
+                signal: "SIGKILL".to_string(),
+                include_target: true,
+            };
+            let _ = kill_tree::tokio::kill_tree_with_config(process_id, &config).await;
+        }
+    }
+    let _ = child.start_kill();
+    let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
+}
+
+/// Spawn one probe without a shell, drain both pipes concurrently with hard
+/// limits, and actively reap the process tree on every abort path.
+async fn run_cursor_probe_binary(
+    bin: &Path,
     args: &[&str],
-    timeout_secs: u64,
+    timeout_duration: Duration,
     extra_env: &BTreeMap<String, String>,
-) -> Result<String, String> {
-    let bin = resolve_cursor_binary().ok_or_else(|| "cursor-agent is not installed".to_string())?;
-    let mut cmd = crate::process::tokio_command(&bin);
-    cmd.args(args);
+) -> Result<String, CursorProbeError> {
+    let mut cmd = crate::process::tokio_command(bin);
+    cmd.args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
     for (key, value) in extra_env {
         if value.trim().is_empty() {
             // This process's env is inherited by the child; an empty value means
@@ -7598,23 +7730,257 @@ async fn run_cursor_probe(
             cmd.env(key, value);
         }
     }
-    let output = tokio::time::timeout(
-        std::time::Duration::from_secs(timeout_secs),
-        cmd.output(),
-    )
-    .await
-    .map_err(|_| format!("cursor-agent {} timed out", args.join(" ")))?
-    .map_err(|e| format!("failed to run cursor-agent: {e}"))?;
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    if !output.status.success() && stdout.trim().is_empty() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "cursor-agent {} failed: {}",
-            args.join(" "),
-            stderr.trim()
-        ));
+    let mut child = cmd.spawn().map_err(|_| CursorProbeError::Spawn)?;
+    let pid = child.id();
+    let stdout = child.stdout.take().ok_or(CursorProbeError::Spawn)?;
+    let stderr = child.stderr.take().ok_or(CursorProbeError::Spawn)?;
+    let mut stdout_task = tokio::spawn(read_cursor_probe_stream(stdout, CURSOR_PROBE_STDOUT_LIMIT));
+    let mut stderr_task = tokio::spawn(read_cursor_probe_stream(stderr, CURSOR_PROBE_STDERR_LIMIT));
+
+    let outcome = {
+        let mut stdout_value = None;
+        let mut stderr_value = None;
+        let mut status_value = None;
+        let deadline = tokio::time::sleep(timeout_duration);
+        tokio::pin!(deadline);
+        loop {
+            tokio::select! {
+                result = &mut stdout_task, if stdout_value.is_none() => {
+                    match result {
+                        Ok(Ok(value)) => stdout_value = Some(value),
+                        Ok(Err(error)) => break Err(error),
+                        Err(_) => break Err(CursorProbeError::Spawn),
+                    }
+                }
+                result = &mut stderr_task, if stderr_value.is_none() => {
+                    match result {
+                        Ok(Ok(value)) => stderr_value = Some(value),
+                        Ok(Err(error)) => break Err(error),
+                        Err(_) => break Err(CursorProbeError::Spawn),
+                    }
+                }
+                result = child.wait(), if status_value.is_none() => {
+                    match result {
+                        Ok(status) => status_value = Some(status),
+                        Err(_) => break Err(CursorProbeError::Spawn),
+                    }
+                }
+                _ = &mut deadline => break Err(CursorProbeError::Timeout),
+            }
+            if let (Some(status), Some(stdout), Some(stderr)) =
+                (status_value, stdout_value.as_ref(), stderr_value.as_ref())
+            {
+                break Ok((status, stdout.clone(), stderr.clone()));
+            }
+        }
+    };
+
+    let (status, stdout, stderr) = match outcome {
+        Ok(output) => output,
+        Err(error) => {
+            stdout_task.abort();
+            stderr_task.abort();
+            terminate_cursor_probe(&mut child, pid).await;
+            return Err(error);
+        }
+    };
+    if !status.success() {
+        return Err(CursorProbeError::NonZeroExit);
+    }
+    let stdout = String::from_utf8(stdout).map_err(|_| CursorProbeError::InvalidUtf8)?;
+    String::from_utf8(stderr).map_err(|_| CursorProbeError::InvalidUtf8)?;
+    if stdout.trim().is_empty() {
+        return Err(CursorProbeError::EmptyOutput);
     }
     Ok(stdout)
+}
+
+async fn run_cursor_probe(
+    args: &[&str],
+    timeout_secs: u64,
+    extra_env: &BTreeMap<String, String>,
+) -> Result<String, CursorProbeError> {
+    let bin = resolve_cursor_binary().ok_or(CursorProbeError::NotInstalled)?;
+    run_cursor_probe_binary(&bin, args, Duration::from_secs(timeout_secs), extra_env).await
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct CursorProbeCacheKey {
+    binary_path: PathBuf,
+    binary_version: Option<String>,
+    binary_len: u64,
+    binary_modified: Option<SystemTime>,
+    command: String,
+    environment_fingerprint: String,
+}
+
+#[derive(Clone)]
+struct CursorProbeCacheEntry {
+    result: Result<String, CursorProbeError>,
+    expires_at: Instant,
+}
+
+#[derive(Default)]
+struct CursorProbeCache {
+    entries: HashMap<CursorProbeCacheKey, CursorProbeCacheEntry>,
+    gates: HashMap<CursorProbeCacheKey, Arc<tokio::sync::Mutex<()>>>,
+}
+
+static CURSOR_PROBE_CACHE: OnceLock<tokio::sync::Mutex<CursorProbeCache>> = OnceLock::new();
+
+fn cursor_probe_cache() -> &'static tokio::sync::Mutex<CursorProbeCache> {
+    CURSOR_PROBE_CACHE.get_or_init(|| tokio::sync::Mutex::new(CursorProbeCache::default()))
+}
+
+fn prune_cursor_probe_cache(cache: &mut CursorProbeCache) {
+    let now = Instant::now();
+    cache.entries.retain(|_, entry| entry.expires_at > now);
+    cache.gates.retain(|_, gate| Arc::strong_count(gate) > 1);
+    while cache.entries.len() >= CURSOR_PROBE_CACHE_MAX_ENTRIES {
+        let Some(oldest) = cache
+            .entries
+            .iter()
+            .min_by_key(|(_, entry)| entry.expires_at)
+            .map(|(key, _)| key.clone())
+        else {
+            break;
+        };
+        cache.entries.remove(&oldest);
+    }
+}
+
+fn cursor_probe_environment_fingerprint(env: &BTreeMap<String, String>) -> String {
+    let effective = cursor_effective_runtime_env(env);
+    let home = effective
+        .get("HOME")
+        .cloned()
+        .or_else(|| std::env::var("HOME").ok())
+        .unwrap_or_default();
+    let config_dir = effective
+        .get("CURSOR_CONFIG_DIR")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("CURSOR_CONFIG_DIR").map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from(&home).join(".cursor"));
+
+    let mut digest = Sha256::new();
+    for key in [
+        "CURSOR_AUTH_MODE",
+        "CURSOR_API_KEY",
+        "CURSOR_API_BASE_URL",
+        "HOME",
+        "CURSOR_CONFIG_DIR",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "no_proxy",
+    ] {
+        digest.update(key.as_bytes());
+        digest.update([0]);
+        digest.update(effective.get(key).map(String::as_bytes).unwrap_or_default());
+        digest.update([0xff]);
+    }
+    digest.update(config_dir.to_string_lossy().as_bytes());
+    for name in ["cli-config.json", "auth.json"] {
+        let path = config_dir.join(name);
+        digest.update(name.as_bytes());
+        if let Ok(metadata) = fs::metadata(&path) {
+            digest.update(metadata.len().to_le_bytes());
+            if let Ok(modified) = metadata.modified() {
+                if let Ok(duration) = modified.duration_since(SystemTime::UNIX_EPOCH) {
+                    digest.update(duration.as_nanos().to_le_bytes());
+                }
+            }
+            if metadata.len() <= 1024 * 1024 {
+                if let Ok(bytes) = fs::read(path) {
+                    digest.update(bytes);
+                }
+            }
+        }
+    }
+    format!("{:x}", digest.finalize())
+}
+
+fn cursor_probe_cache_key(
+    bin: &Path,
+    binary_version: Option<&str>,
+    args: &[&str],
+    env: &BTreeMap<String, String>,
+) -> CursorProbeCacheKey {
+    let binary_path = fs::canonicalize(bin).unwrap_or_else(|_| bin.to_path_buf());
+    let metadata = fs::metadata(&binary_path).ok();
+    CursorProbeCacheKey {
+        binary_len: metadata.as_ref().map_or(0, fs::Metadata::len),
+        binary_modified: metadata.and_then(|item| item.modified().ok()),
+        binary_path,
+        binary_version: binary_version.map(str::to_string),
+        command: args.join("\0"),
+        environment_fingerprint: cursor_probe_environment_fingerprint(env),
+    }
+}
+
+async fn run_cursor_probe_cached(
+    args: &[&str],
+    timeout_secs: u64,
+    extra_env: &BTreeMap<String, String>,
+) -> Result<String, CursorProbeError> {
+    let (bin, version) = resolve_cursor_binary_identity().ok_or(CursorProbeError::NotInstalled)?;
+    run_cursor_probe_cached_for_binary(&bin, version.as_deref(), args, timeout_secs, extra_env)
+        .await
+}
+
+async fn run_cursor_probe_cached_for_binary(
+    bin: &Path,
+    binary_version: Option<&str>,
+    args: &[&str],
+    timeout_secs: u64,
+    extra_env: &BTreeMap<String, String>,
+) -> Result<String, CursorProbeError> {
+    let key = cursor_probe_cache_key(bin, binary_version, args, extra_env);
+    let gate = {
+        let mut cache = cursor_probe_cache().lock().await;
+        prune_cursor_probe_cache(&mut cache);
+        if let Some(entry) = cache.entries.get(&key) {
+            if entry.expires_at > Instant::now() {
+                return entry.result.clone();
+            }
+        }
+        cache
+            .gates
+            .entry(key.clone())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    };
+    let _guard = gate.lock().await;
+    {
+        let cache = cursor_probe_cache().lock().await;
+        if let Some(entry) = cache.entries.get(&key) {
+            if entry.expires_at > Instant::now() {
+                return entry.result.clone();
+            }
+        }
+    }
+    let result =
+        run_cursor_probe_binary(bin, args, Duration::from_secs(timeout_secs), extra_env).await;
+    let ttl = if result.is_ok() {
+        CURSOR_PROBE_SUCCESS_TTL
+    } else {
+        CURSOR_PROBE_FAILURE_BACKOFF
+    };
+    let mut cache = cursor_probe_cache().lock().await;
+    prune_cursor_probe_cache(&mut cache);
+    cache.entries.insert(
+        key.clone(),
+        CursorProbeCacheEntry {
+            result: result.clone(),
+            expires_at: Instant::now() + ttl,
+        },
+    );
+    cache.gates.remove(&key);
+    result
 }
 
 pub(crate) async fn acp_cursor_auth_status_core(
@@ -7630,6 +7996,7 @@ pub(crate) async fn acp_cursor_auth_status_core(
             email: None,
             membership: None,
             error: None,
+            error_code: None,
             binary_path: None,
         };
     }
@@ -7668,16 +8035,18 @@ pub(crate) async fn acp_cursor_auth_status_core(
                         email,
                         membership: get_str(&["membershipType", "membership", "plan"]),
                         error: None,
+                        error_code: None,
                         binary_path: binary_path.clone(),
                     }
                 }
-                Err(e) => crate::acp::types::CursorAuthStatus {
+                Err(_) => crate::acp::types::CursorAuthStatus {
                     installed: true,
                     is_authenticated: false,
-                    raw_status: Some(truncate_probe_output(&stdout)),
+                    raw_status: None,
                     email: None,
                     membership: None,
-                    error: Some(format!("unexpected status output: {e}")),
+                    error: Some(CursorProbeError::InvalidFormat.to_string()),
+                    error_code: Some(CursorProbeError::InvalidFormat.code().to_string()),
                     binary_path: binary_path.clone(),
                 },
             }
@@ -7688,7 +8057,8 @@ pub(crate) async fn acp_cursor_auth_status_core(
             raw_status: None,
             email: None,
             membership: None,
-            error: Some(err),
+            error: Some(err.to_string()),
+            error_code: Some(err.code().to_string()),
             binary_path,
         },
     }
@@ -7699,19 +8069,29 @@ pub(crate) async fn acp_cursor_list_models_core(
     api_key: Option<String>,
 ) -> crate::acp::types::CursorModelsResult {
     let extra_env = cursor_probe_env(db, api_key.as_deref()).await;
-    match run_cursor_probe(&["models"], 30, &extra_env).await {
+    match run_cursor_probe_cached(&["models"], 30, &extra_env).await {
         Ok(stdout) => {
             let (models, default_model) = parse_cursor_models(&stdout);
+            if models.is_empty() {
+                return crate::acp::types::CursorModelsResult {
+                    models,
+                    default_model,
+                    error: Some(CursorProbeError::InvalidFormat.to_string()),
+                    error_code: Some(CursorProbeError::InvalidFormat.code().to_string()),
+                };
+            }
             crate::acp::types::CursorModelsResult {
                 models,
                 default_model,
                 error: None,
+                error_code: None,
             }
         }
         Err(err) => crate::acp::types::CursorModelsResult {
             models: Vec::new(),
             default_model: None,
-            error: Some(err),
+            error: Some(err.to_string()),
+            error_code: Some(err.code().to_string()),
         },
     }
 }
@@ -7767,19 +8147,15 @@ fn parse_cursor_models(stdout: &str) -> (Vec<crate::acp::types::CursorModelInfo>
 pub(crate) async fn cursor_models_for_runtime(
     runtime_env: &BTreeMap<String, String>,
 ) -> Result<Vec<crate::acp::types::CursorModelInfo>, String> {
-    let mut probe_env = runtime_env.clone();
-    // Match the spawned Cursor process's subscription policy: an inherited API
-    // key must not hijack a browser-login session. Empty means env_remove in
-    // run_cursor_probe.
-    if runtime_env.get("CURSOR_AUTH_MODE").map(String::as_str) == Some("subscription")
-        && !runtime_env
-            .get("CURSOR_API_KEY")
-            .is_some_and(|value| !value.trim().is_empty())
-    {
-        probe_env.insert("CURSOR_API_KEY".to_string(), String::new());
+    let probe_env = cursor_effective_runtime_env(runtime_env);
+    let stdout = run_cursor_probe_cached(&["models"], 30, &probe_env)
+        .await
+        .map_err(|error| error.to_string())?;
+    let models = parse_cursor_models(&stdout).0;
+    if models.is_empty() {
+        return Err(CursorProbeError::InvalidFormat.to_string());
     }
-    let stdout = run_cursor_probe(&["models"], 30, &probe_env).await?;
-    Ok(parse_cursor_models(&stdout).0)
+    Ok(models)
 }
 
 /// Strip ANSI SGR escape sequences from CLI output.
@@ -7801,15 +8177,6 @@ fn strip_ansi(input: &str) -> String {
         out.push(c);
     }
     out
-}
-
-fn truncate_probe_output(s: &str) -> String {
-    let t = s.trim();
-    if t.len() > 400 {
-        format!("{}…", &t[..t.char_indices().take_while(|(i, _)| *i < 400).last().map(|(i, c)| i + c.len_utf8()).unwrap_or(400)])
-    } else {
-        t.to_string()
-    }
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -8669,10 +9036,11 @@ pub async fn acp_set_config_option(
     connection_id: String,
     config_id: String,
     value_id: String,
+    operation_id: Option<String>,
     manager: State<'_, ConnectionManager>,
-) -> Result<(), AcpError> {
+) -> Result<Option<String>, AcpError> {
     manager
-        .set_config_option(&connection_id, config_id, value_id)
+        .set_config_option(&connection_id, config_id, value_id, operation_id)
         .await
 }
 
@@ -13008,13 +13376,17 @@ wire_api = "chat"
     async fn cursor_probe_env_materializes_key_and_scrubs_base_url() {
         let db = crate::db::test_helpers::fresh_in_memory_db().await;
 
-        // API-key mode: the form value wins over saved env and is trimmed; the
-        // base URL is always scrubbed to empty (⇒ removed by run_cursor_probe).
+        // API-key mode: the form value wins over saved env and is trimmed;
+        // an explicit custom base URL would be preserved by the shared policy.
         let env = cursor_probe_env(&db, Some("  my-key  ")).await;
-        assert_eq!(env.get("CURSOR_API_KEY").map(String::as_str), Some("my-key"));
         assert_eq!(
-            env.get("CURSOR_API_BASE_URL").map(String::as_str),
-            Some("")
+            env.get("CURSOR_API_KEY").map(String::as_str),
+            Some("my-key")
+        );
+        assert!(!env.contains_key("CURSOR_API_BASE_URL"));
+        assert_eq!(
+            env.get("CURSOR_AUTH_MODE").map(String::as_str),
+            Some("custom")
         );
 
         // Subscription passes an empty key → present but empty, so the probe
@@ -13026,13 +13398,271 @@ wire_api = "chat"
             Some("")
         );
 
-        // No override + empty DB → key still materialized empty.
+        // No override + empty legacy DB remains legacy; no credential policy is
+        // invented until the auth mode is explicitly known.
         let none = cursor_probe_env(&db, None).await;
-        assert_eq!(none.get("CURSOR_API_KEY").map(String::as_str), Some(""));
+        assert!(!none.contains_key("CURSOR_API_KEY"));
+        assert!(!none.contains_key("CURSOR_API_BASE_URL"));
+    }
+
+    #[cfg(unix)]
+    fn cursor_probe_script(body: &str) -> (tempfile::TempDir, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("probe tempdir");
+        let path = dir.path().join("fake-cursor-agent");
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write fake CLI");
+        let mut permissions = std::fs::metadata(&path).expect("metadata").permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&path, permissions).expect("make executable");
+        (dir, path)
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cursor_probe_runner_enforces_exit_utf8_empty_and_pipe_bounds() {
+        let env = BTreeMap::new();
+        let cases = [
+            (
+                "printf 'usable output\\n'; exit 7",
+                CursorProbeError::NonZeroExit,
+            ),
+            ("printf '\\377'", CursorProbeError::InvalidUtf8),
+            ("exit 0", CursorProbeError::EmptyOutput),
+            (
+                "head -c 1048577 /dev/zero",
+                CursorProbeError::OutputTooLarge,
+            ),
+            (
+                "head -c 262145 /dev/zero >&2; printf ok",
+                CursorProbeError::OutputTooLarge,
+            ),
+        ];
+        for (body, expected) in cases {
+            let (_dir, path) = cursor_probe_script(body);
+            let error = run_cursor_probe_binary(&path, &["models"], Duration::from_secs(3), &env)
+                .await
+                .expect_err("unsafe output must fail closed");
+            assert_eq!(error, expected);
+            assert!(
+                !error.to_string().contains("usable output"),
+                "stdout/stderr and credentials must not enter probe errors"
+            );
+        }
+
+        let (_dir, path) = cursor_probe_script("if read value; then exit 9; fi; printf 'ok\\n'");
         assert_eq!(
-            none.get("CURSOR_API_BASE_URL").map(String::as_str),
+            run_cursor_probe_binary(&path, &["models"], Duration::from_secs(3), &env)
+                .await
+                .expect("stdin is null"),
+            "ok\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cursor_probe_timeout_kills_and_reaps_descendants() {
+        let (dir, path) = cursor_probe_script(
+            "trap '' TERM; (trap '' TERM; while :; do sleep 1; done) & child=$!; \
+             printf '%s:%s' \"$$\" \"$child\" > \"$PID_FILE\"; wait",
+        );
+        let pid_file = dir.path().join("child.pid");
+        let env: BTreeMap<String, String> = [(
+            "PID_FILE".to_string(),
+            pid_file.to_string_lossy().into_owned(),
+        )]
+        .into();
+        assert_eq!(
+            run_cursor_probe_binary(&path, &["models"], Duration::from_millis(150), &env)
+                .await
+                .expect_err("probe must time out"),
+            CursorProbeError::Timeout
+        );
+        let recorded = std::fs::read_to_string(&pid_file).expect("probe and child pids");
+        let pids: Vec<i32> = recorded
+            .split(':')
+            .map(|pid| pid.parse().expect("numeric pid"))
+            .collect();
+        for pid in pids {
+            let mut reaped = false;
+            for _ in 0..20 {
+                if unsafe { libc::kill(pid, 0) } != 0 {
+                    reaped = true;
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            assert!(reaped, "probe process {pid} survived timeout cleanup");
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cursor_probe_cache_singleflights_and_keys_environment_and_binary_identity() {
+        let (dir, path) = cursor_probe_script(
+            "printf x >> \"$COUNT_FILE\"; sleep 0.1; printf 'auto - Auto (default)\\n'",
+        );
+        let count_file = dir.path().join("count");
+        let base_env: BTreeMap<String, String> = [
+            (
+                "COUNT_FILE".to_string(),
+                count_file.to_string_lossy().into_owned(),
+            ),
+            ("CURSOR_AUTH_MODE".to_string(), "custom".to_string()),
+            ("CURSOR_API_KEY".to_string(), "secret-a".to_string()),
+            (
+                "CURSOR_CONFIG_DIR".to_string(),
+                dir.path().to_string_lossy().into_owned(),
+            ),
+        ]
+        .into();
+        let (left, right) = tokio::join!(
+            run_cursor_probe_cached_for_binary(&path, None, &["models"], 3, &base_env),
+            run_cursor_probe_cached_for_binary(&path, None, &["models"], 3, &base_env)
+        );
+        left.expect("first probe");
+        right.expect("singleflight follower");
+        assert_eq!(std::fs::read_to_string(&count_file).unwrap(), "x");
+
+        run_cursor_probe_cached_for_binary(&path, None, &["models"], 3, &base_env)
+            .await
+            .expect("success stays cached during its TTL");
+        assert_eq!(std::fs::read_to_string(&count_file).unwrap(), "x");
+
+        let mut other_account = base_env.clone();
+        other_account.insert("CURSOR_API_KEY".into(), "secret-b".into());
+        run_cursor_probe_cached_for_binary(&path, None, &["models"], 3, &other_account)
+            .await
+            .expect("different account is a cache miss");
+        assert_eq!(std::fs::read_to_string(&count_file).unwrap(), "xx");
+
+        let mut other_mode = base_env.clone();
+        other_mode.insert("CURSOR_AUTH_MODE".into(), "subscription".into());
+        other_mode.insert("CURSOR_API_KEY".into(), String::new());
+        run_cursor_probe_cached_for_binary(&path, None, &["models"], 3, &other_mode)
+            .await
+            .expect("different auth mode is a cache miss");
+        assert_eq!(std::fs::read_to_string(&count_file).unwrap(), "xxx");
+
+        let mut other_endpoint = other_account.clone();
+        other_endpoint.insert(
+            "CURSOR_API_BASE_URL".into(),
+            "https://cursor.example.test".into(),
+        );
+        run_cursor_probe_cached_for_binary(&path, None, &["models"], 3, &other_endpoint)
+            .await
+            .expect("different endpoint is a cache miss");
+        assert_eq!(std::fs::read_to_string(&count_file).unwrap(), "xxxx");
+
+        let other_config_dir = dir.path().join("other-config");
+        std::fs::create_dir(&other_config_dir).expect("other config dir");
+        let mut other_config = other_account.clone();
+        other_config.insert(
+            "CURSOR_CONFIG_DIR".into(),
+            other_config_dir.to_string_lossy().into_owned(),
+        );
+        run_cursor_probe_cached_for_binary(&path, None, &["models"], 3, &other_config)
+            .await
+            .expect("different config directory is a cache miss");
+        assert_eq!(std::fs::read_to_string(&count_file).unwrap(), "xxxxx");
+
+        std::fs::write(dir.path().join("cli-config.json"), "{\"changed\":true}")
+            .expect("config mutation");
+        run_cursor_probe_cached_for_binary(&path, None, &["models"], 3, &other_account)
+            .await
+            .expect("config identity invalidates cache");
+        assert_eq!(std::fs::read_to_string(&count_file).unwrap(), "xxxxxx");
+
+        run_cursor_probe_cached_for_binary(
+            &path,
+            Some("different-version"),
+            &["models"],
+            3,
+            &other_account,
+        )
+        .await
+        .expect("different managed binary version is a cache miss");
+        assert_eq!(std::fs::read_to_string(&count_file).unwrap(), "xxxxxxx");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cursor_probe_cache_uses_short_failure_backoff_then_recovers() {
+        let (dir, path) = cursor_probe_script(
+            "if [ ! -e \"$MARKER\" ]; then : > \"$MARKER\"; exit 9; fi; \
+             printf 'auto - Auto (default)\\n'",
+        );
+        let marker = dir.path().join("marker");
+        let env: BTreeMap<String, String> = [
+            ("MARKER".to_string(), marker.to_string_lossy().into_owned()),
+            (
+                "CURSOR_CONFIG_DIR".to_string(),
+                dir.path().to_string_lossy().into_owned(),
+            ),
+        ]
+        .into();
+        let key = cursor_probe_cache_key(&path, None, &["models"], &env);
+        assert_eq!(
+            run_cursor_probe_cached_for_binary(&path, None, &["models"], 3, &env)
+                .await
+                .expect_err("first probe fails"),
+            CursorProbeError::NonZeroExit
+        );
+        assert_eq!(
+            cursor_probe_cache_key(&path, None, &["models"], &env),
+            key,
+            "probe execution must not mutate its cache identity"
+        );
+        assert!(cursor_probe_cache().lock().await.entries.contains_key(&key));
+        assert_eq!(
+            run_cursor_probe_cached_for_binary(&path, None, &["models"], 3, &env)
+                .await
+                .expect_err("failure is briefly backed off"),
+            CursorProbeError::NonZeroExit
+        );
+
+        if let Some(entry) = cursor_probe_cache().lock().await.entries.get_mut(&key) {
+            entry.expires_at = Instant::now();
+        }
+        assert!(
+            run_cursor_probe_cached_for_binary(&path, None, &["models"], 3, &env)
+                .await
+                .expect("failure is not cached forever")
+                .contains("Auto")
+        );
+    }
+
+    #[test]
+    fn cursor_effective_environment_scrubs_subscription_but_preserves_custom_values() {
+        let subscription: BTreeMap<String, String> = [
+            ("CURSOR_AUTH_MODE".into(), "subscription".into()),
+            ("CURSOR_API_KEY".into(), "stale-secret".into()),
+            ("CURSOR_API_BASE_URL".into(), "https://stale.example".into()),
+        ]
+        .into();
+        let effective = cursor_effective_runtime_env(&subscription);
+        assert_eq!(
+            effective.get("CURSOR_API_KEY").map(String::as_str),
             Some("")
         );
+        assert_eq!(
+            effective.get("CURSOR_API_BASE_URL").map(String::as_str),
+            Some("")
+        );
+
+        let custom: BTreeMap<String, String> = [
+            ("CURSOR_AUTH_MODE".into(), "custom".into()),
+            ("CURSOR_API_KEY".into(), "explicit-secret".into()),
+            (
+                "CURSOR_API_BASE_URL".into(),
+                "https://custom.example".into(),
+            ),
+        ]
+        .into();
+        let effective_custom = cursor_effective_runtime_env(&custom);
+        for key in ["CURSOR_AUTH_MODE", "CURSOR_API_KEY", "CURSOR_API_BASE_URL"] {
+            assert_eq!(effective_custom.get(key), custom.get(key));
+        }
     }
 
     #[test]

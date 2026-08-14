@@ -1494,6 +1494,7 @@ export function MessageInput({
           currentLabel: current?.name ?? kind.current_value,
           groups,
           onSelect: (value) => onConfigOptionChange?.(option.id, value),
+          pending: Boolean(option.pending_operation_id),
           ...(searchable && {
             search: {
               placeholder: t("searchModel"),

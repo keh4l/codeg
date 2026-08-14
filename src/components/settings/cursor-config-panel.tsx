@@ -231,6 +231,25 @@ export function CursorConfigPanel({
   onAffectedSessions: (count: number) => void
 }) {
   const t = useTranslations("AcpAgentSettings")
+  const cursorProbeError = useCallback(
+    (code?: string | null) => {
+      switch (code) {
+        case "cursor_probe_timeout":
+          return t("cursor.probeTimeout")
+        case "cursor_probe_output_too_large":
+          return t("cursor.probeOutputTooLarge")
+        case "cursor_probe_nonzero_exit":
+          return t("cursor.probeNonzeroExit")
+        case "cursor_probe_invalid_utf8":
+        case "cursor_probe_empty_output":
+        case "cursor_probe_invalid_format":
+          return t("cursor.probeInvalidOutput")
+        default:
+          return t("cursor.probeFailed")
+      }
+    },
+    [t]
+  )
 
   // --- authentication method ---
   const [mode, setMode] = useState<CursorAuthMethod>(() =>
@@ -332,17 +351,17 @@ export function CursorConfigPanel({
           isDefault: m.is_default,
         }))
       )
-      setModelsError(result.error)
+      setModelsError(result.error ? cursorProbeError(result.error_code) : null)
       setModelsLoaded(true)
-    } catch (e) {
+    } catch {
       if (mountedRef.current) {
-        setModelsError(e instanceof Error ? e.message : String(e))
+        setModelsError(cursorProbeError())
         setModelsLoaded(true)
       }
     } finally {
       if (mountedRef.current) setModelsLoading(false)
     }
-  }, [])
+  }, [cursorProbeError])
 
   const authState: "loading" | "missing" | "ok" | "unauthenticated" =
     authLoading && !auth
@@ -619,7 +638,9 @@ export function CursorConfigPanel({
         ) : null}
 
         {auth?.error ? (
-          <p className="text-[11px] text-destructive">{auth.error}</p>
+          <p className="text-[11px] text-destructive">
+            {cursorProbeError(auth.error_code)}
+          </p>
         ) : null}
 
         {/* No model list yet (not signed in / empty): tell the user why the

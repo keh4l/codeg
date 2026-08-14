@@ -94,17 +94,15 @@ fn merge_agent_env(
 /// Gated on the explicit `CURSOR_AUTH_MODE` knob (written by the Cursor panel),
 /// so legacy rows and operator-provided container env are left untouched. In
 /// custom mode the credentials are present and non-empty, so nothing is cleared.
-fn apply_cursor_env_policy(merged: &mut Vec<(String, String)>, runtime_env: &BTreeMap<String, String>) {
-    if runtime_env.get("CURSOR_AUTH_MODE").map(String::as_str) != Some("subscription") {
-        return;
-    }
+fn apply_cursor_env_policy(
+    merged: &mut Vec<(String, String)>,
+    runtime_env: &BTreeMap<String, String>,
+) {
+    let effective = crate::commands::acp::cursor_effective_runtime_env(runtime_env);
     for key in ["CURSOR_API_KEY", "CURSOR_API_BASE_URL"] {
-        let already_set = merged
-            .iter()
-            .any(|(k, v)| k == key && !v.trim().is_empty());
-        if !already_set {
+        if let Some(value) = effective.get(key) {
             merged.retain(|(k, _)| k != key);
-            merged.push((key.to_string(), String::new()));
+            merged.push((key.to_string(), value.clone()));
         }
     }
 }
@@ -265,6 +263,8 @@ pub enum ConnectionCommand {
     SetConfigOption {
         config_id: String,
         value_id: String,
+        /// Opaque frontend id echoed with the terminal Cursor snapshot.
+        operation_id: Option<String>,
         /// Cursor-only monotonic request generation; zero for every other
         /// agent. Used to suppress stale completion events after rapid picks.
         request_seq: u64,
@@ -1210,19 +1210,19 @@ pub async fn spawn_agent_connection(
     // turn is diagnosed as silently empty. Created here so both the spawn side
     // and the conversation loop share the same buffer.
     let stderr_tail = Arc::new(StderrTail::new());
-    let cursor_cli_models = if agent_type == AgentType::Cursor {
+    let (cursor_cli_models, cursor_cli_catalog_error) = if agent_type == AgentType::Cursor {
         match crate::commands::acp::cursor_models_for_runtime(&runtime_env).await {
-            Ok(models) => models,
+            Ok(models) => (models, None),
             Err(error) => {
                 tracing::warn!(
                     "[ACP][Cursor] native CLI model catalog unavailable; \
                      falling back to parameterized controls: {error}"
                 );
-                Vec::new()
+                (Vec::new(), Some("cursor_model_catalog_unavailable"))
             }
         }
     } else {
-        Vec::new()
+        (Vec::new(), None)
     };
     let agent = build_agent(agent_type, &runtime_env, &launch_cwd, &stderr_tail)
         .await?
@@ -1337,6 +1337,7 @@ pub async fn spawn_agent_connection(
             preferred_mode_id,
             preferred_config_values,
             cursor_cli_models,
+            cursor_cli_catalog_error,
             delegation_injection,
             fs_policy,
             stderr_tail,
@@ -1766,56 +1767,16 @@ fn build_cursor_composite_catalog(
             );
             continue;
         }
-        let mut suffix: Vec<Option<String>> = label_words[base_words.len()..]
-            .iter()
-            .cloned()
-            .map(Some)
-            .collect();
-        let mut parameters = BTreeMap::new();
-        let mut valid = true;
-
-        for config in &model.config_options {
-            let is_boolean = config.options.len() == 2
-                && config.options.iter().any(|option| option.value == "false")
-                && config.options.iter().any(|option| option.value == "true");
-            let selected = if is_boolean {
-                let phrase = cursor_label_words(&config.name, false);
-                match cursor_take_unique_phrase(&mut suffix, &[phrase]) {
-                    Ok(Some(_)) => Some("true".to_string()),
-                    Ok(None) => Some("false".to_string()),
-                    Err(()) => None,
-                }
-            } else {
-                let phrases: Vec<Vec<String>> = config
-                    .options
-                    .iter()
-                    .map(|option| cursor_label_words(&option.name, false))
-                    .collect();
-                match cursor_take_unique_phrase(&mut suffix, &phrases) {
-                    Ok(Some(index)) => Some(config.options[index].value.clone()),
-                    Ok(None) => config
-                        .options
-                        .iter()
-                        .any(|option| option.value == config.current_value)
-                        .then(|| config.current_value.clone()),
-                    Err(()) => None,
-                }
-            };
-            let Some(selected) = selected else {
-                valid = false;
-                break;
-            };
-            parameters.insert(config.id.clone(), selected);
-        }
-
-        if !valid || suffix.iter().any(Option::is_some) {
+        let suffix = &label_words[base_words.len()..];
+        let Some(parameters) = cursor_unique_parameter_mapping(suffix, &model.config_options)
+        else {
             tracing::debug!(
                 cli_alias = %cli.id,
                 cli_label = %cli.label,
                 "[ACP][Cursor] rejected an unmappable CLI model row"
             );
             continue;
-        }
+        };
 
         let value = if model.value == "default" && parameters.is_empty() {
             // Keep the real ACP default sentinel so the existing Cursor grouping
@@ -1871,41 +1832,159 @@ fn cursor_label_words(input: &str, omit_parenthetical: bool) -> Vec<String> {
     words
 }
 
-/// Consume exactly one of `phrases` from the remaining suffix. Longer phrases
-/// win (`Extra High` before `High`); two distinct matching values are ambiguous
-/// and therefore rejected.
-fn cursor_take_unique_phrase(
-    suffix: &mut [Option<String>],
-    phrases: &[Vec<String>],
-) -> Result<Option<usize>, ()> {
-    let mut candidates: Vec<(usize, usize, usize)> = Vec::new();
-    for (phrase_index, phrase) in phrases.iter().enumerate() {
-        if phrase.is_empty() || phrase.len() > suffix.len() {
-            continue;
+const CURSOR_MAPPING_MAX_SUFFIX_WORDS: usize = 63;
+const CURSOR_MAPPING_MAX_CONFIGS: usize = 16;
+const CURSOR_MAPPING_MAX_OPTIONS_PER_CONFIG: usize = 128;
+const CURSOR_MAPPING_MAX_CHOICES_PER_CONFIG: usize = 512;
+const CURSOR_MAPPING_MAX_STATES: usize = 8_192;
+
+#[derive(Clone)]
+struct CursorParameterChoice {
+    value: String,
+    consumed: u64,
+}
+
+/// Interpret the complete suffix across all config options at once. A local
+/// greedy match can assign a shared word such as `High` to whichever option
+/// happens to arrive first; this bounded search accepts a row only when exactly
+/// one structured parameter map consumes every suffix token.
+fn cursor_unique_parameter_mapping(
+    suffix: &[String],
+    configs: &[CursorCatalogConfigOption],
+) -> Option<BTreeMap<String, String>> {
+    if suffix.len() > CURSOR_MAPPING_MAX_SUFFIX_WORDS
+        || configs.len() > CURSOR_MAPPING_MAX_CONFIGS
+        || configs
+            .iter()
+            .any(|config| config.options.len() > CURSOR_MAPPING_MAX_OPTIONS_PER_CONFIG)
+    {
+        return None;
+    }
+    let full_mask = if suffix.is_empty() {
+        0
+    } else {
+        (1_u64 << suffix.len()) - 1
+    };
+    let mut ordered: Vec<_> = configs.iter().collect();
+    ordered.sort_by(|left, right| left.id.cmp(&right.id));
+    let choices: Vec<_> = ordered
+        .iter()
+        .map(|config| cursor_parameter_choices(suffix, config))
+        .collect();
+    if choices.iter().any(Vec::is_empty) {
+        return None;
+    }
+
+    struct SearchInputs<'a> {
+        ordered: &'a [&'a CursorCatalogConfigOption],
+        choices: &'a [Vec<CursorParameterChoice>],
+        full_mask: u64,
+    }
+    struct SearchState {
+        current: BTreeMap<String, String>,
+        solutions: Vec<BTreeMap<String, String>>,
+        states: usize,
+    }
+    fn visit(index: usize, used: u64, inputs: &SearchInputs<'_>, state: &mut SearchState) {
+        state.states += 1;
+        if state.states > CURSOR_MAPPING_MAX_STATES || state.solutions.len() > 1 {
+            return;
         }
-        for start in 0..=suffix.len() - phrase.len() {
-            if phrase.iter().enumerate().all(|(offset, expected)| {
-                suffix[start + offset].as_deref() == Some(expected.as_str())
-            }) {
-                candidates.push((phrase_index, start, phrase.len()));
+        if index == inputs.ordered.len() {
+            if used == inputs.full_mask && !state.solutions.contains(&state.current) {
+                state.solutions.push(state.current.clone());
+            }
+            return;
+        }
+        let config = inputs.ordered[index];
+        for choice in &inputs.choices[index] {
+            if used & choice.consumed != 0 {
+                continue;
+            }
+            state
+                .current
+                .insert(config.id.clone(), choice.value.clone());
+            visit(index + 1, used | choice.consumed, inputs, state);
+            state.current.remove(&config.id);
+            if state.states > CURSOR_MAPPING_MAX_STATES || state.solutions.len() > 1 {
+                return;
             }
         }
     }
-    candidates.sort_by_key(|(_, _, len)| std::cmp::Reverse(*len));
-    let Some(&(selected_index, selected_start, selected_len)) = candidates.first() else {
-        return Ok(None);
+
+    let inputs = SearchInputs {
+        ordered: &ordered,
+        choices: &choices,
+        full_mask,
     };
-    if candidates
+    let mut state = SearchState {
+        current: BTreeMap::new(),
+        solutions: Vec::new(),
+        states: 0,
+    };
+    visit(0, 0, &inputs, &mut state);
+    (state.states <= CURSOR_MAPPING_MAX_STATES && state.solutions.len() == 1)
+        .then(|| state.solutions.remove(0))
+}
+
+fn cursor_parameter_choices(
+    suffix: &[String],
+    config: &CursorCatalogConfigOption,
+) -> Vec<CursorParameterChoice> {
+    let is_boolean = config.options.len() == 2
+        && config.options.iter().any(|option| option.value == "false")
+        && config.options.iter().any(|option| option.value == "true");
+    let mut result = Vec::new();
+    if is_boolean {
+        result.push(CursorParameterChoice {
+            value: "false".to_string(),
+            consumed: 0,
+        });
+        let phrase = cursor_label_words(&config.name, false);
+        cursor_push_phrase_choices(suffix, &phrase, "true", &mut result);
+    } else if config
+        .options
         .iter()
-        .take_while(|(_, _, len)| *len == selected_len)
-        .any(|(index, _, _)| *index != selected_index)
+        .any(|option| option.value == config.current_value)
     {
-        return Err(());
+        result.push(CursorParameterChoice {
+            value: config.current_value.clone(),
+            consumed: 0,
+        });
+        for option in &config.options {
+            let phrase = cursor_label_words(&option.name, false);
+            cursor_push_phrase_choices(suffix, &phrase, &option.value, &mut result);
+        }
     }
-    for word in &mut suffix[selected_start..selected_start + selected_len] {
-        *word = None;
+    if result.len() >= CURSOR_MAPPING_MAX_CHOICES_PER_CONFIG {
+        return Vec::new();
     }
-    Ok(Some(selected_index))
+    result.sort_by_key(|choice| std::cmp::Reverse(choice.consumed.count_ones()));
+    result.dedup_by(|left, right| left.value == right.value && left.consumed == right.consumed);
+    result
+}
+
+fn cursor_push_phrase_choices(
+    suffix: &[String],
+    phrase: &[String],
+    value: &str,
+    result: &mut Vec<CursorParameterChoice>,
+) {
+    if phrase.is_empty() || phrase.len() > suffix.len() {
+        return;
+    }
+    for start in 0..=suffix.len() - phrase.len() {
+        if result.len() >= CURSOR_MAPPING_MAX_CHOICES_PER_CONFIG {
+            return;
+        }
+        if suffix[start..start + phrase.len()] == *phrase {
+            let consumed = ((1_u64 << phrase.len()) - 1) << start;
+            result.push(CursorParameterChoice {
+                value: value.to_string(),
+                consumed,
+            });
+        }
+    }
 }
 
 fn cursor_composite_for_current<'a>(
@@ -2112,7 +2191,7 @@ async fn emit_session_config_options_values(
             let mut session = state.write().await;
             session.cursor_raw_config_options = Some(config_options);
         }
-        publish_cursor_config_options_if_current(state, emitter).await;
+        publish_cursor_config_options_if_current(state, emitter, None, None).await;
         return;
     }
     let mut mapped = map_session_config_options(&config_options);
@@ -2124,6 +2203,8 @@ async fn emit_session_config_options_values(
         emitter,
         AcpEvent::SessionConfigOptions {
             config_options: mapped,
+            operation_id: None,
+            operation_status: None,
         },
     )
     .await;
@@ -2132,6 +2213,8 @@ async fn emit_session_config_options_values(
 async fn publish_cursor_config_options_if_current(
     state: &Arc<RwLock<SessionState>>,
     emitter: &EventEmitter,
+    operation_id: Option<String>,
+    operation_status: Option<&'static str>,
 ) {
     let visible = {
         let session = state.read().await;
@@ -2152,7 +2235,14 @@ async fn publish_cursor_config_options_if_current(
             _ => raw,
         }
     };
-    emit_session_config_options_info(state, emitter, visible).await;
+    emit_session_config_options_operation_info(
+        state,
+        emitter,
+        visible,
+        operation_id,
+        operation_status,
+    )
+    .await;
 }
 
 fn cursor_config_request_is_current(completed: u64, requested: u64) -> bool {
@@ -2489,10 +2579,24 @@ async fn emit_session_config_options_info(
     emitter: &EventEmitter,
     config_options: Vec<SessionConfigOptionInfo>,
 ) {
+    emit_session_config_options_operation_info(state, emitter, config_options, None, None).await;
+}
+
+async fn emit_session_config_options_operation_info(
+    state: &Arc<RwLock<SessionState>>,
+    emitter: &EventEmitter,
+    config_options: Vec<SessionConfigOptionInfo>,
+    operation_id: Option<String>,
+    operation_status: Option<&'static str>,
+) {
     emit_with_state(
         state,
         emitter,
-        AcpEvent::SessionConfigOptions { config_options },
+        AcpEvent::SessionConfigOptions {
+            config_options,
+            operation_id,
+            operation_status: operation_status.map(str::to_string),
+        },
     )
     .await;
 }
@@ -3818,6 +3922,7 @@ async fn run_connection(
     preferred_mode_id: Option<String>,
     preferred_config_values: BTreeMap<String, String>,
     cursor_cli_models: Vec<crate::acp::types::CursorModelInfo>,
+    cursor_cli_catalog_error: Option<&'static str>,
     delegation_injection: Option<DelegationInjection>,
     fs_policy: FsAccessPolicy,
     // Connection-scoped agent stderr buffer, shared with the `with_debug`
@@ -4156,6 +4261,22 @@ async fn run_connection(
             )
             .await;
 
+            if let Some(code) = cursor_cli_catalog_error {
+                emit_with_state(
+                    &state,
+                    &emitter_clone,
+                    AcpEvent::Error {
+                        message: "Cursor model catalog is unavailable; using parameterized controls."
+                            .to_string(),
+                        agent_type: agent_type.to_string(),
+                        code: Some(code.to_string()),
+                        details: None,
+                        terminal: false,
+                    },
+                )
+                .await;
+            }
+
             // Cursor exposes the two complementary halves of its native model
             // picker through separate dynamic surfaces: `cursor-agent models`
             // lists explicit valid rows in account order, while this ACP method
@@ -4167,10 +4288,33 @@ async fn run_connection(
                         let catalog =
                             build_cursor_composite_catalog(&cursor_cli_models, &available);
                         if catalog.is_empty() {
+                            let (code, message) = if available.is_empty() {
+                                (
+                                    "cursor_model_catalog_unavailable",
+                                    "Cursor model catalog is unavailable; using parameterized controls.",
+                                )
+                            } else {
+                                (
+                                    "cursor_model_variant_ambiguous",
+                                    "Cursor model variants could not be mapped safely; using parameterized controls.",
+                                )
+                            };
                             tracing::warn!(
                                 "[ACP][Cursor] CLI and ACP model catalogs had no safely \
                                  mappable rows; retaining parameterized controls"
                             );
+                            emit_with_state(
+                                &state,
+                                &emitter_clone,
+                                AcpEvent::Error {
+                                    message: message.to_string(),
+                                    agent_type: agent_type.to_string(),
+                                    code: Some(code.to_string()),
+                                    details: None,
+                                    terminal: false,
+                                },
+                            )
+                            .await;
                         } else {
                             tracing::info!(
                                 cli_rows = cursor_cli_models.len(),
@@ -4180,10 +4324,25 @@ async fn run_connection(
                             state.write().await.cursor_composite_models = Some(catalog);
                         }
                     }
-                    Err(error) => tracing::warn!(
-                        "[ACP][Cursor] cursor/list_available_models unavailable; \
-                         retaining parameterized controls: {error}"
-                    ),
+                    Err(error) => {
+                        tracing::warn!(
+                            "[ACP][Cursor] cursor/list_available_models unavailable; \
+                             retaining parameterized controls: {error}"
+                        );
+                        emit_with_state(
+                            &state,
+                            &emitter_clone,
+                            AcpEvent::Error {
+                                message: "Cursor model catalog is unavailable; using parameterized controls."
+                                    .to_string(),
+                                agent_type: agent_type.to_string(),
+                                code: Some("cursor_model_catalog_unavailable".to_string()),
+                                details: None,
+                                terminal: false,
+                            },
+                        )
+                        .await;
+                    }
                 }
             }
 
@@ -5532,6 +5691,7 @@ async fn set_session_config_option(
     config_id: String,
     value_id: String,
     request_seq: u64,
+    operation_id: Option<String>,
 ) -> Result<(), sacp::Error> {
     // The whole selector transport carries values as opaque strings; only here,
     // at the wire, does the option's advertised kind decide how to encode it.
@@ -5555,7 +5715,15 @@ async fn set_session_config_option(
     let value = encode_config_option_value(is_boolean, &value_id);
     let updated = set_session_config_option_inner(cx, session_id, config_id, value).await?;
     if agent_type == AgentType::Cursor {
-        finish_cursor_config_request(state, emitter, request_seq, Some(updated)).await;
+        finish_cursor_config_request(
+            state,
+            emitter,
+            request_seq,
+            Some(updated),
+            operation_id,
+            "applied",
+        )
+        .await;
         return Ok(());
     }
     emit_session_config_options_values(state, emitter, agent_type, updated).await;
@@ -5567,6 +5735,8 @@ async fn finish_cursor_config_request(
     emitter: &EventEmitter,
     request_seq: u64,
     raw_options: Option<Vec<SessionConfigOption>>,
+    operation_id: Option<String>,
+    operation_status: &'static str,
 ) -> bool {
     let is_latest = {
         let mut session = state.write().await;
@@ -5579,7 +5749,13 @@ async fn finish_cursor_config_request(
         request_seq == session.cursor_config_request_seq
     };
     if is_latest {
-        publish_cursor_config_options_if_current(state, emitter).await;
+        publish_cursor_config_options_if_current(
+            state,
+            emitter,
+            operation_id,
+            Some(operation_status),
+        )
+        .await;
     }
     is_latest
 }
@@ -5591,17 +5767,22 @@ async fn set_cursor_composite_option(
     emitter: &EventEmitter,
     value_id: &str,
     request_seq: u64,
+    operation_id: Option<String>,
 ) -> Result<(), sacp::Error> {
     if value_id == CURSOR_CURRENT_UNAVAILABLE_VALUE {
-        finish_cursor_config_request(state, emitter, request_seq, None).await;
+        finish_cursor_config_request(state, emitter, request_seq, None, operation_id, "applied")
+            .await;
         return Ok(());
     }
-    let (target, mut raw_options) = {
+    let (target, previous, mut raw_options) = {
         let session = state.read().await;
-        let target = session
+        let catalog = session
             .cursor_composite_models
             .as_deref()
-            .and_then(|catalog| catalog.iter().find(|model| model.value == value_id))
+            .ok_or_else(|| sacp::util::internal_error("Cursor composite catalog is not ready"))?;
+        let target = catalog
+            .iter()
+            .find(|model| model.value == value_id)
             .cloned()
             .ok_or_else(|| {
                 sacp::util::internal_error(format!(
@@ -5612,17 +5793,52 @@ async fn set_cursor_composite_option(
             .cursor_raw_config_options
             .clone()
             .ok_or_else(|| sacp::util::internal_error("Cursor config options are not ready"))?;
-        (target, raw_options)
+        let previous =
+            cursor_composite_for_current(&map_session_config_options(&raw_options), catalog)
+                .cloned();
+        (target, previous, raw_options)
     };
 
     let result =
         apply_cursor_composite_selection_inner(cx, session_id, &target, &mut raw_options).await;
     if result.is_ok() {
-        finish_cursor_config_request(state, emitter, request_seq, Some(raw_options)).await;
+        finish_cursor_config_request(
+            state,
+            emitter,
+            request_seq,
+            Some(raw_options),
+            operation_id,
+            "applied",
+        )
+        .await;
     } else {
-        // Preserve the last step Cursor actually confirmed. The caller marks
-        // this generation complete, publishes that snapshot once, and only
-        // then emits the paired error used by the frontend rollback guard.
+        // A composite is one user-visible setting even though Cursor applies it
+        // in several ACP requests. If the newest request partially succeeds,
+        // make a best-effort structured rollback to the last fully confirmed
+        // row. Stale A in an A→B race is not rolled back because B is already
+        // queued and owns the next authoritative state.
+        let should_rollback = state.read().await.cursor_config_request_seq == request_seq;
+        if should_rollback {
+            if let Some(previous) = previous.filter(|item| item.value != target.value) {
+                if apply_cursor_composite_selection_inner(
+                    cx,
+                    session_id,
+                    &previous,
+                    &mut raw_options,
+                )
+                .await
+                .is_err()
+                {
+                    tracing::warn!(
+                        "[ACP][Cursor] failed to restore the previous composite after a partial apply"
+                    );
+                }
+            }
+        }
+        // Preserve exactly what Cursor last confirmed (the restored row when
+        // rollback succeeded, otherwise the honest partial state). The caller
+        // publishes it as a correlated failed terminal snapshot before the
+        // localized error.
         let mut session = state.write().await;
         if request_seq >= session.cursor_config_completed_seq {
             session.cursor_raw_config_options = Some(raw_options);
@@ -5684,6 +5900,31 @@ async fn set_session_config_option_inner(
         })?;
 
     Ok(response.config_options)
+}
+
+#[async_trait::async_trait]
+trait CursorConfigTransport {
+    async fn set_config_option(
+        &mut self,
+        config_id: String,
+        value: SessionConfigOptionValue,
+    ) -> Result<Vec<SessionConfigOption>, sacp::Error>;
+}
+
+struct AcpCursorConfigTransport<'a> {
+    connection: &'a ConnectionTo<Agent>,
+    session_id: &'a SessionId,
+}
+
+#[async_trait::async_trait]
+impl CursorConfigTransport for AcpCursorConfigTransport<'_> {
+    async fn set_config_option(
+        &mut self,
+        config_id: String,
+        value: SessionConfigOptionValue,
+    ) -> Result<Vec<SessionConfigOption>, sacp::Error> {
+        set_session_config_option_inner(self.connection, self.session_id, config_id, value).await
+    }
 }
 
 fn cursor_parameter_apply_order(parameters: &BTreeMap<String, String>) -> Vec<(&String, &String)> {
@@ -5765,6 +6006,18 @@ async fn apply_cursor_composite_selection_inner(
     target: &CursorCompositeModel,
     options: &mut Vec<SessionConfigOption>,
 ) -> Result<(), sacp::Error> {
+    let mut transport = AcpCursorConfigTransport {
+        connection: cx,
+        session_id,
+    };
+    apply_cursor_composite_selection_with_transport(&mut transport, target, options).await
+}
+
+async fn apply_cursor_composite_selection_with_transport<T: CursorConfigTransport + Send>(
+    transport: &mut T,
+    target: &CursorCompositeModel,
+    options: &mut Vec<SessionConfigOption>,
+) -> Result<(), sacp::Error> {
     let Some(model_wire_value) =
         cursor_advertised_wire_value(options, "model", &target.model_value)
     else {
@@ -5774,9 +6027,9 @@ async fn apply_cursor_composite_selection_inner(
         )));
     };
     let plan = cursor_composite_wire_plan(target);
-    *options =
-        set_session_config_option_inner(cx, session_id, "model".to_string(), model_wire_value)
-            .await?;
+    *options = transport
+        .set_config_option("model".to_string(), model_wire_value)
+        .await?;
 
     for (config_id, value) in plan.iter().skip(1) {
         let Some(wire_value) = cursor_advertised_wire_value(options, config_id, value) else {
@@ -5785,8 +6038,9 @@ async fn apply_cursor_composite_selection_inner(
                 target.model_value
             )));
         };
-        *options =
-            set_session_config_option_inner(cx, session_id, config_id.clone(), wire_value).await?;
+        *options = transport
+            .set_config_option(config_id.clone(), wire_value)
+            .await?;
     }
     if !cursor_configuration_matches_target(options, target) {
         return Err(sacp::util::internal_error(format!(
@@ -7740,6 +7994,7 @@ async fn run_conversation_loop<'a>(
                                 Some(ConnectionCommand::SetConfigOption {
                                     config_id,
                                     value_id,
+                                    operation_id,
                                     request_seq,
                                 }) => {
                                     let has_composite_catalog = agent_type == AgentType::Cursor
@@ -7759,6 +8014,7 @@ async fn run_conversation_loop<'a>(
                                             emitter,
                                             &value_id,
                                             request_seq,
+                                            operation_id.clone(),
                                         )
                                         .await
                                     } else if agent_type == AgentType::Grok {
@@ -7769,7 +8025,7 @@ async fn run_conversation_loop<'a>(
                                     } else {
                                         set_session_config_option(
                                             &cx, &sid, state, emitter, agent_type, config_id,
-                                            value_id, request_seq,
+                                            value_id, request_seq, operation_id.clone(),
                                         )
                                         .await
                                     };
@@ -7780,6 +8036,8 @@ async fn run_conversation_loop<'a>(
                                                 emitter,
                                                 request_seq,
                                                 None,
+                                                operation_id,
+                                                "failed",
                                             )
                                             .await
                                         } else {
@@ -8042,6 +8300,7 @@ async fn run_conversation_loop<'a>(
             Some(ConnectionCommand::SetConfigOption {
                 config_id,
                 value_id,
+                operation_id,
                 request_seq,
             }) => {
                 let cx = session.connection();
@@ -8054,8 +8313,16 @@ async fn run_conversation_loop<'a>(
                         .as_ref()
                         .is_some_and(|catalog| !catalog.is_empty());
                 let set_result = if has_composite_catalog && config_id == "model" {
-                    set_cursor_composite_option(&cx, &sid, state, emitter, &value_id, request_seq)
-                        .await
+                    set_cursor_composite_option(
+                        &cx,
+                        &sid,
+                        state,
+                        emitter,
+                        &value_id,
+                        request_seq,
+                        operation_id.clone(),
+                    )
+                    .await
                 } else if agent_type == AgentType::Grok {
                     set_grok_config_option(&cx, &sid, state, emitter, config_id, value_id).await
                 } else {
@@ -8068,12 +8335,21 @@ async fn run_conversation_loop<'a>(
                         config_id,
                         value_id,
                         request_seq,
+                        operation_id.clone(),
                     )
                     .await
                 };
                 if let Err(e) = set_result {
                     let latest = if agent_type == AgentType::Cursor {
-                        finish_cursor_config_request(state, emitter, request_seq, None).await
+                        finish_cursor_config_request(
+                            state,
+                            emitter,
+                            request_seq,
+                            None,
+                            operation_id,
+                            "failed",
+                        )
+                        .await
                     } else {
                         true
                     };
@@ -10898,15 +11174,26 @@ mod tests {
         // No configured creds → both injected empty (⇒ spawn strips inherited).
         let mut merged = vec![("PATH".to_string(), "/usr/bin".to_string())];
         apply_cursor_env_policy(&mut merged, &sub);
-        assert!(merged.iter().any(|(k, v)| k == "CURSOR_API_KEY" && v.is_empty()));
+        assert!(merged
+            .iter()
+            .any(|(k, v)| k == "CURSOR_API_KEY" && v.is_empty()));
         assert!(merged
             .iter()
             .any(|(k, v)| k == "CURSOR_API_BASE_URL" && v.is_empty()));
 
-        // A configured key is preserved; only the absent base URL is cleared.
-        let mut with_key = vec![("CURSOR_API_KEY".to_string(), "sk-x".to_string())];
+        // Subscription is authoritative: even an explicitly inherited/saved
+        // custom credential is scrubbed so browser login cannot be hijacked.
+        let mut with_key = vec![
+            ("CURSOR_API_KEY".to_string(), "sk-x".to_string()),
+            (
+                "CURSOR_API_BASE_URL".to_string(),
+                "https://stale.example".to_string(),
+            ),
+        ];
         apply_cursor_env_policy(&mut with_key, &sub);
-        assert!(with_key.iter().any(|(k, v)| k == "CURSOR_API_KEY" && v == "sk-x"));
+        assert!(with_key
+            .iter()
+            .any(|(k, v)| k == "CURSOR_API_KEY" && v.is_empty()));
         assert!(with_key
             .iter()
             .any(|(k, v)| k == "CURSOR_API_BASE_URL" && v.is_empty()));
@@ -12861,7 +13148,7 @@ mod tests {
         assert!(cfg_idx < err_idx, "revert must precede the error");
 
         // The reverted options carry the original model.
-        if let AcpEvent::SessionConfigOptions { config_options } = &events[cfg_idx].payload {
+        if let AcpEvent::SessionConfigOptions { config_options, .. } = &events[cfg_idx].payload {
             let sel = expect_select(&config_options[0].kind);
             assert_eq!(sel.current_value, "grok-4.5");
         }
@@ -14766,6 +15053,131 @@ mod tests {
         assert!(build_cursor_composite_catalog(&cli_models, &available).is_empty());
     }
 
+    #[test]
+    fn cursor_suffix_mapping_is_globally_unique_across_config_options() {
+        let cli_models = vec![crate::acp::types::CursorModelInfo {
+            id: "shared-high-alias".into(),
+            label: "Shared Model High".into(),
+            is_default: false,
+        }];
+        let raw = serde_json::json!({
+            "models": [{
+                "value": "shared-model", "name": "Shared Model",
+                "configOptions": [
+                    {
+                        "id": "reasoning", "name": "Reasoning", "currentValue": "low",
+                        "options": [
+                            {"value": "low", "name": "Low"},
+                            {"value": "high", "name": "High"}
+                        ]
+                    },
+                    {
+                        "id": "effort", "name": "Effort", "currentValue": "medium",
+                        "options": [
+                            {"value": "medium", "name": "Medium"},
+                            {"value": "high", "name": "High"}
+                        ]
+                    }
+                ]
+            }]
+        });
+        let available = parse_cursor_available_models(raw).expect("catalog parses");
+        let mut reversed = available.clone();
+        reversed[0].config_options.reverse();
+        for catalog in [&available, &reversed] {
+            assert!(
+                build_cursor_composite_catalog(&cli_models, catalog).is_empty(),
+                "defaults must not hide two equal-length High interpretations"
+            );
+        }
+    }
+
+    #[test]
+    fn cursor_suffix_mapping_is_order_independent_and_prefers_complete_extra_high_phrase() {
+        let cli_models = vec![crate::acp::types::CursorModelInfo {
+            id: "shared-extra-high".into(),
+            label: "Shared Model Extra High".into(),
+            is_default: false,
+        }];
+        let configs = serde_json::json!([
+            {
+                "id": "reasoning", "name": "Reasoning", "currentValue": "low",
+                "options": [
+                    {"value": "low", "name": "Low"},
+                    {"value": "high", "name": "High"}
+                ]
+            },
+            {
+                "id": "effort", "name": "Effort", "currentValue": "normal",
+                "options": [
+                    {"value": "normal", "name": "Normal"},
+                    {"value": "xhigh", "name": "Extra High"}
+                ]
+            }
+        ]);
+        let catalog = |config_options: serde_json::Value| {
+            parse_cursor_available_models(serde_json::json!({
+                "models": [{
+                    "value": "shared-model", "name": "Shared Model",
+                    "configOptions": config_options
+                }]
+            }))
+            .expect("catalog parses")
+        };
+        let forward = catalog(configs.clone());
+        let mut reversed_values = configs.as_array().expect("array").clone();
+        reversed_values.reverse();
+        let reversed = catalog(serde_json::Value::Array(reversed_values));
+        let first = build_cursor_composite_catalog(&cli_models, &forward);
+        let second = build_cursor_composite_catalog(&cli_models, &reversed);
+        assert_eq!(first, second, "ACP option order must not change mapping");
+        assert_eq!(
+            first[0].parameters.get("effort").map(String::as_str),
+            Some("xhigh")
+        );
+        assert_eq!(
+            first[0].parameters.get("reasoning").map(String::as_str),
+            Some("low")
+        );
+    }
+
+    #[test]
+    fn cursor_suffix_mapping_rejects_inputs_over_the_search_bound() {
+        let suffix = vec!["high".to_string(); CURSOR_MAPPING_MAX_SUFFIX_WORDS + 1];
+        let config = CursorCatalogConfigOption {
+            id: "reasoning".into(),
+            name: "Reasoning".into(),
+            current_value: "low".into(),
+            options: vec![
+                CursorCatalogValue {
+                    value: "low".into(),
+                    name: "Low".into(),
+                },
+                CursorCatalogValue {
+                    value: "high".into(),
+                    name: "High".into(),
+                },
+            ],
+        };
+        assert!(cursor_unique_parameter_mapping(&suffix, &[config]).is_none());
+
+        let oversized = CursorCatalogConfigOption {
+            id: "reasoning".into(),
+            name: "Reasoning".into(),
+            current_value: "value-0".into(),
+            options: (0..=CURSOR_MAPPING_MAX_OPTIONS_PER_CONFIG)
+                .map(|index| CursorCatalogValue {
+                    value: format!("value-{index}"),
+                    name: format!("Value {index}"),
+                })
+                .collect(),
+        };
+        assert!(
+            cursor_unique_parameter_mapping(&[], &[oversized]).is_none(),
+            "abnormally large option sets must fail before backtracking"
+        );
+    }
+
     fn cursor_wire_options(value: serde_json::Value) -> Vec<SessionConfigOption> {
         serde_json::from_value(value).expect("Cursor config options parse")
     }
@@ -14797,6 +15209,179 @@ mod tests {
             ]
         );
         assert!(plan.iter().all(|(_, value)| value != "cli-flat-alias"));
+    }
+
+    struct FakeCursorConfigTransport {
+        calls: Vec<(String, String)>,
+        responses: std::collections::VecDeque<Result<Vec<SessionConfigOption>, sacp::Error>>,
+    }
+
+    #[async_trait::async_trait]
+    impl CursorConfigTransport for FakeCursorConfigTransport {
+        async fn set_config_option(
+            &mut self,
+            config_id: String,
+            value: SessionConfigOptionValue,
+        ) -> Result<Vec<SessionConfigOption>, sacp::Error> {
+            let value = value
+                .as_value_id()
+                .map(ToString::to_string)
+                .or_else(|| value.as_bool().map(|item| item.to_string()))
+                .expect("supported Cursor config value");
+            self.calls.push((config_id, value));
+            self.responses
+                .pop_front()
+                .expect("one dynamic response per request")
+        }
+    }
+
+    fn progressive_cursor_wire_options(stage: usize) -> Vec<SessionConfigOption> {
+        let mut options = vec![serde_json::json!({
+            "type": "select", "id": "model", "name": "Model",
+            "currentValue": if stage == 0 { "default" } else { "opus-5" },
+            "options": [
+                {"value": "default", "name": "Auto"},
+                {"value": "opus-5", "name": "Opus 5"}
+            ]
+        })];
+        if stage >= 1 {
+            options.push(serde_json::json!({
+                "type": "select", "id": "effort", "name": "Effort",
+                "currentValue": if stage >= 2 { "xhigh" } else { "medium" },
+                "options": [
+                    {"value": "medium", "name": "Medium"},
+                    {"value": "xhigh", "name": "Extra High"}
+                ]
+            }));
+        }
+        if stage >= 2 {
+            options.push(serde_json::json!({
+                "type": "select", "id": "context", "name": "Context",
+                "currentValue": if stage >= 3 { "1m" } else { "300k" },
+                "options": [
+                    {"value": "300k", "name": "300K"},
+                    {"value": "1m", "name": "1M"}
+                ]
+            }));
+        }
+        if stage >= 3 {
+            options.push(serde_json::json!({
+                "type": "boolean", "id": "thinking", "name": "Thinking",
+                "currentValue": stage >= 4
+            }));
+        }
+        if stage >= 4 {
+            options.push(serde_json::json!({
+                "type": "boolean", "id": "fast", "name": "Fast",
+                "currentValue": stage >= 5
+            }));
+        }
+        cursor_wire_options(serde_json::Value::Array(options))
+    }
+
+    #[tokio::test]
+    async fn cursor_fake_transport_is_model_first_and_waits_for_each_dynamic_response() {
+        let target = CursorCompositeModel {
+            value: "__codeg_cursor_composite__:opaque-cli-alias".into(),
+            label: "Opus 5 1M Extra High Thinking Fast".into(),
+            model_value: "opus-5".into(),
+            parameters: [
+                ("fast".into(), "true".into()),
+                ("thinking".into(), "true".into()),
+                ("context".into(), "1m".into()),
+                ("effort".into(), "xhigh".into()),
+            ]
+            .into(),
+        };
+        let mut options = progressive_cursor_wire_options(0);
+        let mut transport = FakeCursorConfigTransport {
+            calls: Vec::new(),
+            responses: (1..=5)
+                .map(|stage| Ok(progressive_cursor_wire_options(stage)))
+                .collect(),
+        };
+
+        apply_cursor_composite_selection_with_transport(&mut transport, &target, &mut options)
+            .await
+            .expect("complete dynamic transaction");
+
+        assert_eq!(
+            transport.calls,
+            vec![
+                ("model".into(), "opus-5".into()),
+                ("effort".into(), "xhigh".into()),
+                ("context".into(), "1m".into()),
+                ("thinking".into(), "true".into()),
+                ("fast".into(), "true".into()),
+            ]
+        );
+        assert!(transport
+            .calls
+            .iter()
+            .all(|(_, value)| value != "opaque-cli-alias"));
+    }
+
+    #[tokio::test]
+    async fn cursor_fake_transport_stops_on_parameter_failure_and_auto_is_model_only() {
+        let target = CursorCompositeModel {
+            value: "__codeg_cursor_composite__:high".into(),
+            label: "Opus 5 Extra High".into(),
+            model_value: "opus-5".into(),
+            parameters: [("effort".into(), "xhigh".into())].into(),
+        };
+        let mut options = progressive_cursor_wire_options(0);
+        let mut transport = FakeCursorConfigTransport {
+            calls: Vec::new(),
+            responses: [
+                Ok(progressive_cursor_wire_options(1)),
+                Err(sacp::util::internal_error("controlled failure")),
+                Ok(progressive_cursor_wire_options(0)),
+            ]
+            .into(),
+        };
+        assert!(apply_cursor_composite_selection_with_transport(
+            &mut transport,
+            &target,
+            &mut options,
+        )
+        .await
+        .is_err());
+        assert_eq!(transport.calls.len(), 2, "no request follows a failure");
+
+        let auto = CursorCompositeModel {
+            value: "default".into(),
+            label: "Auto".into(),
+            model_value: "default".into(),
+            parameters: BTreeMap::new(),
+        };
+        apply_cursor_composite_selection_with_transport(&mut transport, &auto, &mut options)
+            .await
+            .expect("the previous Auto row can be restored after partial failure");
+        assert_eq!(
+            transport.calls,
+            vec![
+                ("model".into(), "opus-5".into()),
+                ("effort".into(), "xhigh".into()),
+                ("model".into(), "default".into()),
+            ]
+        );
+
+        let mut auto_options = progressive_cursor_wire_options(0);
+        let mut auto_transport = FakeCursorConfigTransport {
+            calls: Vec::new(),
+            responses: [Ok(progressive_cursor_wire_options(0))].into(),
+        };
+        apply_cursor_composite_selection_with_transport(
+            &mut auto_transport,
+            &auto,
+            &mut auto_options,
+        )
+        .await
+        .expect("Auto restores only the real default sentinel");
+        assert_eq!(
+            auto_transport.calls,
+            vec![("model".into(), "default".into())]
+        );
     }
 
     #[test]
@@ -14976,5 +15561,100 @@ mod tests {
         assert!(!cursor_config_request_is_current(1, 2));
         assert!(cursor_config_request_is_current(2, 2));
         assert!(!cursor_config_request_is_current(3, 2));
+    }
+
+    #[tokio::test]
+    async fn cursor_terminal_config_event_is_correlated_and_stale_operations_emit_nothing() {
+        let mut session = SessionState::new(
+            "cursor-config-event".into(),
+            AgentType::Cursor,
+            None,
+            "test".into(),
+            None,
+        );
+        session.cursor_config_request_seq = 2;
+        session.cursor_raw_config_options = Some(progressive_cursor_wire_options(0));
+        let state = Arc::new(RwLock::new(session));
+        let emitter = EventEmitter::Noop;
+
+        assert!(
+            !finish_cursor_config_request(
+                &state,
+                &emitter,
+                1,
+                Some(progressive_cursor_wire_options(1)),
+                Some("old-operation".into()),
+                "applied",
+            )
+            .await
+        );
+        assert!(state
+            .read()
+            .await
+            .recent_events_after(0)
+            .map_or(true, |events| events.is_empty()));
+
+        assert!(
+            finish_cursor_config_request(
+                &state,
+                &emitter,
+                2,
+                Some(progressive_cursor_wire_options(1)),
+                Some("latest-operation".into()),
+                "failed",
+            )
+            .await
+        );
+        let events = state
+            .read()
+            .await
+            .recent_events_after(0)
+            .expect("event ring");
+        assert_eq!(
+            events.len(),
+            1,
+            "one terminal snapshot per latest operation"
+        );
+        match &events[0].payload {
+            AcpEvent::SessionConfigOptions {
+                operation_id,
+                operation_status,
+                ..
+            } => {
+                assert_eq!(operation_id.as_deref(), Some("latest-operation"));
+                assert_eq!(operation_status.as_deref(), Some("failed"));
+            }
+            other => panic!("unexpected terminal event: {other:?}"),
+        }
+
+        state.write().await.cursor_config_request_seq = 3;
+        assert!(
+            finish_cursor_config_request(
+                &state,
+                &emitter,
+                3,
+                Some(progressive_cursor_wire_options(5)),
+                Some("successful-operation".into()),
+                "applied",
+            )
+            .await
+        );
+        let events = state
+            .read()
+            .await
+            .recent_events_after(0)
+            .expect("terminal event ring");
+        assert_eq!(events.len(), 2);
+        match &events[1].payload {
+            AcpEvent::SessionConfigOptions {
+                operation_id,
+                operation_status,
+                ..
+            } => {
+                assert_eq!(operation_id.as_deref(), Some("successful-operation"));
+                assert_eq!(operation_status.as_deref(), Some("applied"));
+            }
+            other => panic!("unexpected terminal event: {other:?}"),
+        }
     }
 }

@@ -1,5 +1,5 @@
 import { useEffect } from "react"
-import { act, render } from "@testing-library/react"
+import { act, cleanup, render } from "@testing-library/react"
 import { useTranslations } from "next-intl"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
@@ -124,12 +124,13 @@ function Probe() {
 }
 
 async function mountProvider() {
-  render(
+  const view = render(
     <AcpConnectionsProvider>
       <Probe />
     </AcpConnectionsProvider>
   )
   await act(async () => {})
+  return view
 }
 
 const TAB = "conv-1-claude_code-42"
@@ -178,7 +179,14 @@ beforeEach(() => {
   h.acpConnect.mockResolvedValue("spawned-conn")
   h.acpDisconnect.mockResolvedValue(undefined)
   h.acpGetSessionSnapshot.mockResolvedValue(null)
-  h.acpSetConfigOption.mockResolvedValue(undefined)
+  h.acpSetConfigOption.mockImplementation(
+    async (
+      _connectionId: string,
+      _configId: string,
+      _valueId: string,
+      operationId?: string
+    ) => operationId
+  )
 })
 
 function latestAttachHandlers(): AttachHandlers {
@@ -1483,35 +1491,68 @@ describe("AcpConnectionsProvider Cursor composite model switching", () => {
       type: "session_config_options",
       config_options: cursorCompositeOptions(LOW),
     })
+    vi.mocked(saveConfigPreference).mockClear()
 
     await act(async () => {
       await h.actions!.setConfigOption(TAB, "model", HIGH_FAST)
       await h.actions!.setConfigOption(TAB, "model", EXTRA_HIGH)
     })
+    expect(saveConfigPreference).not.toHaveBeenCalled()
     expect(
       h.store!.getConnection(TAB)!.configOptions?.[0]?.kind.current_value
     ).toBe(EXTRA_HIGH)
+    expect(
+      h.store!.getConnection(TAB)!.configOptions?.[0]?.pending_operation_id
+    ).toBe("cursor-operation-2")
 
     // Completion for the first click arrives after the second optimistic pick.
     emitAcpEvent(handlers, {
       seq: 2,
       connection_id: "spawned-conn",
       type: "session_config_options",
+      operation_id: "cursor-operation-1",
+      operation_status: "applied",
       config_options: cursorCompositeOptions(HIGH_FAST),
+    })
+    expect(
+      h.store!.getConnection(TAB)!.configOptions?.[0]?.kind.current_value
+    ).toBe(EXTRA_HIGH)
+    expect(
+      h.store!.getConnection(TAB)!.configOptions?.[0]?.pending_operation_id
+    ).toBe("cursor-operation-2")
+
+    emitAcpEvent(handlers, {
+      seq: 3,
+      connection_id: "spawned-conn",
+      type: "session_config_options",
+      operation_id: "cursor-operation-1",
+      operation_status: "failed",
+      config_options: cursorCompositeOptions(LOW),
     })
     expect(
       h.store!.getConnection(TAB)!.configOptions?.[0]?.kind.current_value
     ).toBe(EXTRA_HIGH)
 
     emitAcpEvent(handlers, {
-      seq: 3,
+      seq: 4,
       connection_id: "spawned-conn",
       type: "session_config_options",
+      operation_id: "cursor-operation-2",
+      operation_status: "applied",
       config_options: cursorCompositeOptions(EXTRA_HIGH),
     })
     expect(
       h.store!.getConnection(TAB)!.configOptions?.[0]?.kind.current_value
     ).toBe(EXTRA_HIGH)
+    expect(saveConfigPreference).toHaveBeenCalledTimes(1)
+    expect(saveConfigPreference).toHaveBeenCalledWith(
+      "cursor",
+      "model",
+      EXTRA_HIGH
+    )
+    expect(
+      h.store!.getConnection(TAB)!.configOptions?.[0]?.pending_operation_id
+    ).toBeUndefined()
   })
 
   it("rolls back the optimistic row when a composite parameter fails", async () => {
@@ -1522,6 +1563,7 @@ describe("AcpConnectionsProvider Cursor composite model switching", () => {
       type: "session_config_options",
       config_options: cursorCompositeOptions(LOW),
     })
+    vi.mocked(saveConfigPreference).mockClear()
 
     await act(async () => {
       await h.actions!.setConfigOption(TAB, "model", HIGH_FAST)
@@ -1530,13 +1572,18 @@ describe("AcpConnectionsProvider Cursor composite model switching", () => {
       seq: 2,
       connection_id: "spawned-conn",
       type: "session_config_options",
+      operation_id: "cursor-operation-1",
+      operation_status: "failed",
       config_options: cursorCompositeOptions(LOW),
     })
-    // The rollback is held until the paired error proves the newest request
-    // failed; this same guard is what suppresses a stale older completion.
+    // The correlated terminal snapshot is authoritative; the following error
+    // is display-only and cannot roll a newer operation backward.
     expect(
       h.store!.getConnection(TAB)!.configOptions?.[0]?.kind.current_value
-    ).toBe(HIGH_FAST)
+    ).toBe(LOW)
+    expect(
+      h.store!.getConnection(TAB)!.configOptions?.[0]?.pending_operation_id
+    ).toBeUndefined()
 
     emitAcpEvent(handlers, {
       seq: 3,
@@ -1548,11 +1595,7 @@ describe("AcpConnectionsProvider Cursor composite model switching", () => {
     expect(
       h.store!.getConnection(TAB)!.configOptions?.[0]?.kind.current_value
     ).toBe(LOW)
-    expect(saveConfigPreference).toHaveBeenLastCalledWith(
-      "cursor",
-      "model",
-      LOW
-    )
+    expect(saveConfigPreference).not.toHaveBeenCalled()
   })
 
   it("rolls back immediately when the config request cannot be queued", async () => {
@@ -1563,6 +1606,7 @@ describe("AcpConnectionsProvider Cursor composite model switching", () => {
       type: "session_config_options",
       config_options: cursorCompositeOptions(LOW),
     })
+    vi.mocked(saveConfigPreference).mockClear()
     h.acpSetConfigOption.mockRejectedValueOnce(new Error("connection gone"))
 
     let failure: unknown
@@ -1577,10 +1621,224 @@ describe("AcpConnectionsProvider Cursor composite model switching", () => {
     expect(
       h.store!.getConnection(TAB)!.configOptions?.[0]?.kind.current_value
     ).toBe(LOW)
-    expect(saveConfigPreference).toHaveBeenLastCalledWith(
+    expect(saveConfigPreference).not.toHaveBeenCalled()
+  })
+
+  it("rejects a mismatched non-legacy operation acknowledgement", async () => {
+    const handlers = await connectCursorOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "session_config_options",
+      config_options: cursorCompositeOptions(LOW),
+    })
+    vi.mocked(saveConfigPreference).mockClear()
+    h.acpSetConfigOption.mockResolvedValueOnce("different-operation")
+
+    let failure: unknown
+    await act(async () => {
+      try {
+        await h.actions!.setConfigOption(TAB, "model", HIGH_FAST)
+      } catch (error) {
+        failure = error
+      }
+    })
+
+    expect(failure).toEqual(
+      new Error("Cursor operation acknowledgement mismatch")
+    )
+    const model = h.store!.getConnection(TAB)!.configOptions?.[0]
+    expect(model?.kind.type === "select" && model.kind.current_value).toBe(LOW)
+    expect(model?.pending_operation_id).toBeUndefined()
+    expect(saveConfigPreference).not.toHaveBeenCalled()
+  })
+
+  it("clears and reverts an applying composite when the connection drops", async () => {
+    const handlers = await connectCursorOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "session_config_options",
+      config_options: cursorCompositeOptions(LOW),
+    })
+    vi.mocked(saveConfigPreference).mockClear()
+    await act(async () => {
+      await h.actions!.setConfigOption(TAB, "model", HIGH_FAST)
+    })
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "status_changed",
+      status: "disconnected",
+    })
+    const model = h.store!.getConnection(TAB)!.configOptions?.[0]
+    expect(model?.kind.type === "select" && model.kind.current_value).toBe(LOW)
+    expect(model?.pending_operation_id).toBeUndefined()
+    expect(saveConfigPreference).not.toHaveBeenCalled()
+
+    // A terminal event already queued by the disconnected backend cannot
+    // resurrect the abandoned optimistic operation after tracking is cleared.
+    emitAcpEvent(handlers, {
+      seq: 3,
+      connection_id: "spawned-conn",
+      type: "session_config_options",
+      operation_id: "cursor-operation-1",
+      operation_status: "applied",
+      config_options: cursorCompositeOptions(HIGH_FAST),
+    })
+    expect(
+      h.store!.getConnection(TAB)!.configOptions?.[0]?.kind.current_value
+    ).toBe(LOW)
+    expect(saveConfigPreference).not.toHaveBeenCalled()
+  })
+
+  it("clears and reverts an applying composite on a terminal error", async () => {
+    const handlers = await connectCursorOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "session_config_options",
+      config_options: cursorCompositeOptions(LOW),
+    })
+    vi.mocked(saveConfigPreference).mockClear()
+    await act(async () => {
+      await h.actions!.setConfigOption(TAB, "model", HIGH_FAST)
+    })
+
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "error",
+      message: "agent terminated",
+      agent_type: "cursor",
+      code: "process_exited",
+      terminal: true,
+    })
+
+    const model = h.store!.getConnection(TAB)!.configOptions?.[0]
+    expect(model?.kind.type === "select" && model.kind.current_value).toBe(LOW)
+    expect(model?.pending_operation_id).toBeUndefined()
+    expect(saveConfigPreference).not.toHaveBeenCalled()
+  })
+
+  it("keeps an uncorrelated model-step update pending until the full operation completes", async () => {
+    const handlers = await connectCursorOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "session_config_options",
+      config_options: cursorCompositeOptions(LOW),
+    })
+    vi.mocked(saveConfigPreference).mockClear()
+    await act(async () => {
+      await h.actions!.setConfigOption(TAB, "model", HIGH_FAST)
+    })
+
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "session_config_options",
+      config_options: cursorCompositeOptions(LOW),
+    })
+    const model = h.store!.getConnection(TAB)!.configOptions?.[0]
+    expect(model?.kind.type === "select" && model.kind.current_value).toBe(
+      HIGH_FAST
+    )
+    expect(model?.pending_operation_id).toBe("cursor-operation-1")
+    expect(saveConfigPreference).not.toHaveBeenCalled()
+  })
+
+  it("reverts pending state on a new session and never persists it on unmount", async () => {
+    const handlers = await connectCursorOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "session_config_options",
+      config_options: cursorCompositeOptions(LOW),
+    })
+    vi.mocked(saveConfigPreference).mockClear()
+    await act(async () => {
+      await h.actions!.setConfigOption(TAB, "model", HIGH_FAST)
+    })
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "session_started",
+      session_id: "reconnected-session",
+    })
+    const model = h.store!.getConnection(TAB)!.configOptions?.[0]
+    expect(model?.kind.type === "select" && model.kind.current_value).toBe(LOW)
+    expect(model?.pending_operation_id).toBeUndefined()
+    expect(saveConfigPreference).not.toHaveBeenCalled()
+
+    await act(async () => {
+      await h.actions!.setConfigOption(TAB, "model", HIGH_FAST)
+    })
+    act(() => cleanup())
+    expect(saveConfigPreference).not.toHaveBeenCalled()
+  })
+
+  it("persists Auto only after its correlated full-success snapshot", async () => {
+    const handlers = await connectCursorOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "session_config_options",
+      config_options: cursorCompositeOptions(LOW),
+    })
+    vi.mocked(saveConfigPreference).mockClear()
+    await act(async () => {
+      await h.actions!.setConfigOption(TAB, "model", "default")
+    })
+    expect(saveConfigPreference).not.toHaveBeenCalled()
+    expect(
+      h.store!.getConnection(TAB)!.configOptions?.[0]?.pending_operation_id
+    ).toBe("cursor-operation-1")
+
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "session_config_options",
+      operation_id: "cursor-operation-1",
+      operation_status: "applied",
+      config_options: cursorCompositeOptions("default"),
+    })
+    expect(saveConfigPreference).toHaveBeenCalledWith(
       "cursor",
       "model",
-      LOW
+      "default"
+    )
+    expect(
+      h.store!.getConnection(TAB)!.configOptions?.[0]?.pending_operation_id
+    ).toBeUndefined()
+  })
+
+  it("accepts an exact terminal snapshot from an old backend without operation IDs", async () => {
+    const handlers = await connectCursorOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "session_config_options",
+      config_options: cursorCompositeOptions(LOW),
+    })
+    vi.mocked(saveConfigPreference).mockClear()
+    h.acpSetConfigOption.mockResolvedValueOnce(undefined)
+    await act(async () => {
+      await h.actions!.setConfigOption(TAB, "model", HIGH_FAST)
+    })
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "session_config_options",
+      config_options: cursorCompositeOptions(HIGH_FAST),
+    })
+    expect(
+      h.store!.getConnection(TAB)!.configOptions?.[0]?.kind.current_value
+    ).toBe(HIGH_FAST)
+    expect(saveConfigPreference).toHaveBeenCalledWith(
+      "cursor",
+      "model",
+      HIGH_FAST
     )
   })
 
@@ -1593,8 +1851,40 @@ describe("AcpConnectionsProvider Cursor composite model switching", () => {
       message:
         "Saved Cursor model variant is no longer available: old-composite",
       agent_type: "cursor",
+      code: "cursor_model_variant_unavailable",
     })
     expect(clearConfigPreference).toHaveBeenCalledWith("cursor", "model")
+  })
+
+  it("localizes stable Cursor failures without exposing backend English", async () => {
+    const handlers = await connectCursorOwner()
+    const cases = [
+      ["cursor_config_option_failed", "backendErrors.cursorConfigOptionFailed"],
+      ["cursor_model_restore_failed", "backendErrors.cursorModelRestoreFailed"],
+      [
+        "cursor_model_catalog_unavailable",
+        "backendErrors.cursorModelCatalogUnavailable",
+      ],
+      [
+        "cursor_model_variant_unavailable",
+        "backendErrors.cursorModelVariantUnavailable",
+      ],
+      [
+        "cursor_model_variant_ambiguous",
+        "backendErrors.cursorModelVariantAmbiguous",
+      ],
+    ] as const
+    cases.forEach(([code, expected], index) => {
+      emitAcpEvent(handlers, {
+        seq: index + 1,
+        connection_id: "spawned-conn",
+        type: "error",
+        message: "raw backend English must stay hidden",
+        agent_type: "cursor",
+        code,
+      })
+      expect(h.store!.getConnection(TAB)!.error).toBe(expected)
+    })
   })
 })
 

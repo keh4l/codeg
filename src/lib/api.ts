@@ -279,12 +279,14 @@ export async function acpSetMode(
 export async function acpSetConfigOption(
   connectionId: string,
   configId: string,
-  valueId: string
-): Promise<void> {
+  valueId: string,
+  operationId?: string
+): Promise<string | null | void> {
   return getTransport().call("acp_set_config_option", {
     connectionId,
     configId,
     valueId,
+    operationId,
   })
 }
 

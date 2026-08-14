@@ -1205,7 +1205,8 @@ impl ConnectionManager {
         conn_id: &str,
         config_id: String,
         value_id: String,
-    ) -> Result<(), AcpError> {
+        operation_id: Option<String>,
+    ) -> Result<Option<String>, AcpError> {
         let (cmd_tx, state, agent_type) = {
             let connections = self.connections.lock().await;
             let conn = connections
@@ -1218,6 +1219,7 @@ impl ConnectionManager {
             )
         };
         if agent_type == AgentType::Cursor {
+            let accepted_operation_id = operation_id.clone();
             // Keep sequence assignment and channel insertion in one critical
             // section. Concurrent API calls can otherwise acquire a sequence
             // in one order but reach the command queue in another.
@@ -1231,20 +1233,23 @@ impl ConnectionManager {
                 .send(ConnectionCommand::SetConfigOption {
                     config_id,
                     value_id,
+                    operation_id,
                     request_seq,
                 })
                 .await
                 .map_err(|_| AcpError::ProcessExited)?;
-            return Ok(());
+            return Ok(accepted_operation_id);
         }
         cmd_tx
             .send(ConnectionCommand::SetConfigOption {
                 config_id,
                 value_id,
+                operation_id: None,
                 request_seq: 0,
             })
             .await
-            .map_err(|_| AcpError::ProcessExited)
+            .map_err(|_| AcpError::ProcessExited)?;
+        Ok(None)
     }
 
     /// Pause or clear the session's active Codex goal via the connection loop

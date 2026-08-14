@@ -352,18 +352,25 @@ pub struct AcpSetConfigOptionParams {
     pub connection_id: String,
     pub config_id: String,
     pub value_id: String,
+    #[serde(default)]
+    pub operation_id: Option<String>,
 }
 
 pub async fn acp_set_config_option(
     Extension(state): Extension<Arc<AppState>>,
     Json(params): Json<AcpSetConfigOptionParams>,
-) -> Result<Json<()>, AppCommandError> {
+) -> Result<Json<Option<String>>, AppCommandError> {
     let manager = &state.connection_manager;
-    manager
-        .set_config_option(&params.connection_id, params.config_id, params.value_id)
+    let accepted_operation_id = manager
+        .set_config_option(
+            &params.connection_id,
+            params.config_id,
+            params.value_id,
+            params.operation_id,
+        )
         .await
         .map_err(|e| AppCommandError::task_execution_failed(e.to_string()))?;
-    Ok(Json(()))
+    Ok(Json(accepted_operation_id))
 }
 
 #[derive(Deserialize)]

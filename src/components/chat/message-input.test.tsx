@@ -603,7 +603,6 @@ describe("MessageInput collapsed selectors popover", () => {
     await waitFor(() =>
       expect(container.querySelector('[role="textbox"]')).not.toBeNull()
     )
-
     const settingsLabel = enMessages.Folder.chat.messageInput.agentSettings
     await user.click(screen.getByRole("button", { name: settingsLabel }))
     const popover = await screen.findByRole("dialog", { name: settingsLabel })
@@ -639,6 +638,7 @@ describe("MessageInput collapsed selectors popover", () => {
       name: "Model",
       description: null,
       category: "model",
+      pending_operation_id: "cursor-operation-test",
       kind: {
         type: "select",
         current_value: composite("gpt-5.3-codex-high-fast"),
@@ -676,6 +676,12 @@ describe("MessageInput collapsed selectors popover", () => {
     await waitFor(() =>
       expect(container.querySelector('[role="textbox"]')).not.toBeNull()
     )
+    expect(
+      screen.getByRole("button", { name: /Model: Codex 5\.3 High Fast/ })
+    ).toHaveAttribute("aria-busy", "true")
+    expect(
+      screen.getByLabelText(enMessages.Folder.chat.messageInput.applyingModel)
+    ).toBeInTheDocument()
 
     const settingsLabel = enMessages.Folder.chat.messageInput.agentSettings
     await user.click(screen.getByRole("button", { name: settingsLabel }))

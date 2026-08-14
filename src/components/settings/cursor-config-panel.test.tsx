@@ -184,6 +184,24 @@ describe("CursorConfigPanel", () => {
     vi.mocked(acpUpdateAgentConfig).mockResolvedValue(0)
   })
 
+  it("renders stable localized probe codes without exposing raw probe output", async () => {
+    vi.mocked(acpCursorAuthStatus).mockResolvedValue({
+      installed: true,
+      is_authenticated: false,
+      raw_status: null,
+      email: null,
+      membership: null,
+      error: "stderr contained account-secret",
+      error_code: "cursor_probe_timeout",
+      binary_path: "/cache/cursor-agent",
+    })
+    renderPanel({ env: {} })
+    expect(
+      await screen.findByText(enMessages.AcpAgentSettings.cursor.probeTimeout)
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/account-secret/)).not.toBeInTheDocument()
+  })
+
   it("rolls the env back when the rules write fails (API-key mode)", async () => {
     // A saved API key opens the panel in API-key mode. The widening hazard: the
     // env step already persisted (e.g. Run Everything on) but the deny rules
