@@ -2572,6 +2572,8 @@
         "toggleOn": "开",
         "toggleOff": "关",
         "agentSettings": "智能体设置",
+        "cliDefaultSettings": "CLI 默认设置",
+        "autoDefault": "Auto (default)",
         "searchModel": "搜索模型...",
         "searchModelAria": "搜索模型",
         "modelListLabel": "模型",

@@ -572,6 +572,64 @@ describe("MessageInput collapsed selectors popover", () => {
     )
   })
 
+  it("groups Cursor Auto as the CLI default and commits the raw model value", async () => {
+    const user = userEvent.setup()
+    const onConfigOptionChange = vi.fn()
+    const options = [
+      { value: "default", name: "Auto", description: null },
+      ...Array.from({ length: 2 }, (_, i) => ({
+        value: `cursor-model-id-${i}`,
+        name: `Account model ${i}`,
+        description: null,
+      })),
+    ]
+    const cursorModel: SessionConfigOptionInfo = {
+      id: "model",
+      name: "Model",
+      description: null,
+      category: "model",
+      kind: {
+        type: "select",
+        current_value: "default",
+        options,
+        groups: [],
+      },
+    }
+    const { container } = renderInput({
+      agentType: "cursor",
+      configOptions: [cursorModel],
+      onConfigOptionChange,
+    })
+    await waitFor(() =>
+      expect(container.querySelector('[role="textbox"]')).not.toBeNull()
+    )
+
+    const settingsLabel = enMessages.Folder.chat.messageInput.agentSettings
+    await user.click(screen.getByRole("button", { name: settingsLabel }))
+    const popover = await screen.findByRole("dialog", { name: settingsLabel })
+
+    expect(
+      within(popover).getByText(
+        enMessages.Folder.chat.messageInput.cliDefaultSettings
+      )
+    ).toBeInTheDocument()
+    expect(
+      within(popover).getAllByText(
+        enMessages.Folder.chat.messageInput.autoDefault
+      ).length
+    ).toBeGreaterThan(0)
+
+    const search = within(popover).getByRole("combobox")
+    await user.type(search, "Account model 1")
+    await user.click(
+      within(popover).getByRole("option", { name: /Account model 1/ })
+    )
+    expect(onConfigOptionChange).toHaveBeenCalledWith(
+      "model",
+      "cursor-model-id-1"
+    )
+  })
+
   it("selects a mode from the cog Popover and closes it", async () => {
     const user = userEvent.setup()
     const onModeChange = vi.fn()

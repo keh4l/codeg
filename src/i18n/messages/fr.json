@@ -2570,6 +2570,8 @@
         "toggleOn": "Activé",
         "toggleOff": "Désactivé",
         "agentSettings": "Paramètres de l'agent",
+        "cliDefaultSettings": "Paramètres CLI par défaut",
+        "autoDefault": "Auto (default)",
         "searchModel": "Rechercher des modèles...",
         "searchModelAria": "Rechercher des modèles",
         "modelListLabel": "Modèles",

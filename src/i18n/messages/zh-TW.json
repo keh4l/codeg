@@ -2570,6 +2570,8 @@
         "toggleOn": "開",
         "toggleOff": "關",
         "agentSettings": "智能體設定",
+        "cliDefaultSettings": "CLI 預設設定",
+        "autoDefault": "Auto (default)",
         "searchModel": "搜尋模型...",
         "searchModelAria": "搜尋模型",
         "modelListLabel": "模型",

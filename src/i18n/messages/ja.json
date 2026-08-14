@@ -2570,6 +2570,8 @@
         "toggleOn": "オン",
         "toggleOff": "オフ",
         "agentSettings": "エージェント設定",
+        "cliDefaultSettings": "CLI のデフォルト設定",
+        "autoDefault": "Auto (default)",
         "searchModel": "モデルを検索...",
         "searchModelAria": "モデルを検索",
         "modelListLabel": "モデル",
