@@ -7760,6 +7760,28 @@ fn parse_cursor_models(stdout: &str) -> (Vec<crate::acp::types::CursorModelInfo>
     (models, default_model)
 }
 
+/// Read the same dynamic Cursor model directory used by the native CLI picker,
+/// but with the already-resolved per-connection environment. This is consumed
+/// by the ACP connection to build display-only composite rows; none of the CLI
+/// aliases returned here are sent to parameterized ACP sessions.
+pub(crate) async fn cursor_models_for_runtime(
+    runtime_env: &BTreeMap<String, String>,
+) -> Result<Vec<crate::acp::types::CursorModelInfo>, String> {
+    let mut probe_env = runtime_env.clone();
+    // Match the spawned Cursor process's subscription policy: an inherited API
+    // key must not hijack a browser-login session. Empty means env_remove in
+    // run_cursor_probe.
+    if runtime_env.get("CURSOR_AUTH_MODE").map(String::as_str) == Some("subscription")
+        && !runtime_env
+            .get("CURSOR_API_KEY")
+            .is_some_and(|value| !value.trim().is_empty())
+    {
+        probe_env.insert("CURSOR_API_KEY".to_string(), String::new());
+    }
+    let stdout = run_cursor_probe(&["models"], 30, &probe_env).await?;
+    Ok(parse_cursor_models(&stdout).0)
+}
+
 /// Strip ANSI SGR escape sequences from CLI output.
 fn strip_ansi(input: &str) -> String {
     let mut out = String::with_capacity(input.len());

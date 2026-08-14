@@ -1206,17 +1206,42 @@ impl ConnectionManager {
         config_id: String,
         value_id: String,
     ) -> Result<(), AcpError> {
-        let cmd_tx = {
+        let (cmd_tx, state, agent_type) = {
             let connections = self.connections.lock().await;
             let conn = connections
                 .get(conn_id)
                 .ok_or_else(|| AcpError::ConnectionNotFound(conn_id.into()))?;
-            conn.cmd_tx.clone()
+            (
+                conn.cmd_tx.clone(),
+                Arc::clone(&conn.state),
+                conn.agent_type,
+            )
         };
+        if agent_type == AgentType::Cursor {
+            // Keep sequence assignment and channel insertion in one critical
+            // section. Concurrent API calls can otherwise acquire a sequence
+            // in one order but reach the command queue in another.
+            let enqueue_lock = state.read().await.cursor_config_enqueue_lock.clone();
+            let _enqueue_guard = enqueue_lock.lock_owned().await;
+            let mut session = state.write().await;
+            session.cursor_config_request_seq = session.cursor_config_request_seq.saturating_add(1);
+            let request_seq = session.cursor_config_request_seq;
+            drop(session);
+            cmd_tx
+                .send(ConnectionCommand::SetConfigOption {
+                    config_id,
+                    value_id,
+                    request_seq,
+                })
+                .await
+                .map_err(|_| AcpError::ProcessExited)?;
+            return Ok(());
+        }
         cmd_tx
             .send(ConnectionCommand::SetConfigOption {
                 config_id,
                 value_id,
+                request_seq: 0,
             })
             .await
             .map_err(|_| AcpError::ProcessExited)

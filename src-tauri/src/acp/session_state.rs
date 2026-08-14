@@ -13,9 +13,9 @@ use crate::acp::feedback::{FeedbackItem, FeedbackStatus};
 use crate::acp::plan_approval::PendingPlanApprovalState;
 use crate::acp::question::PendingQuestionState;
 use crate::acp::types::{
-    AcpEvent, AvailableCommandInfo, ConfigStaleKind, ConnectionStatus, EventEnvelope,
-    GrokModelSpec, PromptCapabilitiesInfo, SessionConfigOptionInfo, SessionModeStateInfo,
-    ToolCallImageInfo,
+    AcpEvent, AvailableCommandInfo, ConfigStaleKind, ConnectionStatus, CursorCompositeModel,
+    EventEnvelope, GrokModelSpec, PromptCapabilitiesInfo, SessionConfigOptionInfo,
+    SessionModeStateInfo, ToolCallImageInfo,
 };
 use crate::models::agent::AgentType;
 use crate::models::message::MessageRole;
@@ -317,6 +317,20 @@ pub struct SessionState {
     pub modes: Option<SessionModeStateInfo>,
     pub current_mode: Option<String>,
     pub config_options: Option<Vec<SessionConfigOptionInfo>>,
+    /// Cursor only: the parameterized ACP options in their original shape.
+    /// `config_options` above carries the one-row composite picker shown to the
+    /// frontend, so wire validation and reverse matching must use this copy.
+    pub cursor_raw_config_options: Option<Vec<sacp::schema::SessionConfigOption>>,
+    /// Cursor only: explicit rows obtained by intersecting `cursor-agent
+    /// models` with `cursor/list_available_models`. Selector values are local
+    /// opaque keys; each row retains its exact ACP base model + parameters.
+    pub cursor_composite_models: Option<Vec<CursorCompositeModel>>,
+    /// Monotonic request bookkeeping for Cursor composite switches. A newer
+    /// queued selection suppresses stale completion/update events from an
+    /// older request, preventing rapid clicks from snapping the UI backward.
+    pub cursor_config_enqueue_lock: Arc<tokio::sync::Mutex<()>>,
+    pub cursor_config_request_seq: u64,
+    pub cursor_config_completed_seq: u64,
     /// Grok only: per-model reasoning-effort specs, parsed from the top-level
     /// `models` of the session-establishment response (guaranteed on
     /// `session/new`; opportunistic on resume/fork). Grok never re-sends this on
@@ -495,6 +509,11 @@ impl SessionState {
             modes: None,
             current_mode: None,
             config_options: None,
+            cursor_raw_config_options: None,
+            cursor_composite_models: None,
+            cursor_config_enqueue_lock: Arc::new(tokio::sync::Mutex::new(())),
+            cursor_config_request_seq: 0,
+            cursor_config_completed_seq: 0,
             grok_model_specs: None,
             prompt_capabilities: None,
             fork_supported: false,
