@@ -81,6 +81,7 @@ import {
   withEventSoundsSuppressed,
 } from "@/lib/notification-sound"
 import {
+  clearConfigPreference,
   getSavedPrefsForConnect,
   saveModePreference,
   saveConfigPreference,
@@ -2714,6 +2715,24 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
   // the alert each time.
   const alertedErrorDetailsRef = useRef(new Map<string, string>())
 
+  // Cursor composite picks are optimistic in the UI but multi-step on the ACP
+  // wire. Keep the newest desired row until the backend publishes that exact
+  // value. An older completion that races a rapid second click is deferred; if
+  // the newest request fails, the following error releases the backend's last
+  // confirmed snapshot instead of leaving a falsely-successful highlight.
+  const pendingCursorConfigRef = useRef(
+    new Map<string, { configId: string; valueId: string }>()
+  )
+  const deferredCursorConfigRef = useRef(
+    new Map<string, SessionConfigOptionInfo[]>()
+  )
+  const confirmedCursorModelRef = useRef(new Map<string, string>())
+  const clearCursorConfigTracking = useCallback((contextKey: string) => {
+    pendingCursorConfigRef.current.delete(contextKey)
+    deferredCursorConfigRef.current.delete(contextKey)
+    confirmedCursorModelRef.current.delete(contextKey)
+  }, [])
+
   // contextKey → active EventStream subscription handle. Populated only for
   // connections established via the Subscribe-with-Snapshot attach
   // protocol (web + remote-desktop). Used to (a) detach on disconnect /
@@ -3501,6 +3520,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           break
         case "session_started":
           flushStreamingQueue()
+          clearCursorConfigTracking(contextKey)
           dispatch({
             type: "SESSION_STARTED",
             contextKey,
@@ -3557,12 +3577,44 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           flushStreamingQueue()
           // Same as `session_modes`: backend already merged saved prefs
           // into `current_value` before emitting.
+          const cfgConn = storeRef.current.connections.get(contextKey)
+          const pending = pendingCursorConfigRef.current.get(contextKey)
+          if (cfgConn?.agentType === "cursor" && pending) {
+            const incoming = e.config_options.find(
+              (option) => option.id === pending.configId
+            )
+            const incomingValue =
+              incoming?.kind.type === "select"
+                ? incoming.kind.current_value
+                : undefined
+            if (incomingValue !== pending.valueId) {
+              deferredCursorConfigRef.current.set(contextKey, e.config_options)
+              break
+            }
+            pendingCursorConfigRef.current.delete(contextKey)
+            deferredCursorConfigRef.current.delete(contextKey)
+          }
+          if (cfgConn?.agentType === "cursor") {
+            const confirmedModel = e.config_options.find(
+              (option) => option.id === "model"
+            )
+            if (
+              confirmedModel?.kind.type === "select" &&
+              !confirmedModel.kind.current_value.startsWith(
+                "__codeg_cursor_current_unavailable__"
+              )
+            ) {
+              confirmedCursorModelRef.current.set(
+                contextKey,
+                confirmedModel.kind.current_value
+              )
+            }
+          }
           dispatch({
             type: "SESSION_CONFIG_OPTIONS",
             contextKey,
             configOptions: e.config_options,
           })
-          const cfgConn = storeRef.current.connections.get(contextKey)
           if (cfgConn) {
             const entry = selectorsCache.get(cfgConn.agentType) ?? {
               modes: null,
@@ -3717,6 +3769,48 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
         case "error": {
           flushStreamingQueue()
           const nc = storeRef.current.connections.get(contextKey)
+          const cursorConfigFailure =
+            e.code === "cursor_config_option_failed" ||
+            e.code === "cursor_model_restore_failed" ||
+            e.code === "cursor_model_variant_unavailable" ||
+            e.message.startsWith("Failed to set config option:") ||
+            e.message.startsWith("Failed to restore Cursor model variant:") ||
+            e.message.startsWith(
+              "Saved Cursor model variant is no longer available:"
+            )
+          if (nc?.agentType === "cursor" && cursorConfigFailure) {
+            pendingCursorConfigRef.current.delete(contextKey)
+            const confirmed = deferredCursorConfigRef.current.get(contextKey)
+            deferredCursorConfigRef.current.delete(contextKey)
+            if (confirmed) {
+              dispatch({
+                type: "SESSION_CONFIG_OPTIONS",
+                contextKey,
+                configOptions: confirmed,
+              })
+              const entry = selectorsCache.get(nc.agentType) ?? {
+                modes: null,
+                configOptions: null,
+              }
+              entry.configOptions = confirmed
+              selectorsCache.set(nc.agentType, entry)
+            }
+            const confirmedValue = confirmed?.find(
+              (option) => option.id === "model"
+            )?.kind
+            const persistedValue =
+              confirmedValue?.type === "select" &&
+              !confirmedValue.current_value.startsWith(
+                "__codeg_cursor_current_unavailable__"
+              )
+                ? confirmedValue.current_value
+                : confirmedCursorModelRef.current.get(contextKey)
+            if (persistedValue) {
+              saveConfigPreference("cursor", "model", persistedValue)
+            } else {
+              clearConfigPreference("cursor", "model")
+            }
+          }
           const agentLabel = nc
             ? getAgentLabel(nc.agentType)
             : (e.agent_type as string)
@@ -3892,6 +3986,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       }
     },
     [
+      clearCursorConfigTracking,
       dispatch,
       enqueueStreamingAction,
       flushPendingToolCallUpdates,
@@ -4914,6 +5009,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
         reverseMapRef.current.delete(conn.connectionId)
         pendingUnmappedEventsRef.current.delete(conn.connectionId)
         lastActivityRef.current.delete(contextKey)
+        clearCursorConfigTracking(contextKey)
         dispatch({ type: "CONNECTION_REMOVED", contextKey })
         return true
       }
@@ -4940,10 +5036,16 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       teardownAttachSubscription(contextKey)
       lastActivityRef.current.delete(contextKey)
       pendingUnmappedEventsRef.current.delete(conn.connectionId)
+      clearCursorConfigTracking(contextKey)
       dispatch({ type: "CONNECTION_REMOVED", contextKey })
       return tornDown
     },
-    [captureIdentityBeforeRemoval, dispatch, teardownAttachSubscription]
+    [
+      captureIdentityBeforeRemoval,
+      clearCursorConfigTracking,
+      dispatch,
+      teardownAttachSubscription,
+    ]
   )
 
   // Lifecycle release for a surface that vanished on its own — currently the
@@ -5135,6 +5237,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       reverseMapRef.current.delete(conn.connectionId)
       teardownAttachSubscription(contextKey)
       pendingUnmappedEventsRef.current.delete(conn.connectionId)
+      clearCursorConfigTracking(contextKey)
     }
     lastActivityRef.current.clear()
     // Context keys are reused across backends, so a surviving entry here would
@@ -5145,7 +5248,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
     lastConnectParamsRef.current.clear()
     await Promise.all(promises)
     dispatch({ type: "REMOVE_ALL" })
-  }, [dispatch, teardownAttachSubscription])
+  }, [clearCursorConfigTracking, dispatch, teardownAttachSubscription])
 
   const sendPrompt = useCallback(
     async (
@@ -5191,6 +5294,11 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
     async (contextKey: string, configId: string, valueId: string) => {
       const conn = storeRef.current.connections.get(contextKey)
       if (!conn) return
+      const previousConfigOptions = conn.configOptions
+      if (conn.agentType === "cursor" && configId === "model") {
+        pendingCursorConfigRef.current.set(contextKey, { configId, valueId })
+        deferredCursorConfigRef.current.delete(contextKey)
+      }
       dispatch({
         type: "CONFIG_OPTION_CHANGED",
         contextKey,
@@ -5201,7 +5309,33 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       // can ship it back to the backend as a preferred config value.
       saveConfigPreference(conn.agentType, configId, valueId)
       lastActivityRef.current.set(contextKey, Date.now())
-      await acpSetConfigOption(conn.connectionId, configId, valueId)
+      try {
+        await acpSetConfigOption(conn.connectionId, configId, valueId)
+      } catch (error) {
+        const pending = pendingCursorConfigRef.current.get(contextKey)
+        if (
+          conn.agentType === "cursor" &&
+          configId === "model" &&
+          pending?.valueId === valueId
+        ) {
+          pendingCursorConfigRef.current.delete(contextKey)
+          deferredCursorConfigRef.current.delete(contextKey)
+          if (previousConfigOptions) {
+            dispatch({
+              type: "SESSION_CONFIG_OPTIONS",
+              contextKey,
+              configOptions: previousConfigOptions,
+            })
+          }
+          const confirmed = confirmedCursorModelRef.current.get(contextKey)
+          if (confirmed) {
+            saveConfigPreference("cursor", "model", confirmed)
+          } else {
+            clearConfigPreference("cursor", "model")
+          }
+        }
+        throw error
+      }
     },
     [dispatch]
   )

@@ -1107,6 +1107,18 @@ pub struct CursorModelsResult {
     pub error: Option<String>,
 }
 
+/// One Codeg-visible Cursor model row backed by Cursor's parameterized ACP
+/// protocol. `value` is a Codeg-local selector key (never an ACP model id),
+/// while `model_value` and `parameters` are the exact values Cursor advertised.
+/// Backend-internal: the frontend receives only the synthesized select option.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CursorCompositeModel {
+    pub value: String,
+    pub label: String,
+    pub model_value: String,
+    pub parameters: std::collections::BTreeMap<String, String>,
+}
+
 /// Lightweight status info for a single agent, used by connect() pre-check.
 #[derive(Debug, Clone, Serialize)]
 pub struct AcpAgentStatus {

@@ -9,7 +9,10 @@ import {
 } from "@/contexts/acp-connections-context"
 import { parsePermissionToolCall } from "@/lib/permission-request"
 import { subscribe } from "@/lib/platform"
-import { saveConfigPreference } from "@/lib/selector-prefs-storage"
+import {
+  clearConfigPreference,
+  saveConfigPreference,
+} from "@/lib/selector-prefs-storage"
 import type { AttachHandlers } from "@/lib/transport/types"
 import type {
   EventEnvelope,
@@ -40,6 +43,7 @@ const h = vi.hoisted(() => {
     acpConnect: vi.fn(),
     acpDisconnect: vi.fn(),
     acpGetSessionSnapshot: vi.fn(),
+    acpSetConfigOption: vi.fn(),
     buildDelegationSeedEnvelopes: vi.fn(() => []),
     denormalizeSnapshot: vi.fn(),
     // Stable across renders so tests can assert on what the error handler
@@ -83,6 +87,7 @@ vi.mock("@/lib/selector-prefs-storage", () => ({
   getSavedPrefsForConnect: () => ({ modeId: undefined, configValues: {} }),
   saveModePreference: vi.fn(),
   saveConfigPreference: vi.fn(),
+  clearConfigPreference: vi.fn(),
 }))
 
 vi.mock("@/lib/snapshot-denormalize", () => ({
@@ -97,7 +102,7 @@ vi.mock("@/lib/api", () => ({
   acpGetSessionSnapshot: h.acpGetSessionSnapshot,
   acpPrompt: vi.fn(),
   acpSetMode: vi.fn(),
-  acpSetConfigOption: vi.fn(),
+  acpSetConfigOption: h.acpSetConfigOption,
   acpCancel: vi.fn(),
   acpRespondPermission: vi.fn(),
   acpTouchConnection: vi.fn(),
@@ -144,6 +149,7 @@ beforeEach(() => {
   h.acpConnect.mockReset()
   h.acpDisconnect.mockReset()
   h.acpGetSessionSnapshot.mockReset()
+  h.acpSetConfigOption.mockReset()
   h.denormalizeSnapshot.mockReset()
   h.denormalizeSnapshot.mockReturnValue({
     connectionId: "owner-conn",
@@ -177,6 +183,7 @@ beforeEach(() => {
   h.acpConnect.mockResolvedValue("spawned-conn")
   h.acpDisconnect.mockResolvedValue(undefined)
   h.acpGetSessionSnapshot.mockResolvedValue(null)
+  h.acpSetConfigOption.mockResolvedValue(undefined)
 })
 
 function latestAttachHandlers(): AttachHandlers {
@@ -1987,6 +1994,170 @@ describe("AcpConnectionsProvider Grok cross-agent-type model switch", () => {
     })
 
     expect(h.toastWarning).not.toHaveBeenCalled()
+  })
+})
+
+describe("AcpConnectionsProvider Cursor composite model switching", () => {
+  const LOW = "__codeg_cursor_composite__:gpt-low"
+  const HIGH_FAST = "__codeg_cursor_composite__:gpt-high-fast"
+  const EXTRA_HIGH = "__codeg_cursor_composite__:gpt-xhigh"
+
+  function cursorCompositeOptions(current: string): SessionConfigOptionInfo[] {
+    return [
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        kind: {
+          type: "select",
+          current_value: current,
+          options: [
+            { value: "default", name: "Auto" },
+            { value: LOW, name: "Codex 5.3 Low" },
+            { value: HIGH_FAST, name: "Codex 5.3 High Fast" },
+            { value: EXTRA_HIGH, name: "Codex 5.3 Extra High" },
+          ],
+          groups: [],
+        },
+      },
+    ]
+  }
+
+  async function connectCursorOwner(): Promise<AttachHandlers> {
+    h.acpGetAgentStatus.mockResolvedValue({
+      agent_type: "cursor",
+      enabled: true,
+      available: true,
+      installed_version: "2026.08.11-e8db854",
+      is_acp_adapter: false,
+    })
+    await mountProvider()
+    await act(async () => {
+      await h.actions!.connect(TAB, "cursor", "/tmp/x", "sess-1")
+    })
+    return latestAttachHandlers()
+  }
+
+  it("does not let an older completion overwrite a rapid newer choice", async () => {
+    const handlers = await connectCursorOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "session_config_options",
+      config_options: cursorCompositeOptions(LOW),
+    })
+
+    await act(async () => {
+      await h.actions!.setConfigOption(TAB, "model", HIGH_FAST)
+      await h.actions!.setConfigOption(TAB, "model", EXTRA_HIGH)
+    })
+    expect(
+      h.store!.getConnection(TAB)!.configOptions?.[0]?.kind.current_value
+    ).toBe(EXTRA_HIGH)
+
+    // Completion for the first click arrives after the second optimistic pick.
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "session_config_options",
+      config_options: cursorCompositeOptions(HIGH_FAST),
+    })
+    expect(
+      h.store!.getConnection(TAB)!.configOptions?.[0]?.kind.current_value
+    ).toBe(EXTRA_HIGH)
+
+    emitAcpEvent(handlers, {
+      seq: 3,
+      connection_id: "spawned-conn",
+      type: "session_config_options",
+      config_options: cursorCompositeOptions(EXTRA_HIGH),
+    })
+    expect(
+      h.store!.getConnection(TAB)!.configOptions?.[0]?.kind.current_value
+    ).toBe(EXTRA_HIGH)
+  })
+
+  it("rolls back the optimistic row when a composite parameter fails", async () => {
+    const handlers = await connectCursorOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "session_config_options",
+      config_options: cursorCompositeOptions(LOW),
+    })
+
+    await act(async () => {
+      await h.actions!.setConfigOption(TAB, "model", HIGH_FAST)
+    })
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "session_config_options",
+      config_options: cursorCompositeOptions(LOW),
+    })
+    // The rollback is held until the paired error proves the newest request
+    // failed; this same guard is what suppresses a stale older completion.
+    expect(
+      h.store!.getConnection(TAB)!.configOptions?.[0]?.kind.current_value
+    ).toBe(HIGH_FAST)
+
+    emitAcpEvent(handlers, {
+      seq: 3,
+      connection_id: "spawned-conn",
+      type: "error",
+      message: "Failed to set config option: fast was removed",
+      agent_type: "cursor",
+    })
+    expect(
+      h.store!.getConnection(TAB)!.configOptions?.[0]?.kind.current_value
+    ).toBe(LOW)
+    expect(saveConfigPreference).toHaveBeenLastCalledWith(
+      "cursor",
+      "model",
+      LOW
+    )
+  })
+
+  it("rolls back immediately when the config request cannot be queued", async () => {
+    const handlers = await connectCursorOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "session_config_options",
+      config_options: cursorCompositeOptions(LOW),
+    })
+    h.acpSetConfigOption.mockRejectedValueOnce(new Error("connection gone"))
+
+    let failure: unknown
+    await act(async () => {
+      try {
+        await h.actions!.setConfigOption(TAB, "model", HIGH_FAST)
+      } catch (error) {
+        failure = error
+      }
+    })
+    expect(failure).toEqual(new Error("connection gone"))
+    expect(
+      h.store!.getConnection(TAB)!.configOptions?.[0]?.kind.current_value
+    ).toBe(LOW)
+    expect(saveConfigPreference).toHaveBeenLastCalledWith(
+      "cursor",
+      "model",
+      LOW
+    )
+  })
+
+  it("clears a restored composite preference removed by the current catalog", async () => {
+    const handlers = await connectCursorOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "error",
+      message:
+        "Saved Cursor model variant is no longer available: old-composite",
+      agent_type: "cursor",
+    })
+    expect(clearConfigPreference).toHaveBeenCalledWith("cursor", "model")
   })
 })
 
