@@ -1218,6 +1218,8 @@ export interface SessionConfigOptionInfo {
   description?: string | null
   category?: string | null
   kind: SessionConfigKindInfo
+  /** Cursor-only optimistic operation marker. Never serialized by Rust. */
+  pending_operation_id?: string
 }
 
 export interface AgentOptionsSnapshot {
@@ -1785,6 +1787,8 @@ export type AcpEvent =
   | {
       type: "session_config_options"
       config_options: SessionConfigOptionInfo[]
+      operation_id?: string | null
+      operation_status?: "applied" | "failed" | null
     }
   | {
       type: "selectors_ready"
@@ -1815,6 +1819,8 @@ export type AcpEvent =
       agent_type: string
       /** Stable backend error identifier for localization (e.g. "initialize_timeout"). */
       code: string | null
+      /** Present only when this error terminates the connection. */
+      terminal?: boolean
       /**
        * Diagnostic evidence for errors the backend *inferred* rather than
        * received — the `turn_failed_empty*` family, where the agent reported
@@ -2434,6 +2440,7 @@ export interface CursorAuthStatus {
   email: string | null
   membership: string | null
   error: string | null
+  error_code?: string | null
   /** Absolute path to the cursor-agent binary codeg would launch; the panel
    * builds a copy-pasteable `"<binary_path>" login` command from it (the
    * managed binary isn't on PATH). Null when not installed. */
@@ -2453,6 +2460,7 @@ export interface CursorModelsResult {
   models: CursorModelInfo[]
   default_model: string | null
   error: string | null
+  error_code?: string | null
 }
 
 // Lightweight agent status returned by acp_get_agent_status

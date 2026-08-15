@@ -13,9 +13,9 @@ use crate::acp::feedback::{FeedbackItem, FeedbackStatus};
 use crate::acp::plan_approval::PendingPlanApprovalState;
 use crate::acp::question::PendingQuestionState;
 use crate::acp::types::{
-    AcpEvent, AvailableCommandInfo, ConfigStaleKind, ConnectionStatus, EventEnvelope,
-    GrokModelSpec, PromptCapabilitiesInfo, SessionConfigOptionInfo, SessionModeStateInfo,
-    ToolCallImageInfo,
+    AcpEvent, AvailableCommandInfo, ConfigStaleKind, ConnectionStatus, CursorCompositeModel,
+    EventEnvelope, GrokModelSpec, PromptCapabilitiesInfo, SessionConfigOptionInfo,
+    SessionModeStateInfo, ToolCallImageInfo,
 };
 use crate::models::agent::AgentType;
 use crate::models::message::MessageRole;
@@ -49,8 +49,12 @@ pub enum LiveContentBlock {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         parent_tool_use_id: Option<String>,
     },
-    ToolCallRef { tool_call_id: String },
-    Plan { entries: serde_json::Value },
+    ToolCallRef {
+        tool_call_id: String,
+    },
+    Plan {
+        entries: serde_json::Value,
+    },
 }
 
 /// 工具调用的运行态。turn 完成时统一 clear。
@@ -317,6 +321,20 @@ pub struct SessionState {
     pub modes: Option<SessionModeStateInfo>,
     pub current_mode: Option<String>,
     pub config_options: Option<Vec<SessionConfigOptionInfo>>,
+    /// Cursor only: the parameterized ACP options in their original shape.
+    /// `config_options` above carries the one-row composite picker shown to the
+    /// frontend, so wire validation and reverse matching must use this copy.
+    pub cursor_raw_config_options: Option<Vec<sacp::schema::SessionConfigOption>>,
+    /// Cursor only: explicit rows obtained by intersecting `cursor-agent
+    /// models` with `cursor/list_available_models`. Selector values are local
+    /// opaque keys; each row retains its exact ACP base model + parameters.
+    pub cursor_composite_models: Option<Vec<CursorCompositeModel>>,
+    /// Monotonic request bookkeeping for Cursor composite switches. A newer
+    /// queued selection suppresses stale completion/update events from an
+    /// older request, preventing rapid clicks from snapping the UI backward.
+    pub cursor_config_enqueue_lock: Arc<tokio::sync::Mutex<()>>,
+    pub cursor_config_request_seq: u64,
+    pub cursor_config_completed_seq: u64,
     /// Grok only: per-model reasoning-effort specs, parsed from the top-level
     /// `models` of the session-establishment response (guaranteed on
     /// `session/new`; opportunistic on resume/fork). Grok never re-sends this on
@@ -495,6 +513,11 @@ impl SessionState {
             modes: None,
             current_mode: None,
             config_options: None,
+            cursor_raw_config_options: None,
+            cursor_composite_models: None,
+            cursor_config_enqueue_lock: Arc::new(tokio::sync::Mutex::new(())),
+            cursor_config_request_seq: 0,
+            cursor_config_completed_seq: 0,
             grok_model_specs: None,
             prompt_capabilities: None,
             fork_supported: false,
@@ -616,7 +639,7 @@ impl SessionState {
                     modes.current_mode_id = mode_id.clone();
                 }
             }
-            AcpEvent::SessionConfigOptions { config_options } => {
+            AcpEvent::SessionConfigOptions { config_options, .. } => {
                 self.config_options = Some(config_options.clone());
             }
             AcpEvent::SessionConfigStale { stale, kind } => {
@@ -1950,7 +1973,10 @@ mod tests {
             text: "Answer ".into(),
             parent_tool_use_id: None,
         });
-        s.apply_event(&AcpEvent::Thinking { text: "hmm".into(), parent_tool_use_id: None });
+        s.apply_event(&AcpEvent::Thinking {
+            text: "hmm".into(),
+            parent_tool_use_id: None,
+        });
         s.apply_event(&AcpEvent::ContentDelta {
             text: "continues here".into(),
             parent_tool_use_id: None,
@@ -2146,9 +2172,18 @@ mod tests {
     #[test]
     fn thinking_delta_creates_separate_block_from_text() {
         let mut s = fresh_state();
-        s.apply_event(&AcpEvent::ContentDelta { text: "T".into(), parent_tool_use_id: None });
-        s.apply_event(&AcpEvent::Thinking { text: "X".into(), parent_tool_use_id: None });
-        s.apply_event(&AcpEvent::ContentDelta { text: "Y".into(), parent_tool_use_id: None });
+        s.apply_event(&AcpEvent::ContentDelta {
+            text: "T".into(),
+            parent_tool_use_id: None,
+        });
+        s.apply_event(&AcpEvent::Thinking {
+            text: "X".into(),
+            parent_tool_use_id: None,
+        });
+        s.apply_event(&AcpEvent::ContentDelta {
+            text: "Y".into(),
+            parent_tool_use_id: None,
+        });
         let live = s.live_message.as_ref().unwrap();
         assert_eq!(live.content.len(), 3);
         match &live.content[0] {
@@ -2464,7 +2499,10 @@ mod tests {
     #[test]
     fn turn_complete_clears_live_and_tool_calls_and_pending_permission() {
         let mut s = fresh_state();
-        s.apply_event(&AcpEvent::ContentDelta { text: "hi".into(), parent_tool_use_id: None });
+        s.apply_event(&AcpEvent::ContentDelta {
+            text: "hi".into(),
+            parent_tool_use_id: None,
+        });
         s.apply_event(&AcpEvent::ToolCall {
             tool_call_id: "tc-1".into(),
             title: "x".into(),
@@ -2954,6 +2992,8 @@ mod tests {
                     groups: vec![],
                 }),
             }],
+            operation_id: None,
+            operation_status: None,
         });
         s.apply_event(&AcpEvent::UsageUpdate {
             used: 1234,
@@ -3429,7 +3469,10 @@ mod tests {
     fn plan_update_appends_at_end_replacing_existing() {
         use crate::acp::types::PlanEntryInfo;
         let mut s = fresh_state();
-        s.apply_event(&AcpEvent::ContentDelta { text: "A".into(), parent_tool_use_id: None });
+        s.apply_event(&AcpEvent::ContentDelta {
+            text: "A".into(),
+            parent_tool_use_id: None,
+        });
         s.apply_event(&AcpEvent::PlanUpdate {
             entries: vec![PlanEntryInfo {
                 content: "step v1".into(),
@@ -3437,7 +3480,10 @@ mod tests {
                 status: "pending".into(),
             }],
         });
-        s.apply_event(&AcpEvent::ContentDelta { text: "B".into(), parent_tool_use_id: None });
+        s.apply_event(&AcpEvent::ContentDelta {
+            text: "B".into(),
+            parent_tool_use_id: None,
+        });
         s.apply_event(&AcpEvent::PlanUpdate {
             entries: vec![PlanEntryInfo {
                 content: "step v2".into(),
@@ -3499,7 +3545,10 @@ mod tests {
     fn turn_complete_clears_plan_and_tool_refs() {
         use crate::acp::types::PlanEntryInfo;
         let mut s = fresh_state();
-        s.apply_event(&AcpEvent::ContentDelta { text: "x".into(), parent_tool_use_id: None });
+        s.apply_event(&AcpEvent::ContentDelta {
+            text: "x".into(),
+            parent_tool_use_id: None,
+        });
         s.apply_event(&tool_call_event("tc-1", "ls"));
         s.apply_event(&AcpEvent::PlanUpdate {
             entries: vec![PlanEntryInfo {
@@ -3529,7 +3578,10 @@ mod tests {
         let env = EventEnvelope {
             seq: 7,
             connection_id: "conn-x".into(),
-            payload: AcpEvent::ContentDelta { text: "abc".into(), parent_tool_use_id: None },
+            payload: AcpEvent::ContentDelta {
+                text: "abc".into(),
+                parent_tool_use_id: None,
+            },
         };
         let json = serde_json::to_string(&env).unwrap();
         let back: EventEnvelope = serde_json::from_str(&json).unwrap();
