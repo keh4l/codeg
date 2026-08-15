@@ -750,6 +750,9 @@
       "apiKeyLabel": "Chave de API do Cursor",
       "apiKeyPlaceholder": "chave de cursor.com/dashboard",
       "apiKeyHint": "CURSOR_API_KEY — uma chave de conta do painel do Cursor, alternativa ao login pelo navegador para máquinas headless ou servidores. Não é uma chave de terceiros nem da OpenAI.",
+      "baseUrlLabel": "URL base da API do Cursor (opcional)",
+      "baseUrlPlaceholder": "https://api.cursor.com",
+      "baseUrlHint": "Salva como CURSOR_API_BASE_URL no modo personalizado. Deixe em branco para usar o endpoint padrão do Cursor.",
       "modelTitle": "Modelo padrão",
       "loadModels": "Carregar modelos",
       "modelsUnavailable": "Lista de modelos indisponível",
@@ -2508,6 +2511,7 @@
           "cursorModelCatalogUnavailable": "O catálogo de modelos Cursor está indisponível. Os controles parametrizados continuam disponíveis.",
           "cursorModelVariantUnavailable": "A variante salva do modelo Cursor não está mais disponível.",
           "cursorModelVariantAmbiguous": "Não foi possível mapear com segurança a variante do modelo Cursor.",
+          "cursorLegacyConfirmationTimeout": "O backend antigo não confirmou a configuração completa do modelo Cursor a tempo. O último estado informado foi restaurado.",
           "turnFailedEmpty": "{agent} encerrou o turno sem produzir nenhuma resposta. Expanda os detalhes para ver a saída do agente.",
           "turnFailedEmptyProtocol": "{agent} produziu uma saída que o codeg não conseguiu analisar — a versão do agente pode não corresponder ao protocolo. Expanda os detalhes para saber mais.",
           "turnFailedEmptyMetadata": "{agent} enviou apenas atualizações de status neste turno (plano / modo / uso) e nenhuma resposta. Expanda os detalhes para saber mais."

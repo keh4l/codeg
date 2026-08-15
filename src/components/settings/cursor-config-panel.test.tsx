@@ -24,11 +24,12 @@ vi.mock("@/lib/api", () => ({
 }))
 
 describe("buildCursorEnv", () => {
-  it("API-key mode writes the key + model and always scrubs the dead base URL", () => {
+  it("custom mode preserves the explicit endpoint alongside the key", () => {
     const env = buildCursorEnv(
       { OTHER: "x", CURSOR_API_BASE_URL: "https://stale" },
       "custom",
       "  sk-key  ",
+      " https://stale/// ",
       "claude-opus-4-8-high",
       true
     )
@@ -36,11 +37,10 @@ describe("buildCursorEnv", () => {
       OTHER: "x",
       CURSOR_AUTH_MODE: "custom",
       CURSOR_API_KEY: "sk-key",
+      CURSOR_API_BASE_URL: "https://stale",
       CURSOR_MODEL: "claude-opus-4-8-high",
       CURSOR_FORCE: "1",
     })
-    // The CLI has no custom endpoint — the base URL is never persisted.
-    expect(env).not.toHaveProperty("CURSOR_API_BASE_URL")
   })
 
   it("API-key mode with a blank key clears it but keeps the mode + unrelated keys", () => {
@@ -53,6 +53,7 @@ describe("buildCursorEnv", () => {
         KEEP: "y",
       },
       "custom",
+      " ",
       " ",
       "",
       false
@@ -67,6 +68,7 @@ describe("buildCursorEnv", () => {
       { CURSOR_API_KEY: "old", CURSOR_API_BASE_URL: "https://old", KEEP: "y" },
       "subscription",
       "ignored-key",
+      "https://ignored",
       "auto",
       false
     )
@@ -236,6 +238,39 @@ describe("CursorConfigPanel", () => {
     expect(onSaved).not.toHaveBeenCalled()
   })
 
+  it("uses the same explicit custom endpoint for probes and persistence", async () => {
+    const { onSaveEnv, onSaved } = renderPanel({
+      env: {
+        CURSOR_AUTH_MODE: "custom",
+        CURSOR_API_KEY: "saved-key",
+        CURSOR_API_BASE_URL: "https://saved.cursor.test",
+      },
+    })
+    await waitFor(() =>
+      expect(acpCursorAuthStatus).toHaveBeenCalledWith(
+        "saved-key",
+        "https://saved.cursor.test"
+      )
+    )
+    fireEvent.change(
+      screen.getByPlaceholderText(
+        enMessages.AcpAgentSettings.cursor.baseUrlPlaceholder
+      ),
+      { target: { value: " https://new.cursor.test/// " } }
+    )
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: enMessages.AcpAgentSettings.cursor.saveConfig,
+      })
+    )
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1))
+    expect(onSaveEnv.mock.calls[0][0]).toMatchObject({
+      CURSOR_AUTH_MODE: "custom",
+      CURSOR_API_KEY: "saved-key",
+      CURSOR_API_BASE_URL: "https://new.cursor.test",
+    })
+  })
+
   it("blocks an API-key save with no key", async () => {
     const { onSaveEnv } = renderPanel({ env: { CURSOR_AUTH_MODE: "custom" } })
     await screen.findByText(enMessages.AcpAgentSettings.cursor.authNotInstalled)
@@ -311,7 +346,7 @@ describe("CursorConfigPanel", () => {
     renderPanel({ env: {} })
     await waitFor(() => expect(acpCursorAuthStatus).toHaveBeenCalled())
     // An empty string forces the login credential and strips any inherited key.
-    expect(acpCursorAuthStatus).toHaveBeenCalledWith("")
+    expect(acpCursorAuthStatus).toHaveBeenCalledWith("", "")
   })
 
   it("hides the model picker (and hints to sign in) when no models are fetched", async () => {
