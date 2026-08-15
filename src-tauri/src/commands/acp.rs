@@ -44,6 +44,7 @@ const CURSOR_PROBE_STDERR_LIMIT: usize = 256 * 1024;
 const CURSOR_PROBE_CACHE_MAX_ENTRIES: usize = 16;
 const CURSOR_PROBE_SUCCESS_TTL: Duration = Duration::from_secs(300);
 const CURSOR_PROBE_FAILURE_BACKOFF: Duration = Duration::from_secs(3);
+const CURSOR_PROBE_TOKIO_KILL_ON_DROP: bool = false;
 
 static NPM_GLOBAL_PREFIX_CACHE: tokio::sync::OnceCell<PathBuf> = tokio::sync::OnceCell::const_new();
 
@@ -5660,7 +5661,9 @@ pub(crate) async fn acp_pi_project_trust_state_core(
 /// Record that the user has seen and kept an existing trust grant, so the launch
 /// gate stops blocking this folder. Writes only codeg's own record — pi's
 /// `trust.json` is untouched, because the grant itself is not changing.
-pub(crate) async fn acp_pi_acknowledge_project_trust_core(workspace: String) -> Result<(), AcpError> {
+pub(crate) async fn acp_pi_acknowledge_project_trust_core(
+    workspace: String,
+) -> Result<(), AcpError> {
     tokio::task::spawn_blocking(move || {
         pi_set_trust_acknowledged_at(&pi_trust_ack_path(), Path::new(&workspace), true)
     })
@@ -8528,42 +8531,91 @@ enum CursorProbeFlightState {
     Finished(Result<String, CursorProbeError>),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CursorProbeExitObservation {
+    Running,
+    Exited,
+    Interrupted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CursorProbeLifecycleEvent {
+    ObserveExitWnoWait,
+    SignalGroup(i32),
+    RetireLease,
+    FinalReap,
+    DirectPidKill,
+    #[cfg(test)]
+    SimulatedIdentityReuse,
+}
+
+#[async_trait::async_trait]
+trait CursorProbeLifecycleBackend: Send + Sync {
+    #[cfg(unix)]
+    fn observe_exit(&self, pid: u32) -> Result<CursorProbeExitObservation, CursorProbeError>;
+
+    #[cfg(unix)]
+    fn signal_group(&self, pgid: i32, signal: i32);
+
+    fn record(&self, _event: CursorProbeLifecycleEvent) {}
+
+    async fn pause_after(&self, _event: CursorProbeLifecycleEvent) {}
+
+    #[cfg(test)]
+    fn repeat_cleanup_after_identity_release(&self) -> bool {
+        false
+    }
+}
+
+struct SystemCursorProbeLifecycleBackend;
+
+#[async_trait::async_trait]
+impl CursorProbeLifecycleBackend for SystemCursorProbeLifecycleBackend {
+    #[cfg(unix)]
+    fn observe_exit(&self, pid: u32) -> Result<CursorProbeExitObservation, CursorProbeError> {
+        cursor_probe_child_exit_observed_system(pid)
+    }
+
+    #[cfg(unix)]
+    fn signal_group(&self, pgid: i32, signal: i32) {
+        unsafe {
+            libc::kill(-pgid, signal);
+        }
+    }
+}
+
 #[cfg(unix)]
 struct CursorProbeProcessGroup {
     pid: i32,
     anchored: bool,
-    #[cfg(test)]
-    signal_observer: Option<std::sync::Arc<std::sync::Mutex<Vec<i32>>>>,
+    backend: Arc<dyn CursorProbeLifecycleBackend>,
 }
 
 #[cfg(unix)]
 impl CursorProbeProcessGroup {
-    fn new(pid: Option<u32>) -> Self {
+    fn new(pid: Option<u32>, backend: Arc<dyn CursorProbeLifecycleBackend>) -> Self {
         let pid = pid.and_then(|value| i32::try_from(value).ok());
         Self {
             pid: pid.unwrap_or_default(),
             anchored: pid.is_some(),
-            #[cfg(test)]
-            signal_observer: None,
+            backend,
         }
     }
     fn terminate(&mut self, signal: i32) {
         if self.anchored && self.pid > 0 {
-            #[cfg(test)]
-            if let Some(observer) = &self.signal_observer {
-                observer.lock().expect("signal observer").push(signal);
-                return;
-            }
             // The group leader is still live or waitid-observed-but-unreaped,
             // so its numeric PID/PGID cannot have been reused.
-            unsafe {
-                libc::kill(-self.pid, signal);
-            }
+            self.backend
+                .record(CursorProbeLifecycleEvent::SignalGroup(signal));
+            self.backend.signal_group(self.pid, signal);
         }
     }
     /// Retire immediately before the one final `child.wait()`. After this
     /// transition no code path, including Drop, may signal the numeric PGID.
     fn retire_before_reap(&mut self) {
+        if self.anchored {
+            self.backend.record(CursorProbeLifecycleEvent::RetireLease);
+        }
         self.anchored = false;
     }
 }
@@ -8653,17 +8705,9 @@ fn wait_cursor_probe_group_quiescent_blocking(_group: &CursorProbeProcessGroup) 
 impl Drop for CursorProbeProcessGroup {
     fn drop(&mut self) {
         if self.anchored && self.pid > 0 {
-            #[cfg(test)]
-            if let Some(observer) = &self.signal_observer {
-                observer
-                    .lock()
-                    .expect("signal observer")
-                    .push(libc::SIGKILL);
-                return;
-            }
-            unsafe {
-                libc::kill(-self.pid, libc::SIGKILL);
-            }
+            self.backend
+                .record(CursorProbeLifecycleEvent::SignalGroup(libc::SIGKILL));
+            self.backend.signal_group(self.pid, libc::SIGKILL);
         }
     }
 }
@@ -8672,7 +8716,7 @@ impl Drop for CursorProbeProcessGroup {
 struct CursorProbeProcessGroup;
 #[cfg(not(unix))]
 impl CursorProbeProcessGroup {
-    fn new(_pid: Option<u32>) -> Self {
+    fn new(_pid: Option<u32>, _backend: Arc<dyn CursorProbeLifecycleBackend>) -> Self {
         Self
     }
     fn terminate(&mut self, _signal: i32) {}
@@ -8683,31 +8727,45 @@ struct CursorProbeLifecycle {
     child: tokio::process::Child,
     pid: Option<u32>,
     process_group: CursorProbeProcessGroup,
+    backend: Arc<dyn CursorProbeLifecycleBackend>,
     completed: bool,
 }
 
 impl CursorProbeLifecycle {
-    fn new(child: tokio::process::Child) -> Self {
+    fn new(child: tokio::process::Child, backend: Arc<dyn CursorProbeLifecycleBackend>) -> Self {
         let pid = child.id();
         Self {
             child,
             pid,
-            process_group: CursorProbeProcessGroup::new(pid),
+            process_group: CursorProbeProcessGroup::new(pid, backend.clone()),
+            backend,
             completed: false,
         }
     }
 
-    fn parts_mut(&mut self) -> (&mut tokio::process::Child, &mut CursorProbeProcessGroup) {
-        (&mut self.child, &mut self.process_group)
+    fn retire_before_reap(&mut self) {
+        self.process_group.retire_before_reap();
+    }
+
+    fn start_kill(&mut self) {
+        self.backend
+            .record(CursorProbeLifecycleEvent::DirectPidKill);
+        let _ = self.child.start_kill();
+    }
+
+    async fn final_reap(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        self.backend.record(CursorProbeLifecycleEvent::FinalReap);
+        self.backend
+            .pause_after(CursorProbeLifecycleEvent::FinalReap)
+            .await;
+        self.child.wait().await
     }
 
     fn mark_completed(&mut self) {
         self.completed = true;
     }
-}
 
-impl Drop for CursorProbeLifecycle {
-    fn drop(&mut self) {
+    fn cleanup_blocking_if_owned(&mut self) {
         if self.completed {
             return;
         }
@@ -8718,11 +8776,12 @@ impl Drop for CursorProbeLifecycle {
             // leader still anchors the PGID. Drop cannot assume a Tokio runtime.
             wait_cursor_probe_group_quiescent_blocking(&self.process_group);
         }
-        self.process_group.retire_before_reap();
-        let _ = self.child.start_kill();
+        self.start_kill();
+        self.retire_before_reap();
         // Drop may run while a Tokio runtime is unwinding, or without one.
         // Bounded synchronous try_wait keeps the direct child from becoming a
         // zombie without calling runtime APIs or signalling after final reap.
+        self.backend.record(CursorProbeLifecycleEvent::FinalReap);
         for _ in 0..200 {
             match self.child.try_wait() {
                 Ok(Some(_)) | Err(_) => break,
@@ -8730,15 +8789,27 @@ impl Drop for CursorProbeLifecycle {
             }
         }
     }
+
+    #[cfg(test)]
+    fn repeat_cleanup_after_identity_release_if_requested(&mut self) {
+        if self.backend.repeat_cleanup_after_identity_release() {
+            self.backend
+                .record(CursorProbeLifecycleEvent::SimulatedIdentityReuse);
+            self.cleanup_blocking_if_owned();
+        }
+    }
 }
 
-async fn terminate_cursor_probe(
-    child: &mut tokio::process::Child,
-    pid: Option<u32>,
-    process_group: &mut CursorProbeProcessGroup,
-) -> bool {
+impl Drop for CursorProbeLifecycle {
+    fn drop(&mut self) {
+        self.cleanup_blocking_if_owned();
+    }
+}
+
+async fn terminate_cursor_probe(lifecycle: &mut CursorProbeLifecycle) -> bool {
     #[cfg(not(unix))]
     let mut signalled = Vec::new();
+    let pid = lifecycle.pid;
     if pid.is_some() {
         #[cfg(unix)]
         {
@@ -8746,7 +8817,7 @@ async fn terminate_cursor_probe(
             // that leader live/unreaped as the identity anchor and signal only
             // the anchored group; a delayed list of raw descendant PIDs could
             // otherwise be reused before a second kill-tree pass.
-            process_group.terminate(libc::SIGTERM);
+            lifecycle.process_group.terminate(libc::SIGTERM);
         }
         #[cfg(not(unix))]
         {
@@ -8765,8 +8836,8 @@ async fn terminate_cursor_probe(
         tokio::time::sleep(Duration::from_millis(100)).await;
         #[cfg(unix)]
         {
-            process_group.terminate(libc::SIGKILL);
-            let _ = wait_cursor_probe_group_quiescent(process_group).await;
+            lifecycle.process_group.terminate(libc::SIGKILL);
+            let _ = wait_cursor_probe_group_quiescent(&lifecycle.process_group).await;
         }
         #[cfg(not(unix))]
         for process_id in signalled {
@@ -8779,10 +8850,10 @@ async fn terminate_cursor_probe(
     }
     // All process-tree and group signals are complete while the leader still
     // anchors the PID/PGID. Retire permanently before the final reap.
-    process_group.retire_before_reap();
-    let _ = child.start_kill();
+    lifecycle.start_kill();
+    lifecycle.retire_before_reap();
     matches!(
-        tokio::time::timeout(Duration::from_secs(2), child.wait()).await,
+        tokio::time::timeout(Duration::from_secs(2), lifecycle.final_reap()).await,
         Ok(Ok(_))
     )
 }
@@ -8790,7 +8861,9 @@ async fn terminate_cursor_probe(
 type CursorProbeCancellation<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 
 #[cfg(unix)]
-fn cursor_probe_child_exit_observed(pid: u32) -> Result<bool, CursorProbeError> {
+fn cursor_probe_child_exit_observed_system(
+    pid: u32,
+) -> Result<CursorProbeExitObservation, CursorProbeError> {
     let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
     let result = unsafe {
         libc::waitid(
@@ -8803,11 +8876,16 @@ fn cursor_probe_child_exit_observed(pid: u32) -> Result<bool, CursorProbeError> 
     if result != 0 {
         return match std::io::Error::last_os_error().raw_os_error() {
             Some(libc::ECHILD) | Some(libc::ESRCH) => Err(CursorProbeError::IdentityLost),
+            Some(libc::EINTR) => Ok(CursorProbeExitObservation::Interrupted),
             _ => Err(CursorProbeError::Spawn),
         };
     }
     let info = unsafe { info.assume_init() };
-    Ok(unsafe { info.si_pid() } != 0)
+    Ok(if unsafe { info.si_pid() } == 0 {
+        CursorProbeExitObservation::Running
+    } else {
+        CursorProbeExitObservation::Exited
+    })
 }
 
 async fn run_cursor_probe_binary_worker(
@@ -8815,14 +8893,33 @@ async fn run_cursor_probe_binary_worker(
     args: Vec<String>,
     timeout_duration: Duration,
     extra_env: BTreeMap<String, String>,
+    cancelled: CursorProbeCancellation<'_>,
+) -> Result<String, CursorProbeError> {
+    run_cursor_probe_binary_worker_with_backend(
+        bin,
+        args,
+        timeout_duration,
+        extra_env,
+        cancelled,
+        Arc::new(SystemCursorProbeLifecycleBackend),
+    )
+    .await
+}
+
+async fn run_cursor_probe_binary_worker_with_backend(
+    bin: PathBuf,
+    args: Vec<String>,
+    timeout_duration: Duration,
+    extra_env: BTreeMap<String, String>,
     mut cancelled: CursorProbeCancellation<'_>,
+    backend: Arc<dyn CursorProbeLifecycleBackend>,
 ) -> Result<String, CursorProbeError> {
     let mut cmd = crate::process::tokio_command(&bin);
     cmd.args(&args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true);
+        .kill_on_drop(CURSOR_PROBE_TOKIO_KILL_ON_DROP);
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -8837,10 +8934,23 @@ async fn run_cursor_probe_binary_worker(
             cmd.env(key, value);
         }
     }
-    let mut child = cmd.spawn().map_err(|_| CursorProbeError::Spawn)?;
-    let mut stdout = child.stdout.take().ok_or(CursorProbeError::Spawn)?;
-    let mut stderr = child.stderr.take().ok_or(CursorProbeError::Spawn)?;
-    let mut lifecycle = CursorProbeLifecycle::new(child);
+    let child = crate::process::spawn_retrying_exec_busy(|| cmd.spawn())
+        .await
+        .map_err(|_| CursorProbeError::Spawn)?;
+    // Establish identity-aware ownership immediately after spawn. From this
+    // point every early return and unwind passes through CursorProbeLifecycle;
+    // Tokio's generic kill-on-drop is deliberately disabled above.
+    let mut lifecycle = CursorProbeLifecycle::new(child, backend.clone());
+    let mut stdout = lifecycle
+        .child
+        .stdout
+        .take()
+        .ok_or(CursorProbeError::Spawn)?;
+    let mut stderr = lifecycle
+        .child
+        .stderr
+        .take()
+        .ok_or(CursorProbeError::Spawn)?;
     let pid = lifecycle.pid;
 
     // This is the supervisor unwind boundary around the internal monitor
@@ -8879,10 +8989,25 @@ async fn run_cursor_probe_binary_worker(
         let exit_wait = async {
             let pid = pid.ok_or(CursorProbeError::Spawn)?;
             loop {
-                if cursor_probe_child_exit_observed(pid)? {
-                    return Ok::<Option<std::process::ExitStatus>, CursorProbeError>(None);
+                match backend.observe_exit(pid)? {
+                    CursorProbeExitObservation::Exited => {
+                        backend.record(CursorProbeLifecycleEvent::ObserveExitWnoWait);
+                        backend
+                            .pause_after(CursorProbeLifecycleEvent::ObserveExitWnoWait)
+                            .await;
+                        return Ok::<Option<std::process::ExitStatus>, CursorProbeError>(None);
+                    }
+                    CursorProbeExitObservation::Interrupted => {
+                        // Re-enter the same bounded observation cadence rather
+                        // than spin if signals repeatedly interrupt waitid. The
+                        // enclosing absolute deadline and cancellation future
+                        // remain authoritative and are never recreated here.
+                        tokio::time::sleep(Duration::from_millis(5)).await;
+                    }
+                    CursorProbeExitObservation::Running => {
+                        tokio::time::sleep(Duration::from_millis(5)).await;
+                    }
                 }
-                tokio::time::sleep(Duration::from_millis(5)).await;
             }
         };
         #[cfg(not(unix))]
@@ -8958,13 +9083,14 @@ async fn run_cursor_probe_binary_worker(
                 // direct Child::kill could target a reused numeric id.
                 lifecycle.process_group.retire_before_reap();
                 lifecycle.mark_completed();
+                #[cfg(test)]
+                lifecycle.repeat_cleanup_after_identity_release_if_requested();
             } else {
-                let terminated = {
-                    let (child, process_group) = lifecycle.parts_mut();
-                    terminate_cursor_probe(child, pid, process_group).await
-                };
+                let terminated = terminate_cursor_probe(&mut lifecycle).await;
                 if terminated {
                     lifecycle.mark_completed();
+                    #[cfg(test)]
+                    lifecycle.repeat_cleanup_after_identity_release_if_requested();
                 }
             }
             return Err(error);
@@ -8978,15 +9104,17 @@ async fn run_cursor_probe_binary_worker(
         lifecycle.process_group.terminate(libc::SIGKILL);
         wait_cursor_probe_group_quiescent(&lifecycle.process_group).await?;
     }
-    lifecycle.process_group.retire_before_reap();
+    lifecycle.retire_before_reap();
     let status = match observed_status {
         Some(status) => status,
-        None => tokio::time::timeout(Duration::from_secs(2), lifecycle.child.wait())
+        None => tokio::time::timeout(Duration::from_secs(2), lifecycle.final_reap())
             .await
             .map_err(|_| CursorProbeError::Timeout)?
             .map_err(|_| CursorProbeError::Spawn)?,
     };
     lifecycle.mark_completed();
+    #[cfg(test)]
+    lifecycle.repeat_cleanup_after_identity_release_if_requested();
     if !status.success() {
         return Err(CursorProbeError::NonZeroExit);
     }
@@ -14272,7 +14400,10 @@ mod tests {
 
         let after = read_json_object_or_empty(&trust);
         assert_eq!(after.get(&canonical_key(&ws)), None);
-        assert_eq!(after.get("/some/other"), Some(&serde_json::Value::Bool(true)));
+        assert_eq!(
+            after.get("/some/other"),
+            Some(&serde_json::Value::Bool(true))
+        );
         assert_eq!(after.get("/denied"), Some(&serde_json::Value::Bool(false)));
     }
 
@@ -14586,10 +14717,7 @@ mod tests {
     // composer sends is clamped straight back and the picker looks broken. These
     // pin the shape pi actually reads.
 
-    fn pi_reasoning_spec(
-        reasoning: bool,
-        map: &[(&str, Option<&str>)],
-    ) -> PiModelReasoningSpec {
+    fn pi_reasoning_spec(reasoning: bool, map: &[(&str, Option<&str>)]) -> PiModelReasoningSpec {
         PiModelReasoningSpec {
             reasoning,
             thinking_level_map: map
@@ -14616,7 +14744,11 @@ mod tests {
             "gpt-5.6-sol",
             Some(&pi_reasoning_spec(
                 true,
-                &[("off", Some("none")), ("minimal", None), ("xhigh", Some("xhigh"))],
+                &[
+                    ("off", Some("none")),
+                    ("minimal", None),
+                    ("xhigh", Some("xhigh")),
+                ],
             )),
         );
 
@@ -14760,7 +14892,11 @@ mod tests {
             "gpt-5.6-sol",
             Some(&pi_reasoning_spec(
                 true,
-                &[("off", Some("none")), ("minimal", None), ("low", Some("LOW"))],
+                &[
+                    ("off", Some("none")),
+                    ("minimal", None),
+                    ("low", Some("LOW")),
+                ],
             )),
         );
 
@@ -14769,7 +14905,10 @@ mod tests {
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].id, "gpt-5.6-sol");
         assert_eq!(models[0].reasoning, Some(true));
-        assert_eq!(models[0].thinking_level_map["off"], Some("none".to_string()));
+        assert_eq!(
+            models[0].thinking_level_map["off"],
+            Some("none".to_string())
+        );
         assert_eq!(models[0].thinking_level_map["minimal"], None);
         assert_eq!(models[0].thinking_level_map["low"], Some("LOW".to_string()));
     }
@@ -15591,15 +15730,162 @@ wire_api = "chat"
 
     #[cfg(unix)]
     fn cursor_probe_script(body: &str) -> (tempfile::TempDir, PathBuf) {
+        use std::io::Write;
         use std::os::unix::fs::PermissionsExt;
 
         let dir = tempfile::tempdir().expect("probe tempdir");
         let path = dir.path().join("fake-cursor-agent");
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write fake CLI");
+        let mut file = std::fs::File::create(&path).expect("create fake CLI");
+        file.write_all(format!("#!/bin/sh\n{body}\n").as_bytes())
+            .expect("write fake CLI");
+        file.sync_all().expect("sync fake CLI");
+        drop(file);
         let mut permissions = std::fs::metadata(&path).expect("metadata").permissions();
         permissions.set_mode(0o700);
         std::fs::set_permissions(&path, permissions).expect("make executable");
         (dir, path)
+    }
+
+    #[cfg(unix)]
+    enum CursorProbeTestObservation {
+        System,
+        EintrThenSystem(std::sync::atomic::AtomicUsize),
+        AlwaysEintr(std::sync::atomic::AtomicUsize),
+        ReapThenIdentityLost(std::sync::atomic::AtomicBool),
+    }
+
+    #[cfg(unix)]
+    struct CursorProbeTestPause {
+        reached: tokio::sync::Semaphore,
+        release: tokio::sync::Semaphore,
+    }
+
+    #[cfg(unix)]
+    impl CursorProbeTestPause {
+        fn new() -> Self {
+            Self {
+                reached: tokio::sync::Semaphore::new(0),
+                release: tokio::sync::Semaphore::new(0),
+            }
+        }
+
+        async fn wait_until_reached(&self) {
+            tokio::time::timeout(Duration::from_secs(3), self.reached.acquire())
+                .await
+                .expect("probe lifecycle barrier was reached")
+                .expect("probe lifecycle barrier stays open")
+                .forget();
+        }
+
+        fn release(&self) {
+            self.release.add_permits(1);
+        }
+    }
+
+    #[cfg(unix)]
+    struct CursorProbeTestBackend {
+        observation: CursorProbeTestObservation,
+        events: std::sync::Mutex<Vec<CursorProbeLifecycleEvent>>,
+        forward_group_signals: bool,
+        pause_after_observe: Option<Arc<CursorProbeTestPause>>,
+        pause_before_final_reap: Option<Arc<CursorProbeTestPause>>,
+        repeat_cleanup: bool,
+    }
+
+    #[cfg(unix)]
+    impl CursorProbeTestBackend {
+        fn system(forward_group_signals: bool) -> Self {
+            Self {
+                observation: CursorProbeTestObservation::System,
+                events: std::sync::Mutex::new(Vec::new()),
+                forward_group_signals,
+                pause_after_observe: None,
+                pause_before_final_reap: None,
+                repeat_cleanup: false,
+            }
+        }
+
+        fn events(&self) -> Vec<CursorProbeLifecycleEvent> {
+            self.events.lock().expect("probe events").clone()
+        }
+    }
+
+    #[cfg(unix)]
+    #[async_trait::async_trait]
+    impl CursorProbeLifecycleBackend for CursorProbeTestBackend {
+        fn observe_exit(&self, pid: u32) -> Result<CursorProbeExitObservation, CursorProbeError> {
+            use std::sync::atomic::Ordering;
+
+            match &self.observation {
+                CursorProbeTestObservation::System => cursor_probe_child_exit_observed_system(pid),
+                CursorProbeTestObservation::EintrThenSystem(remaining) => {
+                    if remaining
+                        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
+                            value.checked_sub(1)
+                        })
+                        .is_ok()
+                    {
+                        Ok(CursorProbeExitObservation::Interrupted)
+                    } else {
+                        cursor_probe_child_exit_observed_system(pid)
+                    }
+                }
+                CursorProbeTestObservation::AlwaysEintr(count) => {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    Ok(CursorProbeExitObservation::Interrupted)
+                }
+                CursorProbeTestObservation::ReapThenIdentityLost(reaped) => {
+                    if !reaped.swap(true, Ordering::SeqCst) {
+                        let mut status = 0;
+                        loop {
+                            let result = unsafe { libc::waitpid(pid as i32, &mut status, 0) };
+                            if result == pid as i32 {
+                                break;
+                            }
+                            assert_eq!(
+                                std::io::Error::last_os_error().raw_os_error(),
+                                Some(libc::EINTR),
+                                "test reaper must own the direct child"
+                            );
+                        }
+                    }
+                    Err(CursorProbeError::IdentityLost)
+                }
+            }
+        }
+
+        fn signal_group(&self, pgid: i32, signal: i32) {
+            if self.forward_group_signals {
+                unsafe {
+                    libc::kill(-pgid, signal);
+                }
+            }
+        }
+
+        fn record(&self, event: CursorProbeLifecycleEvent) {
+            self.events.lock().expect("probe events").push(event);
+        }
+
+        async fn pause_after(&self, event: CursorProbeLifecycleEvent) {
+            let pause = match event {
+                CursorProbeLifecycleEvent::ObserveExitWnoWait => self.pause_after_observe.as_ref(),
+                CursorProbeLifecycleEvent::FinalReap => self.pause_before_final_reap.as_ref(),
+                _ => None,
+            };
+            if let Some(pause) = pause {
+                pause.reached.add_permits(1);
+                pause
+                    .release
+                    .acquire()
+                    .await
+                    .expect("probe release barrier stays open")
+                    .forget();
+            }
+        }
+
+        fn repeat_cleanup_after_identity_release(&self) -> bool {
+            self.repeat_cleanup
+        }
     }
 
     #[cfg(unix)]
@@ -15803,22 +16089,31 @@ wire_api = "chat"
     #[cfg(unix)]
     #[test]
     fn cursor_probe_group_signals_stop_permanently_before_final_reap() {
-        let signals = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let mut group = CursorProbeProcessGroup {
-            pid: 42_424,
-            anchored: true,
-            signal_observer: Some(signals.clone()),
-        };
+        let backend = Arc::new(CursorProbeTestBackend::system(false));
+        let mut group = CursorProbeProcessGroup::new(Some(42_424), backend.clone());
         group.terminate(libc::SIGTERM);
         group.terminate(libc::SIGKILL);
-        assert_eq!(*signals.lock().unwrap(), [libc::SIGTERM, libc::SIGKILL]);
+        assert_eq!(
+            backend.events(),
+            [
+                CursorProbeLifecycleEvent::SignalGroup(libc::SIGTERM),
+                CursorProbeLifecycleEvent::SignalGroup(libc::SIGKILL),
+            ]
+        );
 
         // This transition is immediately before final child.wait/reap in the
         // production path. A reused numeric PGID can never be signalled after.
         group.retire_before_reap();
         group.terminate(libc::SIGKILL);
         drop(group);
-        assert_eq!(*signals.lock().unwrap(), [libc::SIGTERM, libc::SIGKILL]);
+        assert_eq!(
+            backend.events(),
+            [
+                CursorProbeLifecycleEvent::SignalGroup(libc::SIGTERM),
+                CursorProbeLifecycleEvent::SignalGroup(libc::SIGKILL),
+                CursorProbeLifecycleEvent::RetireLease,
+            ]
+        );
     }
 
     #[cfg(unix)]
@@ -15830,34 +16125,184 @@ wire_api = "chat"
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .kill_on_drop(true);
+            .kill_on_drop(false);
         use std::os::unix::process::CommandExt;
         command.as_std_mut().process_group(0);
         let mut child = command.spawn().expect("anchored child");
         let pid = child.id().expect("child pid");
         let mut observed = false;
         for _ in 0..200 {
-            if cursor_probe_child_exit_observed(pid).expect("waitid WNOWAIT") {
-                observed = true;
-                break;
+            match cursor_probe_child_exit_observed_system(pid).expect("waitid WNOWAIT") {
+                CursorProbeExitObservation::Exited => {
+                    observed = true;
+                    break;
+                }
+                CursorProbeExitObservation::Interrupted => continue,
+                CursorProbeExitObservation::Running => {}
             }
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
         assert!(observed, "leader exit was not observed");
         assert_eq!(unsafe { libc::getpgid(pid as i32) }, pid as i32);
 
-        let signals = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let mut group = CursorProbeProcessGroup {
-            pid: pid as i32,
-            anchored: true,
-            signal_observer: Some(signals.clone()),
-        };
+        let backend = Arc::new(CursorProbeTestBackend::system(false));
+        let mut group = CursorProbeProcessGroup::new(Some(pid), backend.clone());
         group.terminate(libc::SIGKILL);
         group.retire_before_reap();
         child.wait().await.expect("final reap after group cleanup");
         group.terminate(libc::SIGKILL);
-        assert_eq!(*signals.lock().unwrap(), [libc::SIGKILL]);
+        assert_eq!(
+            backend.events(),
+            [
+                CursorProbeLifecycleEvent::SignalGroup(libc::SIGKILL),
+                CursorProbeLifecycleEvent::RetireLease,
+            ]
+        );
         drop(dir);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cursor_probe_identity_lost_retires_without_any_numeric_kill() {
+        let (_dir, path) = cursor_probe_script("printf 'auto - Auto (default)\\n'");
+        let backend = Arc::new(CursorProbeTestBackend {
+            observation: CursorProbeTestObservation::ReapThenIdentityLost(
+                std::sync::atomic::AtomicBool::new(false),
+            ),
+            events: std::sync::Mutex::new(Vec::new()),
+            forward_group_signals: false,
+            pause_after_observe: None,
+            pause_before_final_reap: None,
+            repeat_cleanup: true,
+        });
+        let error = run_cursor_probe_binary_worker_with_backend(
+            path,
+            vec!["models".to_string()],
+            Duration::from_secs(3),
+            BTreeMap::new(),
+            Box::pin(std::future::pending()),
+            backend.clone(),
+        )
+        .await
+        .expect_err("an externally reaped leader loses its identity anchor");
+        assert_eq!(error, CursorProbeError::IdentityLost);
+        assert!(!CURSOR_PROBE_TOKIO_KILL_ON_DROP);
+        let events = backend.events();
+        assert_eq!(
+            events,
+            [
+                CursorProbeLifecycleEvent::RetireLease,
+                CursorProbeLifecycleEvent::SimulatedIdentityReuse,
+            ]
+        );
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            CursorProbeLifecycleEvent::SignalGroup(_)
+                | CursorProbeLifecycleEvent::DirectPidKill
+                | CursorProbeLifecycleEvent::FinalReap
+        )));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cursor_probe_waitid_eintr_retries_without_resetting_deadline() {
+        let (_dir, path) = cursor_probe_script("printf 'auto - Auto (default)\\n'");
+        let backend = Arc::new(CursorProbeTestBackend {
+            observation: CursorProbeTestObservation::EintrThenSystem(
+                std::sync::atomic::AtomicUsize::new(1),
+            ),
+            events: std::sync::Mutex::new(Vec::new()),
+            forward_group_signals: true,
+            pause_after_observe: None,
+            pause_before_final_reap: None,
+            repeat_cleanup: false,
+        });
+        let output = run_cursor_probe_binary_worker_with_backend(
+            path,
+            vec!["models".to_string()],
+            Duration::from_secs(3),
+            BTreeMap::new(),
+            Box::pin(std::future::pending()),
+            backend.clone(),
+        )
+        .await
+        .expect("one EINTR must retry the same identity lease");
+        assert!(output.contains("Auto"));
+        assert_eq!(
+            backend
+                .events()
+                .iter()
+                .filter(|event| **event == CursorProbeLifecycleEvent::RetireLease)
+                .count(),
+            1
+        );
+
+        let (_timeout_dir, timeout_path) =
+            cursor_probe_script("trap '' TERM; while :; do sleep 1; done");
+        let interrupts = Arc::new(CursorProbeTestBackend {
+            observation: CursorProbeTestObservation::AlwaysEintr(
+                std::sync::atomic::AtomicUsize::new(0),
+            ),
+            events: std::sync::Mutex::new(Vec::new()),
+            forward_group_signals: true,
+            pause_after_observe: None,
+            pause_before_final_reap: None,
+            repeat_cleanup: false,
+        });
+        let started = std::time::Instant::now();
+        let error = run_cursor_probe_binary_worker_with_backend(
+            timeout_path,
+            vec!["models".to_string()],
+            Duration::from_millis(80),
+            BTreeMap::new(),
+            Box::pin(std::future::pending()),
+            interrupts,
+        )
+        .await
+        .expect_err("continuous EINTR must remain bounded by the original deadline");
+        assert_eq!(error, CursorProbeError::Timeout);
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "EINTR must not reset the probe deadline"
+        );
+
+        let (cancel_dir, cancel_path) = cursor_probe_script(
+            "trap '' TERM; printf '%s' \"$$\" > \"$PID_FILE\"; while :; do sleep 1; done",
+        );
+        let cancel_pid_file = cancel_dir.path().join("pid");
+        let cancel_env: BTreeMap<String, String> = [(
+            "PID_FILE".to_string(),
+            cancel_pid_file.to_string_lossy().into_owned(),
+        )]
+        .into();
+        let cancel_backend = Arc::new(CursorProbeTestBackend {
+            observation: CursorProbeTestObservation::AlwaysEintr(
+                std::sync::atomic::AtomicUsize::new(0),
+            ),
+            events: std::sync::Mutex::new(Vec::new()),
+            forward_group_signals: true,
+            pause_after_observe: None,
+            pause_before_final_reap: None,
+            repeat_cleanup: false,
+        });
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
+        let cancel_worker = tokio::spawn(run_cursor_probe_binary_worker_with_backend(
+            cancel_path,
+            vec!["models".to_string()],
+            Duration::from_secs(3),
+            cancel_env,
+            Box::pin(async move {
+                let _ = cancel_rx.await;
+            }),
+            cancel_backend,
+        ));
+        let cancel_pid = wait_for_probe_pid_file(&cancel_pid_file).await;
+        cancel_tx.send(()).expect("release cancellation");
+        assert_eq!(
+            cancel_worker.await.expect("cancel worker join"),
+            Err(CursorProbeError::Cancelled)
+        );
+        assert_probe_pids_gone(&cancel_pid).await;
     }
 
     #[cfg(unix)]
@@ -15889,12 +16334,78 @@ wire_api = "chat"
         let unrelated_pid = unrelated.id().expect("unrelated pid") as i32;
         assert_eq!(unsafe { libc::getpgid(unrelated_pid) }, unrelated_pid);
 
-        let output = run_cursor_probe_binary(&path, &["models"], Duration::from_secs(3), &env)
+        let observe_pause = Arc::new(CursorProbeTestPause::new());
+        let reap_pause = Arc::new(CursorProbeTestPause::new());
+        let backend = Arc::new(CursorProbeTestBackend {
+            observation: CursorProbeTestObservation::System,
+            events: std::sync::Mutex::new(Vec::new()),
+            forward_group_signals: true,
+            pause_after_observe: Some(observe_pause.clone()),
+            pause_before_final_reap: Some(reap_pause.clone()),
+            repeat_cleanup: true,
+        });
+        let worker_path = path.clone();
+        let worker_env = env.clone();
+        let worker_backend = backend.clone();
+        let worker = tokio::spawn(async move {
+            run_cursor_probe_binary_worker_with_backend(
+                worker_path,
+                vec!["models".to_string()],
+                Duration::from_secs(3),
+                worker_env,
+                Box::pin(std::future::pending()),
+                worker_backend,
+            )
             .await
+        });
+        let pids = wait_for_probe_pid_file(&pid_file).await;
+
+        observe_pause.wait_until_reached().await;
+        assert_eq!(
+            backend.events(),
+            [CursorProbeLifecycleEvent::ObserveExitWnoWait],
+            "the production worker must pause after WNOWAIT observation"
+        );
+        observe_pause.release();
+
+        reap_pause.wait_until_reached().await;
+        let before_reap = backend.events();
+        assert_eq!(
+            before_reap,
+            [
+                CursorProbeLifecycleEvent::ObserveExitWnoWait,
+                CursorProbeLifecycleEvent::SignalGroup(libc::SIGKILL),
+                CursorProbeLifecycleEvent::RetireLease,
+                CursorProbeLifecycleEvent::FinalReap,
+            ],
+            "group cleanup and lease retirement must precede the final reap"
+        );
+        assert!(
+            unrelated.try_wait().expect("unrelated status").is_none(),
+            "target group cleanup must not signal an unrelated group"
+        );
+        reap_pause.release();
+        let output = worker
+            .await
+            .expect("probe worker join")
             .expect("probe output");
         assert!(output.contains("Auto"));
-        let pids = wait_for_probe_pid_file(&pid_file).await;
+        let events = backend.events();
+        assert_eq!(
+            events,
+            [
+                CursorProbeLifecycleEvent::ObserveExitWnoWait,
+                CursorProbeLifecycleEvent::SignalGroup(libc::SIGKILL),
+                CursorProbeLifecycleEvent::RetireLease,
+                CursorProbeLifecycleEvent::FinalReap,
+                CursorProbeLifecycleEvent::SimulatedIdentityReuse,
+            ],
+            "post-reap cleanup must be a no-op even after numeric PGID reuse"
+        );
         assert_probe_pids_gone(&pids).await;
+        assert!(!events
+            .iter()
+            .any(|event| *event == CursorProbeLifecycleEvent::DirectPidKill));
         let unrelated_survived = unrelated.try_wait().expect("unrelated status").is_none();
         unsafe {
             libc::kill(-unrelated_pid, libc::SIGKILL);

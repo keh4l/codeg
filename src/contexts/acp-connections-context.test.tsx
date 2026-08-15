@@ -2520,6 +2520,8 @@ describe("AcpConnectionsProvider Cursor composite model switching", () => {
       "cursor_mode_change_failed",
       "cursor_tool_failed",
       "cursor_goal_control_failed",
+      "cursor_model_catalog_unavailable",
+      "cursor_model_variant_ambiguous",
       undefined,
     ].entries()) {
       emitAcpEvent(handlers, {
@@ -2540,7 +2542,7 @@ describe("AcpConnectionsProvider Cursor composite model switching", () => {
     }
 
     emitAcpEvent(handlers, {
-      seq: 6,
+      seq: 8,
       connection_id: "spawned-conn",
       type: "session_config_options",
       config_options: cursorCompositeOptions(HIGH_FAST),
@@ -2626,6 +2628,181 @@ describe("AcpConnectionsProvider Cursor composite model switching", () => {
       type: "session_config_options",
       operation_id: "cursor-operation-2",
       operation_status: "applied",
+      config_options: cursorCompositeOptions(EXTRA_HIGH),
+    })
+    expect(saveConfigPreference).toHaveBeenCalledWith(
+      "cursor",
+      "model",
+      EXTRA_HIGH
+    )
+  })
+
+  it("does not let an old legacy config error cancel a newer legacy operation", async () => {
+    const handlers = await connectCursorOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "session_config_options",
+      config_options: cursorCompositeOptions(LOW),
+    })
+    vi.mocked(saveConfigPreference).mockClear()
+    h.acpSetConfigOption
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+    await act(async () => {
+      await h.actions!.setConfigOption(TAB, "model", HIGH_FAST)
+      await h.actions!.setConfigOption(TAB, "model", EXTRA_HIGH)
+    })
+
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "error",
+      message: "late failure from legacy A",
+      agent_type: "cursor",
+      code: "cursor_config_option_failed",
+      terminal: false,
+    })
+    expect(
+      h.store!.getConnection(TAB)!.configOptions?.[0]?.pending_operation_id
+    ).toBe("cursor-operation-2")
+    expect(saveConfigPreference).not.toHaveBeenCalled()
+
+    emitAcpEvent(handlers, {
+      seq: 3,
+      connection_id: "spawned-conn",
+      type: "session_config_options",
+      config_options: cursorCompositeOptions(EXTRA_HIGH),
+    })
+    expect(saveConfigPreference).toHaveBeenCalledWith(
+      "cursor",
+      "model",
+      EXTRA_HIGH
+    )
+  })
+
+  it("lets the replacement legacy deadline converge without an exact snapshot", async () => {
+    const handlers = await connectCursorOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "session_config_options",
+      config_options: cursorCompositeOptions(LOW),
+    })
+    vi.mocked(saveConfigPreference).mockClear()
+    h.pushAlert.mockClear()
+    h.acpSetConfigOption
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+    vi.useFakeTimers()
+    try {
+      await act(async () => {
+        await h.actions!.setConfigOption(TAB, "model", HIGH_FAST)
+        await h.actions!.setConfigOption(TAB, "model", EXTRA_HIGH)
+      })
+      emitAcpEvent(handlers, {
+        seq: 2,
+        connection_id: "spawned-conn",
+        type: "error",
+        message: "late failure from legacy A",
+        agent_type: "cursor",
+        code: "cursor_config_option_failed",
+        terminal: false,
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000)
+      })
+      const model = h.store!.getConnection(TAB)!.configOptions?.[0]
+      expect(model?.kind.type === "select" && model.kind.current_value).toBe(
+        LOW
+      )
+      expect(model?.pending_operation_id).toBeUndefined()
+      expect(saveConfigPreference).not.toHaveBeenCalled()
+      expect(h.pushAlert).toHaveBeenCalledWith(
+        "error",
+        "eventErrorTitle",
+        "backendErrors.cursorLegacyConfirmationTimeout"
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("keeps C pending across uncorrelated errors from legacy predecessors", async () => {
+    const handlers = await connectCursorOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "session_config_options",
+      config_options: cursorCompositeOptions(LOW),
+    })
+    vi.mocked(saveConfigPreference).mockClear()
+    h.acpSetConfigOption
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+    await act(async () => {
+      await h.actions!.setConfigOption(TAB, "model", HIGH_FAST)
+      await h.actions!.setConfigOption(TAB, "model", EXTRA_HIGH)
+      await h.actions!.setConfigOption(TAB, "model", HIGH_FAST)
+    })
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "error",
+      message: "uncorrelated predecessor failure",
+      agent_type: "cursor",
+      code: "cursor_config_option_failed",
+      terminal: false,
+    })
+    expect(
+      h.store!.getConnection(TAB)!.configOptions?.[0]?.pending_operation_id
+    ).toBe("cursor-operation-3")
+    emitAcpEvent(handlers, {
+      seq: 3,
+      connection_id: "spawned-conn",
+      type: "session_config_options",
+      config_options: cursorCompositeOptions(HIGH_FAST),
+    })
+    expect(saveConfigPreference).toHaveBeenCalledWith(
+      "cursor",
+      "model",
+      HIGH_FAST
+    )
+  })
+
+  it("does not let a modern predecessor's uncorrelated error cancel legacy B", async () => {
+    const handlers = await connectCursorOwner()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "session_config_options",
+      config_options: cursorCompositeOptions(LOW),
+    })
+    vi.mocked(saveConfigPreference).mockClear()
+    h.acpSetConfigOption
+      .mockResolvedValueOnce("cursor-operation-1")
+      .mockResolvedValueOnce(undefined)
+    await act(async () => {
+      await h.actions!.setConfigOption(TAB, "model", HIGH_FAST)
+      await h.actions!.setConfigOption(TAB, "model", EXTRA_HIGH)
+    })
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "error",
+      message: "uncorrelated failure from A",
+      agent_type: "cursor",
+      code: "cursor_config_option_failed",
+      terminal: false,
+    })
+    expect(
+      h.store!.getConnection(TAB)!.configOptions?.[0]?.pending_operation_id
+    ).toBe("cursor-operation-2")
+    emitAcpEvent(handlers, {
+      seq: 3,
+      connection_id: "spawned-conn",
+      type: "session_config_options",
       config_options: cursorCompositeOptions(EXTRA_HIGH),
     })
     expect(saveConfigPreference).toHaveBeenCalledWith(

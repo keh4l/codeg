@@ -2683,10 +2683,6 @@ const CURSOR_COMPOSITE_VALUE_PREFIX = "__codeg_cursor_composite__:"
 const CURSOR_LEGACY_CONFIRMATION_TIMEOUT_MS = 15_000
 const CURSOR_LEGACY_CONFIG_FAILURE_CODES = new Set([
   "cursor_config_option_failed",
-  "cursor_model_restore_failed",
-  "cursor_model_variant_unavailable",
-  "cursor_model_variant_ambiguous",
-  "cursor_model_catalog_unavailable",
 ])
 
 // ── Provider ──
@@ -2745,8 +2741,11 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
         configId: string
         valueId: string
         operationId: string
+        generation: number
+        legacyDeadlineAt: number
         confirmedOptions: SessionConfigOptionInfo[] | null
         legacyAllowed: boolean
+        unresolvedPredecessor: boolean
         deferredOptions?: SessionConfigOptionInfo[]
         legacyTimer?: ReturnType<typeof setTimeout>
       }
@@ -3872,7 +3871,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
             CURSOR_LEGACY_CONFIG_FAILURE_CODES.has(e.code)
           ) {
             const pending = pendingCursorConfigRef.current.get(contextKey)
-            if (pending?.legacyAllowed) {
+            if (pending?.legacyAllowed && !pending.unresolvedPredecessor) {
               const rollbackOptions =
                 pending.deferredOptions ?? pending.confirmedOptions
               if (rollbackOptions) {
@@ -5101,9 +5100,9 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
         dispatch({ type: "CONNECTION_REMOVED", contextKey })
         return true
       }
-      // Stop any legacy confirmation deadline before awaiting transport teardown
-      // so a stale operation cannot roll back or alert while this connection is
-      // closing. Restore the latest authoritative snapshot first.
+      // A disconnect can itself take longer than the legacy confirmation
+      // deadline. Stop the timer before awaiting transport teardown so a stale
+      // operation cannot roll back or alert while this connection is closing.
       const pending = pendingCursorConfigRef.current.get(contextKey)
       const rollbackOptions =
         pending?.deferredOptions ?? pending?.confirmedOptions
@@ -5115,6 +5114,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
         })
       }
       clearCursorConfigTracking(contextKey)
+
       // A failed backend teardown must not strand the local entry: propagating
       // would leak the attach subscription and leave an entry that makes the
       // next `connect()` take its "already connected" fast path, which is
@@ -5405,10 +5405,13 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
         return
       }
       const previousPending = pendingCursorConfigRef.current.get(contextKey)
-      const operationId = isCursorComposite
-        ? `cursor-operation-${++cursorOperationSeqRef.current}`
+      const generation = isCursorComposite
+        ? ++cursorOperationSeqRef.current
         : undefined
-      if (operationId) {
+      const operationId = generation
+        ? `cursor-operation-${generation}`
+        : undefined
+      if (operationId && generation !== undefined) {
         if (previousPending?.legacyTimer) {
           clearTimeout(previousPending.legacyTimer)
         }
@@ -5417,11 +5420,14 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           configId,
           valueId,
           operationId,
+          generation,
+          legacyDeadlineAt: Date.now() + CURSOR_LEGACY_CONFIRMATION_TIMEOUT_MS,
           confirmedOptions:
             previousPending?.deferredOptions ??
             previousPending?.confirmedOptions ??
             conn.configOptions,
           legacyAllowed: false,
+          unresolvedPredecessor: previousPending != null,
         })
       }
       dispatch({
@@ -5473,10 +5479,13 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
             saveConfigPreference("cursor", pending.configId, pending.valueId)
           } else {
             const timerOperationId = operationId
+            const timerGeneration = pending.generation
+            const remaining = Math.max(0, pending.legacyDeadlineAt - Date.now())
             pending.legacyTimer = setTimeout(() => {
               const current = pendingCursorConfigRef.current.get(contextKey)
               if (
                 current?.operationId !== timerOperationId ||
+                current.generation !== timerGeneration ||
                 !current.legacyAllowed
               ) {
                 return
@@ -5496,7 +5505,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
                 t("eventErrorTitle"),
                 t("backendErrors.cursorLegacyConfirmationTimeout")
               )
-            }, CURSOR_LEGACY_CONFIRMATION_TIMEOUT_MS)
+            }, remaining)
           }
         }
       } catch (error) {
