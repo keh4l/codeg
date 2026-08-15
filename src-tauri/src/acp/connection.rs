@@ -3757,11 +3757,11 @@ fn build_client_capabilities(
 ) -> ClientCapabilities {
     let mut client_capabilities = ClientCapabilities::new();
     if host_tools.hosts_channels() {
-        client_capabilities = client_capabilities.terminal(true).fs(
-            FileSystemCapabilities::new()
+        client_capabilities = client_capabilities
+            .terminal(true)
+            .fs(FileSystemCapabilities::new()
                 .read_text_file(true)
-                .write_text_file(true),
-        );
+                .write_text_file(true));
     }
     if agent_type == AgentType::Codex {
         client_capabilities = client_capabilities
@@ -11771,7 +11771,10 @@ mod tests {
         assert_eq!(after_b.next.map(|c| c.request_id).as_deref(), Some("c"));
         let after_c = q.resolve("c", "allow".into());
         assert!(after_c.answered);
-        assert!(after_c.next.is_none(), "queue drained, nothing left to show");
+        assert!(
+            after_c.next.is_none(),
+            "queue drained, nothing left to show"
+        );
         assert_eq!(q.showing, None);
         assert_eq!(q.waiting_len(), 0);
 
@@ -12807,7 +12810,10 @@ mod tests {
         // `EPERM`, every shell fallback blocked, `FsViolation` audited).
         let withheld = caps_of(AgentType::Grok, HostToolsPolicy::Agent);
         assert_eq!(withheld["terminal"], serde_json::Value::Bool(false));
-        assert_eq!(withheld["fs"]["readTextFile"], serde_json::Value::Bool(false));
+        assert_eq!(
+            withheld["fs"]["readTextFile"],
+            serde_json::Value::Bool(false)
+        );
         assert_eq!(
             withheld["fs"]["writeTextFile"],
             serde_json::Value::Bool(false)
@@ -14687,7 +14693,9 @@ mod tests {
 
     #[test]
     fn config_option_rejection_is_silent_when_the_pick_landed() {
-        assert!(config_option_rejection(&rejection_fixture("high"), "thought_level", "high").is_none());
+        assert!(
+            config_option_rejection(&rejection_fixture("high"), "thought_level", "high").is_none()
+        );
     }
 
     #[test]

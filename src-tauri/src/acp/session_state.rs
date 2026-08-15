@@ -2977,7 +2977,10 @@ mod tests {
         s.apply_event(&AcpEvent::PermissionQueueDepth { depth: 2 });
         let p = s.pending_permission.as_ref().expect("card still up");
         assert_eq!(p.queued, 2);
-        assert_eq!(p.request_id, "p-1", "depth must not change which card is up");
+        assert_eq!(
+            p.request_id, "p-1",
+            "depth must not change which card is up"
+        );
     }
 
     #[test]

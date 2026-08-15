@@ -5661,7 +5661,9 @@ pub(crate) async fn acp_pi_project_trust_state_core(
 /// Record that the user has seen and kept an existing trust grant, so the launch
 /// gate stops blocking this folder. Writes only codeg's own record — pi's
 /// `trust.json` is untouched, because the grant itself is not changing.
-pub(crate) async fn acp_pi_acknowledge_project_trust_core(workspace: String) -> Result<(), AcpError> {
+pub(crate) async fn acp_pi_acknowledge_project_trust_core(
+    workspace: String,
+) -> Result<(), AcpError> {
     tokio::task::spawn_blocking(move || {
         pi_set_trust_acknowledged_at(&pi_trust_ack_path(), Path::new(&workspace), true)
     })
@@ -14398,7 +14400,10 @@ mod tests {
 
         let after = read_json_object_or_empty(&trust);
         assert_eq!(after.get(&canonical_key(&ws)), None);
-        assert_eq!(after.get("/some/other"), Some(&serde_json::Value::Bool(true)));
+        assert_eq!(
+            after.get("/some/other"),
+            Some(&serde_json::Value::Bool(true))
+        );
         assert_eq!(after.get("/denied"), Some(&serde_json::Value::Bool(false)));
     }
 
@@ -14712,10 +14717,7 @@ mod tests {
     // composer sends is clamped straight back and the picker looks broken. These
     // pin the shape pi actually reads.
 
-    fn pi_reasoning_spec(
-        reasoning: bool,
-        map: &[(&str, Option<&str>)],
-    ) -> PiModelReasoningSpec {
+    fn pi_reasoning_spec(reasoning: bool, map: &[(&str, Option<&str>)]) -> PiModelReasoningSpec {
         PiModelReasoningSpec {
             reasoning,
             thinking_level_map: map
@@ -14742,7 +14744,11 @@ mod tests {
             "gpt-5.6-sol",
             Some(&pi_reasoning_spec(
                 true,
-                &[("off", Some("none")), ("minimal", None), ("xhigh", Some("xhigh"))],
+                &[
+                    ("off", Some("none")),
+                    ("minimal", None),
+                    ("xhigh", Some("xhigh")),
+                ],
             )),
         );
 
@@ -14886,7 +14892,11 @@ mod tests {
             "gpt-5.6-sol",
             Some(&pi_reasoning_spec(
                 true,
-                &[("off", Some("none")), ("minimal", None), ("low", Some("LOW"))],
+                &[
+                    ("off", Some("none")),
+                    ("minimal", None),
+                    ("low", Some("LOW")),
+                ],
             )),
         );
 
@@ -14895,7 +14905,10 @@ mod tests {
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].id, "gpt-5.6-sol");
         assert_eq!(models[0].reasoning, Some(true));
-        assert_eq!(models[0].thinking_level_map["off"], Some("none".to_string()));
+        assert_eq!(
+            models[0].thinking_level_map["off"],
+            Some("none".to_string())
+        );
         assert_eq!(models[0].thinking_level_map["minimal"], None);
         assert_eq!(models[0].thinking_level_map["low"], Some("LOW".to_string()));
     }
