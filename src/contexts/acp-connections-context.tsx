@@ -2679,8 +2679,15 @@ function isAlertedError(error: unknown): error is AlertedError {
   return (error as { alerted?: unknown }).alerted === true
 }
 
-const CURSOR_CURRENT_UNAVAILABLE_VALUE = "__codeg_cursor_current_unavailable__"
+const CURSOR_COMPOSITE_VALUE_PREFIX = "__codeg_cursor_composite__:"
 const CURSOR_LEGACY_CONFIRMATION_TIMEOUT_MS = 15_000
+const CURSOR_LEGACY_CONFIG_FAILURE_CODES = new Set([
+  "cursor_config_option_failed",
+  "cursor_model_restore_failed",
+  "cursor_model_variant_unavailable",
+  "cursor_model_variant_ambiguous",
+  "cursor_model_catalog_unavailable",
+])
 
 // ── Provider ──
 
@@ -3858,7 +3865,12 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           ) {
             clearConfigPreference("cursor", "model")
           }
-          if (nc?.agentType === "cursor" && !e.terminal) {
+          if (
+            nc?.agentType === "cursor" &&
+            !e.terminal &&
+            typeof e.code === "string" &&
+            CURSOR_LEGACY_CONFIG_FAILURE_CODES.has(e.code)
+          ) {
             const pending = pendingCursorConfigRef.current.get(contextKey)
             if (pending?.legacyAllowed) {
               const rollbackOptions =
@@ -5385,7 +5397,11 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       if (!conn) return
       const isCursorComposite =
         conn.agentType === "cursor" && configId === "model"
-      if (isCursorComposite && valueId === CURSOR_CURRENT_UNAVAILABLE_VALUE) {
+      if (
+        isCursorComposite &&
+        valueId.startsWith("__codeg_") &&
+        !valueId.startsWith(CURSOR_COMPOSITE_VALUE_PREFIX)
+      ) {
         return
       }
       const previousPending = pendingCursorConfigRef.current.get(contextKey)

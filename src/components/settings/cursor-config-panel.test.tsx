@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { NextIntlClientProvider } from "next-intl"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -37,10 +38,31 @@ describe("buildCursorEnv", () => {
       OTHER: "x",
       CURSOR_AUTH_MODE: "custom",
       CURSOR_API_KEY: "sk-key",
-      CURSOR_API_BASE_URL: "https://stale",
+      CURSOR_API_BASE_URL: "https://stale///",
       CURSOR_MODEL: "claude-opus-4-8-high",
       CURSOR_FORCE: "1",
     })
+  })
+
+  it.each([
+    "https://private.example/proxy?route=/",
+    "https://private.example/proxy#section/",
+    "https://private.example/private/path/",
+    "https://private.example/",
+    "https://private.example/proxy%2Fchild",
+    "https://private.example/proxy?route=%2F#section/",
+    "cursor+https://private.example/proxy/",
+  ])("preserves the complete endpoint semantics for %s", (endpoint) => {
+    expect(
+      buildCursorEnv({}, "custom", "key", `  ${endpoint}  `, "", false)
+        .CURSOR_API_BASE_URL
+    ).toBe(endpoint)
+  })
+
+  it("rejects an invalid custom endpoint without including it in the error", () => {
+    expect(() =>
+      buildCursorEnv({}, "custom", "key", "not an absolute URL", "", false)
+    ).toThrow("Invalid Cursor endpoint")
   })
 
   it("API-key mode with a blank key clears it but keeps the mode + unrelated keys", () => {
@@ -143,7 +165,7 @@ describe("CursorConfigPanel", () => {
       ...baseAgent,
       env: overrides?.env ?? baseAgent.env,
     } as unknown as AcpAgentInfo
-    render(
+    const view = render(
       <NextIntlClientProvider locale="en" messages={enMessages}>
         <CursorConfigPanel
           agent={agent}
@@ -154,7 +176,19 @@ describe("CursorConfigPanel", () => {
         />
       </NextIntlClientProvider>
     )
-    return { onSaveEnv, onSaved, onAffectedSessions }
+    const rerenderAgent = (env: Record<string, string>) =>
+      view.rerender(
+        <NextIntlClientProvider locale="en" messages={enMessages}>
+          <CursorConfigPanel
+            agent={{ ...agent, env } as unknown as AcpAgentInfo}
+            saving={false}
+            onSaveEnv={onSaveEnv}
+            onSaved={onSaved}
+            onAffectedSessions={onAffectedSessions}
+          />
+        </NextIntlClientProvider>
+      )
+    return { onSaveEnv, onSaved, onAffectedSessions, rerenderAgent }
   }
 
   const authenticated = {
@@ -226,8 +260,8 @@ describe("CursorConfigPanel", () => {
     )
 
     await waitFor(() => expect(onSaveEnv).toHaveBeenCalledTimes(2))
-    // No CURSOR_API_BASE_URL is ever written; CURSOR_FORCE defaults to "1"
-    // (Run Everything) because the saved env never set it.
+    // CURSOR_FORCE defaults to "1" (Run Everything) because the saved env
+    // never set it.
     expect(onSaveEnv.mock.calls[0][0]).toEqual({
       CURSOR_AUTH_MODE: "custom",
       CURSOR_API_KEY: "new-key",
@@ -256,7 +290,11 @@ describe("CursorConfigPanel", () => {
       screen.getByPlaceholderText(
         enMessages.AcpAgentSettings.cursor.baseUrlPlaceholder
       ),
-      { target: { value: " https://new.cursor.test/// " } }
+      {
+        target: {
+          value: " https://new.cursor.test/proxy?route=%2F#section/ ",
+        },
+      }
     )
     fireEvent.click(
       screen.getByRole("button", {
@@ -267,8 +305,145 @@ describe("CursorConfigPanel", () => {
     expect(onSaveEnv.mock.calls[0][0]).toMatchObject({
       CURSOR_AUTH_MODE: "custom",
       CURSOR_API_KEY: "saved-key",
-      CURSOR_API_BASE_URL: "https://new.cursor.test",
+      CURSOR_API_BASE_URL: "https://new.cursor.test/proxy?route=%2F#section/",
     })
+  })
+
+  it("does not resurrect cleared custom credentials after a subscription save", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    const oldEnv = {
+      CURSOR_AUTH_MODE: "custom",
+      CURSOR_API_KEY: "old-key-must-not-return",
+      CURSOR_API_BASE_URL: "https://old.example/private/",
+    }
+    const { onSaveEnv, onSaved, rerenderAgent } = renderPanel({ env: oldEnv })
+    await screen.findByText(enMessages.AcpAgentSettings.cursor.authNotInstalled)
+
+    await user.click(
+      screen.getByRole("combobox", {
+        name: enMessages.AcpAgentSettings.cursor.authMode,
+      })
+    )
+    await user.click(
+      screen.getByRole("option", {
+        name: enMessages.AcpAgentSettings.authModeOfficialSubscription,
+      })
+    )
+    await user.click(
+      screen.getByRole("button", {
+        name: enMessages.AcpAgentSettings.cursor.saveConfig,
+      })
+    )
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1))
+    const subscriptionEnv = onSaveEnv.mock.calls[0][0]
+    expect(subscriptionEnv.CURSOR_API_KEY).toBeUndefined()
+    expect(subscriptionEnv.CURSOR_API_BASE_URL).toBeUndefined()
+
+    // The parent refreshes the authoritative row without unmounting this panel.
+    rerenderAgent(subscriptionEnv)
+    await user.click(
+      screen.getByRole("combobox", {
+        name: enMessages.AcpAgentSettings.cursor.authMode,
+      })
+    )
+    await user.click(
+      screen.getByRole("option", {
+        name: enMessages.AcpAgentSettings.cursor.authModeApiKey,
+      })
+    )
+    await user.click(
+      screen.getByRole("button", {
+        name: enMessages.AcpAgentSettings.cursor.saveConfig,
+      })
+    )
+
+    expect(onSaveEnv).toHaveBeenCalledTimes(1)
+    expect(document.body.textContent).not.toContain("old-key-must-not-return")
+  })
+
+  it("keeps a custom credential draft when a subscription save fails", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    vi.mocked(acpUpdateAgentConfig).mockRejectedValueOnce(
+      new Error("backend diagnostic echoed draft-key")
+    )
+    const { onSaveEnv } = renderPanel({
+      env: {
+        CURSOR_AUTH_MODE: "custom",
+        CURSOR_API_KEY: "draft-key",
+        CURSOR_API_BASE_URL: "https://draft.example/path/",
+      },
+    })
+    await screen.findByText(enMessages.AcpAgentSettings.cursor.authNotInstalled)
+    await user.click(
+      screen.getByRole("combobox", {
+        name: enMessages.AcpAgentSettings.cursor.authMode,
+      })
+    )
+    await user.click(
+      screen.getByRole("option", {
+        name: enMessages.AcpAgentSettings.authModeOfficialSubscription,
+      })
+    )
+    await user.click(
+      screen.getByRole("button", {
+        name: enMessages.AcpAgentSettings.cursor.saveConfig,
+      })
+    )
+    await waitFor(() => expect(onSaveEnv).toHaveBeenCalledTimes(2))
+
+    await user.click(
+      screen.getByRole("combobox", {
+        name: enMessages.AcpAgentSettings.cursor.authMode,
+      })
+    )
+    await user.click(
+      screen.getByRole("option", {
+        name: enMessages.AcpAgentSettings.cursor.authModeApiKey,
+      })
+    )
+    expect(
+      screen.getByPlaceholderText(
+        enMessages.AcpAgentSettings.cursor.apiKeyPlaceholder
+      )
+    ).toHaveValue("draft-key")
+    expect(
+      screen.getByPlaceholderText(
+        enMessages.AcpAgentSettings.cursor.baseUrlPlaceholder
+      )
+    ).toHaveValue("https://draft.example/path/")
+    expect(document.body.textContent).not.toContain(
+      "backend diagnostic echoed draft-key"
+    )
+  })
+
+  it("does not overwrite an unsaved credential draft on an authoritative refresh", async () => {
+    const { rerenderAgent } = renderPanel({
+      env: {
+        CURSOR_AUTH_MODE: "custom",
+        CURSOR_API_KEY: "saved-key",
+        CURSOR_API_BASE_URL: "https://saved.example/",
+      },
+    })
+    await screen.findByText(enMessages.AcpAgentSettings.cursor.authNotInstalled)
+    const keyInput = screen.getByPlaceholderText(
+      enMessages.AcpAgentSettings.cursor.apiKeyPlaceholder
+    )
+    const endpointInput = screen.getByPlaceholderText(
+      enMessages.AcpAgentSettings.cursor.baseUrlPlaceholder
+    )
+    fireEvent.change(keyInput, { target: { value: "unsaved-draft-key" } })
+    fireEvent.change(endpointInput, {
+      target: { value: "https://draft.example/private/" },
+    })
+
+    rerenderAgent({
+      CURSOR_AUTH_MODE: "custom",
+      CURSOR_API_KEY: "external-key",
+      CURSOR_API_BASE_URL: "https://external.example/",
+      UNRELATED: "changed",
+    })
+    expect(keyInput).toHaveValue("unsaved-draft-key")
+    expect(endpointInput).toHaveValue("https://draft.example/private/")
   })
 
   it("blocks an API-key save with no key", async () => {

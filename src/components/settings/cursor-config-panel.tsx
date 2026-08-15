@@ -62,6 +62,19 @@ const UNSET = "__unset__"
  * account key and optional endpoint selected by the user. */
 export type CursorAuthMethod = "subscription" | "custom"
 
+export function normalizeCursorEndpoint(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) return ""
+  try {
+    // Validation only: Cursor receives the user's exact trimmed endpoint. URL
+    // serialization would otherwise rewrite path/query/fragment semantics.
+    new URL(trimmed)
+  } catch {
+    throw new Error("Invalid Cursor endpoint")
+  }
+  return trimmed
+}
+
 /** One entry in the model picker. `value` is the `--model` id, `label` the
  * human name from `cursor-agent models`. base-ui's Combobox uses the `{ value,
  * label }` shape automatically (label for display + filtering, value for the
@@ -98,7 +111,7 @@ export function buildCursorEnv(
   env[CURSOR_AUTH_MODE_ENV] = mode
   if (mode === "custom") {
     setOrDelete(CURSOR_API_KEY_ENV, apiKey)
-    setOrDelete(CURSOR_API_BASE_URL_ENV, baseUrl.trim().replace(/\/+$/, ""))
+    setOrDelete(CURSOR_API_BASE_URL_ENV, normalizeCursorEndpoint(baseUrl))
   } else {
     // Subscription: never ship a saved key — the launch policy additionally
     // strips any inherited one so browser login is used.
@@ -241,6 +254,8 @@ export function CursorConfigPanel({
         case "cursor_probe_empty_output":
         case "cursor_probe_invalid_format":
           return t("cursor.probeInvalidOutput")
+        case "cursor_probe_invalid_endpoint":
+          return t("cursor.baseUrlInvalid")
         default:
           return t("cursor.probeFailed")
       }
@@ -265,7 +280,34 @@ export function CursorConfigPanel({
   const [baseUrl, setBaseUrl] = useState(
     () => agent.env[CURSOR_API_BASE_URL_ENV] ?? ""
   )
+  const authoritativeCredentialsRef = useRef({
+    mode: inferCursorMode(agent.env),
+    apiKey: agent.env[CURSOR_API_KEY_ENV] ?? "",
+    baseUrl: agent.env[CURSOR_API_BASE_URL_ENV] ?? "",
+  })
   const [showKey, setShowKey] = useState(false)
+
+  // A parent refresh may replace the authoritative env without remounting this
+  // panel. Reconcile only a clean draft; unsaved edits remain untouched. A
+  // successful save explicitly reconciles below, including credential removal.
+  useEffect(() => {
+    const previous = authoritativeCredentialsRef.current
+    const next = {
+      mode: inferCursorMode(agent.env),
+      apiKey: agent.env[CURSOR_API_KEY_ENV] ?? "",
+      baseUrl: agent.env[CURSOR_API_BASE_URL_ENV] ?? "",
+    }
+    const draftWasClean =
+      mode === previous.mode &&
+      apiKey === previous.apiKey &&
+      baseUrl === previous.baseUrl
+    authoritativeCredentialsRef.current = next
+    if (draftWasClean) {
+      setMode(next.mode)
+      setApiKey(next.apiKey)
+      setBaseUrl(next.baseUrl)
+    }
+  }, [agent.env, apiKey, baseUrl, mode])
 
   // --- model state (searchable picker over cursor-agent models) ---
   const [model, setModel] = useState(() => agent.env[CURSOR_MODEL_ENV] ?? "")
@@ -429,13 +471,17 @@ export function CursorConfigPanel({
       toast.error(t("cursor.customApiKeyRequired"))
       return
     }
-    setSavingAll(true)
     const prevEnv = agent.env
+    let nextEnv: Record<string, string>
     try {
-      await onSaveEnv(
-        buildCursorEnv(prevEnv, mode, apiKey, baseUrl, model, force),
-        agent.enabled
-      )
+      nextEnv = buildCursorEnv(prevEnv, mode, apiKey, baseUrl, model, force)
+    } catch {
+      toast.error(t("cursor.baseUrlInvalid"))
+      return
+    }
+    setSavingAll(true)
+    try {
+      await onSaveEnv(nextEnv, agent.enabled)
       try {
         const affected = await acpUpdateAgentConfig(agent.agent_type, {
           cursor_structured: {
@@ -453,14 +499,21 @@ export function CursorConfigPanel({
         await onSaveEnv(prevEnv, agent.enabled).catch(() => {})
         throw e
       }
+      const savedCredentials = {
+        mode: inferCursorMode(nextEnv),
+        apiKey: nextEnv[CURSOR_API_KEY_ENV] ?? "",
+        baseUrl: nextEnv[CURSOR_API_BASE_URL_ENV] ?? "",
+      }
+      authoritativeCredentialsRef.current = savedCredentials
+      setMode(savedCredentials.mode)
+      setApiKey(savedCredentials.apiKey)
+      setBaseUrl(savedCredentials.baseUrl)
       toast.success(t("toasts.cursorSaved"))
       onSaved()
-    } catch (e) {
-      toast.error(
-        `${t("toasts.saveCursorConfigFailed")}: ${
-          e instanceof Error ? e.message : String(e)
-        }`
-      )
+    } catch {
+      // Save transports may include request context in their diagnostic. Never
+      // reflect it into the DOM because this form contains an API key.
+      toast.error(t("toasts.saveCursorConfigFailed"))
     } finally {
       if (mountedRef.current) setSavingAll(false)
     }
@@ -522,7 +575,7 @@ export function CursorConfigPanel({
           value={mode}
           onValueChange={(value) => setMode(value as CursorAuthMethod)}
         >
-          <SelectTrigger className="w-full">
+          <SelectTrigger aria-label={t("cursor.authMode")} className="w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent align="start">
