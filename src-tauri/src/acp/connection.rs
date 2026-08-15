@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -1667,15 +1668,49 @@ fn validate_cursor_model_selector_value(
     Ok(())
 }
 
-fn cursor_model_uses_composite_handler(
-    agent_type: AgentType,
-    config_id: &str,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CursorModelDispatch {
+    Composite,
+    RawAcp,
+    RejectedInternal,
+}
+
+fn classify_cursor_model_dispatch(
     value_id: &str,
-    has_composite_catalog: bool,
-) -> bool {
-    agent_type == AgentType::Cursor
-        && config_id == "model"
-        && (has_composite_catalog || value_id.starts_with("__codeg_"))
+    catalog: Option<&[CursorCompositeModel]>,
+) -> CursorModelDispatch {
+    if value_id.starts_with(CURSOR_COMPOSITE_VALUE_PREFIX) {
+        return CursorModelDispatch::Composite;
+    }
+    if value_id.starts_with("__codeg_") {
+        return CursorModelDispatch::RejectedInternal;
+    }
+    if value_id == "default"
+        && catalog.is_some_and(|models| models.iter().any(|model| model.value == "default"))
+    {
+        return CursorModelDispatch::Composite;
+    }
+    CursorModelDispatch::RawAcp
+}
+
+async fn dispatch_cursor_model_option<Composite, CompositeFuture, Raw, RawFuture>(
+    dispatch: CursorModelDispatch,
+    composite: Composite,
+    raw_acp: Raw,
+) -> Result<(), sacp::Error>
+where
+    Composite: FnOnce() -> CompositeFuture,
+    CompositeFuture: Future<Output = Result<(), sacp::Error>>,
+    Raw: FnOnce() -> RawFuture,
+    RawFuture: Future<Output = Result<(), sacp::Error>>,
+{
+    match dispatch {
+        CursorModelDispatch::Composite => composite().await,
+        CursorModelDispatch::RawAcp => raw_acp().await,
+        CursorModelDispatch::RejectedInternal => Err(sacp::util::internal_error(
+            "Unknown Codeg-internal Cursor model value",
+        )),
+    }
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -5895,6 +5930,54 @@ async fn set_cursor_composite_option(
     result
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn set_cursor_model_option(
+    cx: &ConnectionTo<Agent>,
+    session_id: &SessionId,
+    state: &Arc<RwLock<SessionState>>,
+    emitter: &EventEmitter,
+    value_id: String,
+    request_seq: u64,
+    operation_id: Option<String>,
+) -> Result<(), sacp::Error> {
+    let dispatch = {
+        let session = state.read().await;
+        classify_cursor_model_dispatch(&value_id, session.cursor_composite_models.as_deref())
+    };
+    let raw_value = value_id.clone();
+    let raw_operation_id = operation_id.clone();
+    dispatch_cursor_model_option(
+        dispatch,
+        || async {
+            set_cursor_composite_option(
+                cx,
+                session_id,
+                state,
+                emitter,
+                &value_id,
+                request_seq,
+                operation_id,
+            )
+            .await
+        },
+        || async {
+            set_session_config_option(
+                cx,
+                session_id,
+                state,
+                emitter,
+                AgentType::Cursor,
+                "model".to_string(),
+                raw_value,
+                request_seq,
+                raw_operation_id,
+            )
+            .await
+        },
+    )
+    .await
+}
+
 /// Encode a selector value for `session/set_config_option`.
 ///
 /// codeg keeps config values as opaque `String`s end to end (Tauri command, web
@@ -8090,25 +8173,15 @@ async fn run_conversation_loop<'a>(
                                     operation_id,
                                     request_seq,
                                 }) => {
-                                    let has_composite_catalog = agent_type == AgentType::Cursor
-                                        && state
-                                            .read()
-                                            .await
-                                            .cursor_composite_models
-                                            .as_ref()
-                                            .is_some_and(|catalog| !catalog.is_empty());
-                                    let set_result = if cursor_model_uses_composite_handler(
-                                        agent_type,
-                                        &config_id,
-                                        &value_id,
-                                        has_composite_catalog,
-                                    ) {
-                                        set_cursor_composite_option(
+                                    let set_result = if agent_type == AgentType::Cursor
+                                        && config_id == "model"
+                                    {
+                                        set_cursor_model_option(
                                             &cx,
                                             &sid,
                                             state,
                                             emitter,
-                                            &value_id,
+                                            value_id,
                                             request_seq,
                                             operation_id.clone(),
                                         )
@@ -8401,25 +8474,13 @@ async fn run_conversation_loop<'a>(
             }) => {
                 let cx = session.connection();
                 let sid = session.session_id().clone();
-                let has_composite_catalog = agent_type == AgentType::Cursor
-                    && state
-                        .read()
-                        .await
-                        .cursor_composite_models
-                        .as_ref()
-                        .is_some_and(|catalog| !catalog.is_empty());
-                let set_result = if cursor_model_uses_composite_handler(
-                    agent_type,
-                    &config_id,
-                    &value_id,
-                    has_composite_catalog,
-                ) {
-                    set_cursor_composite_option(
+                let set_result = if agent_type == AgentType::Cursor && config_id == "model" {
+                    set_cursor_model_option(
                         &cx,
                         &sid,
                         state,
                         emitter,
-                        &value_id,
+                        value_id,
                         request_seq,
                         operation_id.clone(),
                     )
@@ -15790,6 +15851,135 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn cursor_shared_dispatch_routes_raw_acp_values_with_a_populated_catalog() {
+        let catalog = vec![CursorCompositeModel {
+            value: "default".into(),
+            label: "Auto".into(),
+            model_value: "default".into(),
+            parameters: BTreeMap::new(),
+        }];
+        let response = cursor_wire_options(serde_json::json!([{
+            "type": "select", "id": "model", "name": "Model",
+            "currentValue": "gpt-5.3-codex",
+            "options": [
+                {"value": "default", "name": "Auto"},
+                {"value": "gpt-5.3-codex", "name": "Codex 5.3"}
+            ]
+        }]));
+        let mut transport = FakeCursorConfigTransport {
+            calls: Vec::new(),
+            responses: [Ok(response)].into(),
+        };
+        let raw_value = "gpt-5.3-codex".to_string();
+        dispatch_cursor_model_option(
+            classify_cursor_model_dispatch(&raw_value, Some(&catalog)),
+            || async {
+                panic!("raw ACP model must not enter composite lookup");
+                #[allow(unreachable_code)]
+                Ok(())
+            },
+            || async {
+                transport
+                    .set_config_option(
+                        "model".into(),
+                        raw_value.clone(),
+                        SessionConfigOptionValue::value_id(raw_value.clone()),
+                    )
+                    .await?;
+                Ok(())
+            },
+        )
+        .await
+        .expect("raw ACP model remains a one-request wire operation");
+        assert_eq!(transport.calls, [("model".into(), "gpt-5.3-codex".into())]);
+    }
+
+    #[tokio::test]
+    async fn cursor_shared_dispatch_handles_default_and_internal_values_fail_closed() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let default_catalog = vec![CursorCompositeModel {
+            value: "default".into(),
+            label: "Auto".into(),
+            model_value: "default".into(),
+            parameters: BTreeMap::new(),
+        }];
+        let composite_calls = AtomicUsize::new(0);
+        let raw_calls = AtomicUsize::new(0);
+        dispatch_cursor_model_option(
+            classify_cursor_model_dispatch("default", Some(&default_catalog)),
+            || async {
+                composite_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+            || async {
+                raw_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .await
+        .expect("catalog Auto uses the complete composite terminal flow");
+        assert_eq!(composite_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(raw_calls.load(Ordering::SeqCst), 0);
+
+        dispatch_cursor_model_option(
+            classify_cursor_model_dispatch("default", Some(&[])),
+            || async {
+                composite_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+            || async {
+                raw_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .await
+        .expect("without a catalog, default is a legal raw ACP value");
+        assert_eq!(composite_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(raw_calls.load(Ordering::SeqCst), 1);
+
+        for value in [
+            "__codeg_cursor_current_unavailable__",
+            "__codeg_cursor_future_sentinel__",
+            "__codeg_unknown_internal__",
+        ] {
+            assert!(dispatch_cursor_model_option(
+                classify_cursor_model_dispatch(value, None),
+                || async {
+                    composite_calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                },
+                || async {
+                    raw_calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                },
+            )
+            .await
+            .is_err());
+        }
+        assert_eq!(composite_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(raw_calls.load(Ordering::SeqCst), 1);
+
+        let composite_error = dispatch_cursor_model_option(
+            classify_cursor_model_dispatch("__codeg_cursor_composite__:missing", None),
+            || async { Err(sacp::util::internal_error("catalog missing")) },
+            || async {
+                raw_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .await;
+        assert!(composite_error.is_err());
+        assert_eq!(raw_calls.load(Ordering::SeqCst), 1);
+        assert!(validate_cursor_model_selector_value(
+            AgentType::Cursor,
+            "unrelated-option",
+            "__codeg_legal_for_non_model_option",
+        )
+        .is_ok());
+    }
+
     fn progressive_cursor_wire_options(stage: usize) -> Vec<SessionConfigOption> {
         let mut options = vec![serde_json::json!({
             "type": "select", "id": "model", "name": "Model",
@@ -16171,25 +16361,36 @@ mod tests {
             "__codeg_cursor_future_sentinel__",
             "__codeg_unknown_internal__",
         ] {
-            assert!(cursor_model_uses_composite_handler(
-                AgentType::Cursor,
-                "model",
-                value,
-                false,
-            ));
+            let expected = if value.starts_with(CURSOR_COMPOSITE_VALUE_PREFIX) {
+                CursorModelDispatch::Composite
+            } else {
+                CursorModelDispatch::RejectedInternal
+            };
+            assert_eq!(classify_cursor_model_dispatch(value, None), expected);
         }
-        assert!(!cursor_model_uses_composite_handler(
-            AgentType::Cursor,
-            "model",
-            "gpt-5.3-codex",
-            false,
-        ));
-        assert!(cursor_model_uses_composite_handler(
-            AgentType::Cursor,
-            "model",
-            "default",
-            true,
-        ));
+        assert_eq!(
+            classify_cursor_model_dispatch("gpt-5.3-codex", None),
+            CursorModelDispatch::RawAcp
+        );
+        let catalog = vec![CursorCompositeModel {
+            value: "default".into(),
+            label: "Auto".into(),
+            model_value: "default".into(),
+            parameters: BTreeMap::new(),
+        }];
+        assert_eq!(
+            classify_cursor_model_dispatch("gpt-5.3-codex", Some(&catalog)),
+            CursorModelDispatch::RawAcp,
+            "a populated composite catalog must not reroute a raw ACP model value",
+        );
+        assert_eq!(
+            classify_cursor_model_dispatch("default", Some(&catalog)),
+            CursorModelDispatch::Composite
+        );
+        assert_eq!(
+            classify_cursor_model_dispatch("default", None),
+            CursorModelDispatch::RawAcp
+        );
         assert!(validate_cursor_model_selector_value(
             AgentType::Codex,
             "model",
