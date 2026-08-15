@@ -753,6 +753,7 @@
       "baseUrlLabel": "Cursor API base URL (optional)",
       "baseUrlPlaceholder": "https://api.cursor.com",
       "baseUrlHint": "Saved as CURSOR_API_BASE_URL for custom mode. Leave blank to use Cursor's default endpoint.",
+      "baseUrlInvalid": "Enter a valid absolute Cursor endpoint URL.",
       "modelTitle": "Default model",
       "loadModels": "Load models",
       "modelsUnavailable": "Model list unavailable",

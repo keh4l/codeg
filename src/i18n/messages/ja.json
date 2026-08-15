@@ -753,6 +753,7 @@
       "baseUrlLabel": "Cursor API ベース URL（任意）",
       "baseUrlPlaceholder": "https://api.cursor.com",
       "baseUrlHint": "カスタムモードでは CURSOR_API_BASE_URL として保存されます。空欄の場合は Cursor の既定エンドポイントを使用します。",
+      "baseUrlInvalid": "有効な Cursor の絶対エンドポイント URL を入力してください。",
       "modelTitle": "デフォルトモデル",
       "loadModels": "モデル一覧を取得",
       "modelsUnavailable": "モデル一覧を取得できません",

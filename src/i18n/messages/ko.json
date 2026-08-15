@@ -753,6 +753,7 @@
       "baseUrlLabel": "Cursor API 기본 URL(선택 사항)",
       "baseUrlPlaceholder": "https://api.cursor.com",
       "baseUrlHint": "사용자 지정 모드에서 CURSOR_API_BASE_URL로 저장됩니다. 비워 두면 Cursor 기본 엔드포인트를 사용합니다.",
+      "baseUrlInvalid": "유효한 Cursor 절대 엔드포인트 URL을 입력하세요.",
       "modelTitle": "기본 모델",
       "loadModels": "모델 목록 가져오기",
       "modelsUnavailable": "모델 목록을 가져올 수 없음",

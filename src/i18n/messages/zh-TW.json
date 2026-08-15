@@ -753,6 +753,7 @@
       "baseUrlLabel": "Cursor API 基礎 URL（選填）",
       "baseUrlPlaceholder": "https://api.cursor.com",
       "baseUrlHint": "自訂模式下儲存為 CURSOR_API_BASE_URL；留空則使用 Cursor 預設端點。",
+      "baseUrlInvalid": "請輸入有效的 Cursor 絕對端點 URL。",
       "modelTitle": "預設模型",
       "loadModels": "取得模型清單",
       "modelsUnavailable": "模型清單不可用",

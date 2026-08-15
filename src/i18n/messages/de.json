@@ -753,6 +753,7 @@
       "baseUrlLabel": "Cursor-API-Basis-URL (optional)",
       "baseUrlPlaceholder": "https://api.cursor.com",
       "baseUrlHint": "Wird im benutzerdefinierten Modus als CURSOR_API_BASE_URL gespeichert. Leer lassen für den Cursor-Standardendpunkt.",
+      "baseUrlInvalid": "Geben Sie eine gültige absolute Cursor-Endpunkt-URL ein.",
       "modelTitle": "Standardmodell",
       "loadModels": "Modelle laden",
       "modelsUnavailable": "Modellliste nicht verfügbar",

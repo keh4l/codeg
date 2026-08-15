@@ -753,6 +753,7 @@
       "baseUrlLabel": "URL de base de l’API Cursor (facultatif)",
       "baseUrlPlaceholder": "https://api.cursor.com",
       "baseUrlHint": "Enregistrée comme CURSOR_API_BASE_URL en mode personnalisé. Laissez vide pour utiliser le point de terminaison Cursor par défaut.",
+      "baseUrlInvalid": "Saisissez une URL absolue valide pour le point de terminaison Cursor.",
       "modelTitle": "Modèle par défaut",
       "loadModels": "Charger les modèles",
       "modelsUnavailable": "Liste de modèles indisponible",

@@ -753,6 +753,7 @@
       "baseUrlLabel": "عنوان URL الأساسي لـ Cursor API (اختياري)",
       "baseUrlPlaceholder": "https://api.cursor.com",
       "baseUrlHint": "يُحفظ باسم CURSOR_API_BASE_URL في الوضع المخصص. اتركه فارغًا لاستخدام نقطة نهاية Cursor الافتراضية.",
+      "baseUrlInvalid": "أدخل عنوان URL مطلقًا صالحًا لنقطة نهاية Cursor.",
       "modelTitle": "النموذج الافتراضي",
       "loadModels": "جلب النماذج",
       "modelsUnavailable": "قائمة النماذج غير متاحة",
