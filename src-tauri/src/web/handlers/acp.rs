@@ -706,6 +706,7 @@ pub async fn acp_update_agent_config(
 #[serde(rename_all = "camelCase", default)]
 pub struct CursorProbeParams {
     pub api_key: Option<String>,
+    pub base_url: Option<String>,
 }
 
 pub async fn acp_cursor_auth_status(
@@ -713,7 +714,7 @@ pub async fn acp_cursor_auth_status(
     Json(params): Json<CursorProbeParams>,
 ) -> Result<Json<crate::acp::types::CursorAuthStatus>, AppCommandError> {
     Ok(Json(
-        acp_commands::acp_cursor_auth_status_core(&state.db, params.api_key).await,
+        acp_commands::acp_cursor_auth_status_core(&state.db, params.api_key, params.base_url).await,
     ))
 }
 
@@ -722,7 +723,7 @@ pub async fn acp_cursor_list_models(
     Json(params): Json<CursorProbeParams>,
 ) -> Result<Json<crate::acp::types::CursorModelsResult>, AppCommandError> {
     Ok(Json(
-        acp_commands::acp_cursor_list_models_core(&state.db, params.api_key).await,
+        acp_commands::acp_cursor_list_models_core(&state.db, params.api_key, params.base_url).await,
     ))
 }
 

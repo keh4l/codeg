@@ -2065,6 +2065,22 @@ fn map_session_config_options(
 const CURSOR_COMPOSITE_VALUE_PREFIX: &str = "__codeg_cursor_composite__:";
 const CURSOR_CURRENT_UNAVAILABLE_VALUE: &str = "__codeg_cursor_current_unavailable__";
 
+fn validate_cursor_model_selector_value(
+    agent_type: AgentType,
+    config_id: &str,
+    value_id: &str,
+) -> Result<(), sacp::Error> {
+    if agent_type == AgentType::Cursor
+        && config_id == "model"
+        && value_id == CURSOR_CURRENT_UNAVAILABLE_VALUE
+    {
+        return Err(sacp::util::internal_error(
+            "Cursor's unavailable-current marker is display-only",
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CursorAvailableModelCatalog {
@@ -2128,7 +2144,8 @@ async fn request_cursor_available_models(
 /// parameterized ACP catalog is structural (base model + legal values). Build a
 /// safe intersection without parsing or sending the CLI alias itself:
 ///
-/// - the longest ACP display-name prefix identifies the base model;
+/// - every ACP display-name prefix is considered, and the whole row is accepted
+///   only when exactly one normalized model+parameter interpretation remains;
 /// - suffix phrases must be names published by that model's ACP options;
 /// - boolean parameters use the ACP option name when enabled and are false when
 ///   absent, matching Cursor's own current CLI formatter;
@@ -2149,40 +2166,60 @@ fn build_cursor_composite_catalog(
             continue;
         }
         let label_words = cursor_label_words(label, true);
-        let mut model_candidates: Vec<_> = available
+        let model_candidates: Vec<_> = available
             .iter()
             .filter(|model| {
                 let base = cursor_label_words(&model.name, false);
                 !base.is_empty() && label_words.starts_with(&base)
             })
             .collect();
-        model_candidates
-            .sort_by_key(|model| std::cmp::Reverse(cursor_label_words(&model.name, false).len()));
-        let Some(model) = model_candidates.first().copied() else {
+        if model_candidates.is_empty() {
             continue;
-        };
-        let base_words = cursor_label_words(&model.name, false);
-        if model_candidates.iter().skip(1).any(|candidate| {
-            cursor_label_words(&candidate.name, false).len() == base_words.len()
-                && candidate.value != model.value
-        }) {
+        }
+        let mut states = 0;
+        let mut interpretations: Vec<(&CursorAvailableModelCatalog, BTreeMap<String, String>)> =
+            Vec::new();
+        let mut bounded_out = false;
+        for model in model_candidates {
+            states += 1;
+            if states > CURSOR_MAPPING_MAX_STATES {
+                bounded_out = true;
+                break;
+            }
+            let base_words = cursor_label_words(&model.name, false);
+            let suffix = &label_words[base_words.len()..];
+            let Some(mappings) =
+                cursor_parameter_mappings(suffix, &model.config_options, &mut states)
+            else {
+                bounded_out = true;
+                break;
+            };
+            for parameters in mappings {
+                if !interpretations
+                    .iter()
+                    .any(|(existing_model, existing_parameters)| {
+                        existing_model.value == model.value && *existing_parameters == parameters
+                    })
+                {
+                    interpretations.push((model, parameters));
+                    if interpretations.len() > 1 {
+                        break;
+                    }
+                }
+            }
+            if interpretations.len() > 1 {
+                break;
+            }
+        }
+        if bounded_out || interpretations.len() != 1 {
             tracing::debug!(
                 cli_alias = %cli.id,
                 cli_label = %cli.label,
-                "[ACP][Cursor] rejected an ambiguous CLI model base"
+                "[ACP][Cursor] rejected a non-unique CLI model interpretation"
             );
             continue;
         }
-        let suffix = &label_words[base_words.len()..];
-        let Some(parameters) = cursor_unique_parameter_mapping(suffix, &model.config_options)
-        else {
-            tracing::debug!(
-                cli_alias = %cli.id,
-                cli_label = %cli.label,
-                "[ACP][Cursor] rejected an unmappable CLI model row"
-            );
-            continue;
-        };
+        let (model, parameters) = interpretations.pop().expect("one interpretation");
 
         let value = if model.value == "default" && parameters.is_empty() {
             // Keep the real ACP default sentinel so the existing Cursor grouping
@@ -2254,10 +2291,21 @@ struct CursorParameterChoice {
 /// greedy match can assign a shared word such as `High` to whichever option
 /// happens to arrive first; this bounded search accepts a row only when exactly
 /// one structured parameter map consumes every suffix token.
+#[cfg(test)]
 fn cursor_unique_parameter_mapping(
     suffix: &[String],
     configs: &[CursorCatalogConfigOption],
 ) -> Option<BTreeMap<String, String>> {
+    let mut states = 0;
+    let mut solutions = cursor_parameter_mappings(suffix, configs, &mut states)?;
+    (solutions.len() == 1).then(|| solutions.remove(0))
+}
+
+fn cursor_parameter_mappings(
+    suffix: &[String],
+    configs: &[CursorCatalogConfigOption],
+    states: &mut usize,
+) -> Option<Vec<BTreeMap<String, String>>> {
     if suffix.len() > CURSOR_MAPPING_MAX_SUFFIX_WORDS
         || configs.len() > CURSOR_MAPPING_MAX_CONFIGS
         || configs
@@ -2278,7 +2326,7 @@ fn cursor_unique_parameter_mapping(
         .map(|config| cursor_parameter_choices(suffix, config))
         .collect();
     if choices.iter().any(Vec::is_empty) {
-        return None;
+        return Some(Vec::new());
     }
 
     struct SearchInputs<'a> {
@@ -2286,19 +2334,21 @@ fn cursor_unique_parameter_mapping(
         choices: &'a [Vec<CursorParameterChoice>],
         full_mask: u64,
     }
-    struct SearchState {
-        current: BTreeMap<String, String>,
-        solutions: Vec<BTreeMap<String, String>>,
-        states: usize,
-    }
-    fn visit(index: usize, used: u64, inputs: &SearchInputs<'_>, state: &mut SearchState) {
-        state.states += 1;
-        if state.states > CURSOR_MAPPING_MAX_STATES || state.solutions.len() > 1 {
+    fn visit(
+        index: usize,
+        used: u64,
+        inputs: &SearchInputs<'_>,
+        current: &mut BTreeMap<String, String>,
+        solutions: &mut Vec<BTreeMap<String, String>>,
+        states: &mut usize,
+    ) {
+        *states += 1;
+        if *states > CURSOR_MAPPING_MAX_STATES || solutions.len() > 1 {
             return;
         }
         if index == inputs.ordered.len() {
-            if used == inputs.full_mask && !state.solutions.contains(&state.current) {
-                state.solutions.push(state.current.clone());
+            if used == inputs.full_mask && !solutions.contains(current) {
+                solutions.push(current.clone());
             }
             return;
         }
@@ -2307,12 +2357,17 @@ fn cursor_unique_parameter_mapping(
             if used & choice.consumed != 0 {
                 continue;
             }
-            state
-                .current
-                .insert(config.id.clone(), choice.value.clone());
-            visit(index + 1, used | choice.consumed, inputs, state);
-            state.current.remove(&config.id);
-            if state.states > CURSOR_MAPPING_MAX_STATES || state.solutions.len() > 1 {
+            current.insert(config.id.clone(), choice.value.clone());
+            visit(
+                index + 1,
+                used | choice.consumed,
+                inputs,
+                current,
+                solutions,
+                states,
+            );
+            current.remove(&config.id);
+            if *states > CURSOR_MAPPING_MAX_STATES || solutions.len() > 1 {
                 return;
             }
         }
@@ -2323,14 +2378,10 @@ fn cursor_unique_parameter_mapping(
         choices: &choices,
         full_mask,
     };
-    let mut state = SearchState {
-        current: BTreeMap::new(),
-        solutions: Vec::new(),
-        states: 0,
-    };
-    visit(0, 0, &inputs, &mut state);
-    (state.states <= CURSOR_MAPPING_MAX_STATES && state.solutions.len() == 1)
-        .then(|| state.solutions.remove(0))
+    let mut current = BTreeMap::new();
+    let mut solutions = Vec::new();
+    visit(0, 0, &inputs, &mut current, &mut solutions, states);
+    (*states <= CURSOR_MAPPING_MAX_STATES).then_some(solutions)
 }
 
 fn cursor_parameter_choices(
@@ -6239,6 +6290,7 @@ async fn set_session_config_option(
     request_seq: u64,
     operation_id: Option<String>,
 ) -> Result<(), sacp::Error> {
+    validate_cursor_model_selector_value(agent_type, &config_id, &value_id)?;
     // The whole selector transport carries values as opaque strings; only here,
     // at the wire, does the option's advertised kind decide how to encode it.
     let is_boolean = {
@@ -6361,11 +6413,7 @@ async fn set_cursor_composite_option(
     request_seq: u64,
     operation_id: Option<String>,
 ) -> Result<(), sacp::Error> {
-    if value_id == CURSOR_CURRENT_UNAVAILABLE_VALUE {
-        finish_cursor_config_request(state, emitter, request_seq, None, operation_id, "applied")
-            .await;
-        return Ok(());
-    }
+    validate_cursor_model_selector_value(AgentType::Cursor, "model", value_id)?;
     let (target, previous, mut raw_options) = {
         let session = state.read().await;
         let catalog = session
@@ -12197,7 +12245,34 @@ mod tests {
             .iter()
             .any(|(k, v)| k == "CURSOR_API_BASE_URL" && v.is_empty()));
 
-        // Custom mode and legacy/no-mode rows are left untouched.
+        // Custom mode preserves the explicit endpoint/key and overwrites stale
+        // inherited values with the same effective env used by the probes.
+        let custom: BTreeMap<String, String> = [
+            ("CURSOR_AUTH_MODE".to_string(), "custom".to_string()),
+            ("CURSOR_API_KEY".to_string(), "explicit-key".to_string()),
+            (
+                "CURSOR_API_BASE_URL".to_string(),
+                "https://custom.example".to_string(),
+            ),
+        ]
+        .into();
+        let mut custom_env = vec![
+            ("CURSOR_API_KEY".to_string(), "inherited-key".to_string()),
+            (
+                "CURSOR_API_BASE_URL".to_string(),
+                "https://inherited.example".to_string(),
+            ),
+        ];
+        apply_cursor_env_policy(&mut custom_env, &custom);
+        assert!(custom_env
+            .iter()
+            .any(|(k, v)| k == "CURSOR_API_KEY" && v == "explicit-key"));
+        assert!(custom_env
+            .iter()
+            .any(|(k, v)| k == "CURSOR_API_BASE_URL" && v == "https://custom.example"));
+
+        // Custom mode without explicit values and legacy/no-mode rows preserve
+        // operator-provided process env rather than inventing credentials.
         for mode in [Some("custom"), None] {
             let rt: BTreeMap<String, String> = mode
                 .map(|m| [("CURSOR_AUTH_MODE".to_string(), m.to_string())].into())
@@ -16623,6 +16698,116 @@ mod tests {
     }
 
     #[test]
+    fn cursor_mapping_rejects_ambiguity_across_overlapping_base_prefixes() {
+        let cli_models = vec![crate::acp::types::CursorModelInfo {
+            id: "shared-1m-thinking".into(),
+            label: "Shared Model 1M Thinking".into(),
+            is_default: false,
+        }];
+        let option = |id: &str, name: &str, current: &str, value: &str| {
+            serde_json::json!({
+                "id": id, "name": name, "currentValue": current,
+                "options": [{"value": current, "name": "Off"}, {"value": value, "name": name}]
+            })
+        };
+        let raw = serde_json::json!({"models": [
+            {"value": "short-base", "name": "Shared Model", "configOptions": [
+                option("context", "1M", "300k", "1m"), option("thinking", "Thinking", "false", "true")
+            ]},
+            {"value": "long-base", "name": "Shared Model 1M", "configOptions": [
+                option("thinking", "Thinking", "false", "true")
+            ]}
+        ]});
+        let available = parse_cursor_available_models(raw).expect("catalog parses");
+        let mut reversed = available.clone();
+        reversed.reverse();
+        assert!(build_cursor_composite_catalog(&cli_models, &available).is_empty());
+        assert!(build_cursor_composite_catalog(&cli_models, &reversed).is_empty());
+    }
+
+    #[test]
+    fn cursor_mapping_accepts_only_the_one_complete_base_interpretation() {
+        let cli_models = vec![crate::acp::types::CursorModelInfo {
+            id: "shared-1m-thinking".into(),
+            label: "Shared Model 1M Thinking".into(),
+            is_default: false,
+        }];
+        let context = serde_json::json!({
+            "id": "context", "name": "Context", "currentValue": "300k",
+            "options": [{"value": "300k", "name": "300K"}, {"value": "1m", "name": "1M"}]
+        });
+        let thinking = serde_json::json!({
+            "id": "thinking", "name": "Thinking", "currentValue": "false",
+            "options": [{"value": "false", "name": "Off"}, {"value": "true", "name": "Thinking"}]
+        });
+
+        let short_only = parse_cursor_available_models(serde_json::json!({"models": [
+            {"value": "short-base", "name": "Shared Model", "configOptions": [context.clone(), thinking.clone()]},
+            {"value": "long-base", "name": "Shared Model 1M", "configOptions": []}
+        ]}))
+        .expect("short-only catalog parses");
+        let mapped = build_cursor_composite_catalog(&cli_models, &short_only);
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].model_value, "short-base");
+
+        let long_only = parse_cursor_available_models(serde_json::json!({"models": [
+            {"value": "short-base", "name": "Shared Model", "configOptions": [context]},
+            {"value": "long-base", "name": "Shared Model 1M", "configOptions": [thinking]}
+        ]}))
+        .expect("long-only catalog parses");
+        let mapped = build_cursor_composite_catalog(&cli_models, &long_only);
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].model_value, "long-base");
+    }
+
+    #[test]
+    fn cursor_mapping_treats_equal_labels_with_distinct_acp_values_as_ambiguous() {
+        let cli_models = vec![crate::acp::types::CursorModelInfo {
+            id: "shared-high".into(),
+            label: "Shared Model High".into(),
+            is_default: false,
+        }];
+        let option = serde_json::json!({
+            "id": "effort", "name": "Effort", "currentValue": "low",
+            "options": [{"value": "low", "name": "Low"}, {"value": "high", "name": "High"}]
+        });
+        let available = parse_cursor_available_models(serde_json::json!({"models": [
+            {"value": "first-acp-model", "name": "Shared Model", "configOptions": [option.clone()]},
+            {"value": "second-acp-model", "name": "Shared Model", "configOptions": [option]}
+        ]}))
+        .expect("ambiguous equal-label catalog parses");
+        assert!(build_cursor_composite_catalog(&cli_models, &available).is_empty());
+    }
+
+    #[test]
+    fn cursor_mapping_deduplicates_identical_structured_interpretations() {
+        let cli_models = vec![crate::acp::types::CursorModelInfo {
+            id: "shared-high".into(),
+            label: "Shared Model High".into(),
+            is_default: false,
+        }];
+        let model = serde_json::json!({
+            "value": "same-acp-value", "name": "Shared Model", "configOptions": [{
+                "id": "reasoning", "name": "Reasoning", "currentValue": "low",
+                "options": [{"value": "low", "name": "Low"}, {"value": "high", "name": "High"}]
+            }]
+        });
+        let available =
+            parse_cursor_available_models(serde_json::json!({"models": [model.clone(), model]}))
+                .expect("catalog parses");
+        let composites = build_cursor_composite_catalog(&cli_models, &available);
+        assert_eq!(composites.len(), 1);
+        assert_eq!(composites[0].model_value, "same-acp-value");
+        assert_eq!(
+            composites[0]
+                .parameters
+                .get("reasoning")
+                .map(String::as_str),
+            Some("high")
+        );
+    }
+
+    #[test]
     fn cursor_suffix_mapping_is_globally_unique_across_config_options() {
         let cli_models = vec![crate::acp::types::CursorModelInfo {
             id: "shared-high-alias".into(),
@@ -16744,6 +16929,36 @@ mod tests {
         assert!(
             cursor_unique_parameter_mapping(&[], &[oversized]).is_none(),
             "abnormally large option sets must fail before backtracking"
+        );
+
+        let cli_models = vec![crate::acp::types::CursorModelInfo {
+            id: "bounded-base-search".into(),
+            label: "Shared Model High".into(),
+            is_default: false,
+        }];
+        let repeated = CursorAvailableModelCatalog {
+            value: "same-model".into(),
+            name: "Shared Model".into(),
+            config_options: vec![CursorCatalogConfigOption {
+                id: "reasoning".into(),
+                name: "Reasoning".into(),
+                current_value: "low".into(),
+                options: vec![
+                    CursorCatalogValue {
+                        value: "low".into(),
+                        name: "Low".into(),
+                    },
+                    CursorCatalogValue {
+                        value: "high".into(),
+                        name: "High".into(),
+                    },
+                ],
+            }],
+        };
+        let available = vec![repeated; CURSOR_MAPPING_MAX_STATES + 1];
+        assert!(
+            build_cursor_composite_catalog(&cli_models, &available).is_empty(),
+            "base-candidate enumeration must share the bounded search budget"
         );
     }
 
@@ -17123,6 +17338,28 @@ mod tests {
             cursor_composite_wire_plan(&target),
             vec![("model".into(), "default".into())]
         );
+    }
+
+    #[test]
+    fn cursor_unavailable_marker_is_rejected_before_every_model_wire_path() {
+        assert!(validate_cursor_model_selector_value(
+            AgentType::Cursor,
+            "model",
+            CURSOR_CURRENT_UNAVAILABLE_VALUE,
+        )
+        .is_err());
+        assert!(validate_cursor_model_selector_value(
+            AgentType::Cursor,
+            "model",
+            "__codeg_cursor_composite__:valid-local-choice",
+        )
+        .is_ok());
+        assert!(validate_cursor_model_selector_value(
+            AgentType::Codex,
+            "model",
+            CURSOR_CURRENT_UNAVAILABLE_VALUE,
+        )
+        .is_ok());
     }
 
     #[test]
