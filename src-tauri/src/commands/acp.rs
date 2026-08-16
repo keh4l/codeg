@@ -7843,6 +7843,23 @@ pub(crate) fn skill_storage_spec(agent_type: AgentType) -> Option<SkillStorageSp
             ],
             project_rel_dirs: vec![".cursor/skills", ".agents/skills"],
         }),
+        // deepseek-acp 0.3.0 mounts the upstream skills chain
+        // (`dsh-skill-filesystem`), which discovers BOTH directory bundles
+        // (`<id>/SKILL.md`) and flat `<id>.md` files — hence Codex's spec
+        // shape. Its roots, highest rank first: `<project>/.dsh/skills`,
+        // `<project>/.agents/skills`, `$DSH_HOME/skills` (default `~/.dsh`),
+        // `$DSH_AGENTS_HOME/skills` (default `~/.agents`). The DeepSeek-native
+        // directory comes first so linking targets it without cross-agent side
+        // effects on the shared `.agents` store — the same ordering rationale
+        // as pi and Cursor.
+        AgentType::DeepSeek => Some(SkillStorageSpec {
+            kind: SkillStorageKind::SkillDirectoryOrMarkdownFile,
+            global_dirs: vec![
+                crate::parsers::deepseek::resolve_dsh_home_dir().join("skills"),
+                crate::parsers::deepseek::resolve_dsh_agents_home_dir().join("skills"),
+            ],
+            project_rel_dirs: vec![".dsh/skills", ".agents/skills"],
+        }),
         // codeg cannot detect where an arbitrary ACP agent loads skills from,
         // so custom agents are gated on the user's own declaration: that the
         // agent reads the shared `.agents/skills` store (the cross-agent
@@ -7939,11 +7956,43 @@ pub(crate) fn scoped_skill_dirs(
                 .ok_or_else(|| {
                     AcpError::protocol("workspace_path is required for project scoped skills")
                 })?;
+            let base = project_skill_base(agent_type, workspace);
             Ok(spec
                 .project_rel_dirs
                 .iter()
-                .map(|relative| PathBuf::from(workspace).join(relative))
+                .map(|relative| base.join(relative))
                 .collect())
+        }
+    }
+}
+
+/// The directory an agent's PROJECT-relative skill dirs hang off.
+///
+/// Normally the workspace itself. DeepSeek is the exception: its provider
+/// (`dsh-skill-filesystem`'s `findProjectRoot`) walks up from the session cwd
+/// to the nearest ancestor containing `.git` before joining `.dsh/skills` /
+/// `.agents/skills`, falling back to the cwd when it reaches the filesystem
+/// root. Opening a subdirectory of a repo as the workspace would otherwise
+/// make codeg create and list `<subdir>/.dsh/skills` — a directory the agent
+/// never scans, so the skill would simply never load, with nothing on screen
+/// saying so.
+///
+/// `.git` is matched as a plain path, file or directory: in a linked worktree
+/// (which codeg creates routinely) it is a FILE, and upstream's `pathExists`
+/// accepts that too.
+fn project_skill_base(agent_type: AgentType, workspace: &str) -> PathBuf {
+    let workspace = PathBuf::from(workspace);
+    if agent_type != AgentType::DeepSeek {
+        return workspace;
+    }
+    let mut current = workspace.as_path();
+    loop {
+        if current.join(".git").exists() {
+            return current.to_path_buf();
+        }
+        match current.parent() {
+            Some(parent) if parent != current => current = parent,
+            _ => return workspace.clone(),
         }
     }
 }
@@ -8067,6 +8116,12 @@ fn is_read_only_skill_path(agent_type: AgentType, skill_path: &Path) -> bool {
         // Cursor's bundled builtin skills; the CLI restores them on update,
         // so editing/deleting through codeg would silently be undone.
         AgentType::Cursor => home_dir_or_default().join(".cursor").join("skills-cursor"),
+        // `dsh-skill-filesystem` sets `skipSystem` on the `$DSH_HOME/skills`
+        // root, so anything under `.system/` there belongs to the DeepSeek
+        // Harness product CLI, not to the user — never write through it.
+        AgentType::DeepSeek => crate::parsers::deepseek::resolve_dsh_home_dir()
+            .join("skills")
+            .join(".system"),
         _ => return false,
     };
     skill_path.starts_with(&ro_root)
@@ -8531,6 +8586,7 @@ enum CursorProbeFlightState {
     Finished(Result<String, CursorProbeError>),
 }
 
+#[cfg(unix)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CursorProbeExitObservation {
     Running,
@@ -8540,12 +8596,15 @@ enum CursorProbeExitObservation {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CursorProbeLifecycleEvent {
+    #[cfg(unix)]
     ObserveExitWnoWait,
+    #[cfg(unix)]
     SignalGroup(i32),
+    #[cfg(unix)]
     RetireLease,
     FinalReap,
     DirectPidKill,
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     SimulatedIdentityReuse,
 }
 
@@ -8561,7 +8620,7 @@ trait CursorProbeLifecycleBackend: Send + Sync {
 
     async fn pause_after(&self, _event: CursorProbeLifecycleEvent) {}
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     fn repeat_cleanup_after_identity_release(&self) -> bool {
         false
     }
@@ -8719,7 +8778,6 @@ impl CursorProbeProcessGroup {
     fn new(_pid: Option<u32>, _backend: Arc<dyn CursorProbeLifecycleBackend>) -> Self {
         Self
     }
-    fn terminate(&mut self, _signal: i32) {}
     fn retire_before_reap(&mut self) {}
 }
 
@@ -8790,7 +8848,7 @@ impl CursorProbeLifecycle {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     fn repeat_cleanup_after_identity_release_if_requested(&mut self) {
         if self.backend.repeat_cleanup_after_identity_release() {
             self.backend
@@ -8807,39 +8865,31 @@ impl Drop for CursorProbeLifecycle {
 }
 
 async fn terminate_cursor_probe(lifecycle: &mut CursorProbeLifecycle) -> bool {
+    #[cfg(unix)]
+    if lifecycle.pid.is_some() {
+        // Every probe is born as the leader of a fresh process group. Keep
+        // that leader live/unreaped as the identity anchor and signal only
+        // the anchored group; a delayed list of raw descendant PIDs could
+        // otherwise be reused before a second kill-tree pass.
+        lifecycle.process_group.terminate(libc::SIGTERM);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        lifecycle.process_group.terminate(libc::SIGKILL);
+        let _ = wait_cursor_probe_group_quiescent(&lifecycle.process_group).await;
+    }
     #[cfg(not(unix))]
-    let mut signalled = Vec::new();
-    let pid = lifecycle.pid;
-    if pid.is_some() {
-        #[cfg(unix)]
-        {
-            // Every probe is born as the leader of a fresh process group. Keep
-            // that leader live/unreaped as the identity anchor and signal only
-            // the anchored group; a delayed list of raw descendant PIDs could
-            // otherwise be reused before a second kill-tree pass.
-            lifecycle.process_group.terminate(libc::SIGTERM);
-        }
-        #[cfg(not(unix))]
-        {
-            let pid = pid.expect("probe pid checked above");
-            let config = kill_tree::Config {
-                signal: "SIGTERM".to_string(),
-                include_target: true,
-            };
-            if let Ok(outputs) = kill_tree::tokio::kill_tree_with_config(pid, &config).await {
-                signalled.extend(outputs.into_iter().filter_map(|output| match output {
-                    kill_tree::Output::Killed { process_id, .. } => Some(process_id),
-                    kill_tree::Output::MaybeAlreadyTerminated { .. } => None,
-                }));
-            }
+    if let Some(pid) = lifecycle.pid {
+        let mut signalled = Vec::new();
+        let config = kill_tree::Config {
+            signal: "SIGTERM".to_string(),
+            include_target: true,
+        };
+        if let Ok(outputs) = kill_tree::tokio::kill_tree_with_config(pid, &config).await {
+            signalled.extend(outputs.into_iter().filter_map(|output| match output {
+                kill_tree::Output::Killed { process_id, .. } => Some(process_id),
+                kill_tree::Output::MaybeAlreadyTerminated { .. } => None,
+            }));
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
-        #[cfg(unix)]
-        {
-            lifecycle.process_group.terminate(libc::SIGKILL);
-            let _ = wait_cursor_probe_group_quiescent(&lifecycle.process_group).await;
-        }
-        #[cfg(not(unix))]
         for process_id in signalled {
             let config = kill_tree::Config {
                 signal: "SIGKILL".to_string(),
@@ -8951,6 +9001,7 @@ async fn run_cursor_probe_binary_worker_with_backend(
         .stderr
         .take()
         .ok_or(CursorProbeError::Spawn)?;
+    #[cfg(unix)]
     let pid = lifecycle.pid;
 
     // This is the supervisor unwind boundary around the internal monitor
@@ -8965,7 +9016,7 @@ async fn run_cursor_probe_binary_worker_with_backend(
                     marker_seen = true;
                     let should_panic = extra_env
                         .get("CODEG_TEST_CURSOR_PROBE_PANIC_ONCE_GUARD")
-                        .map_or(true, |guard| fs::metadata(guard).is_ok());
+                        .is_none_or(|guard| fs::metadata(guard).is_ok());
                     if should_panic {
                         if let Some(guard) =
                             extra_env.get("CODEG_TEST_CURSOR_PROBE_PANIC_ONCE_GUARD")
@@ -9066,7 +9117,7 @@ async fn run_cursor_probe_binary_worker_with_backend(
         if fs::metadata(marker).is_ok()
             && extra_env
                 .get("CODEG_TEST_CURSOR_PROBE_PANIC_ONCE_GUARD")
-                .map_or(true, |guard| fs::metadata(guard).is_ok())
+                .is_none_or(|guard| fs::metadata(guard).is_ok())
         {
             if let Some(guard) = extra_env.get("CODEG_TEST_CURSOR_PROBE_PANIC_ONCE_GUARD") {
                 let _ = fs::remove_file(guard);
@@ -9083,13 +9134,13 @@ async fn run_cursor_probe_binary_worker_with_backend(
                 // direct Child::kill could target a reused numeric id.
                 lifecycle.process_group.retire_before_reap();
                 lifecycle.mark_completed();
-                #[cfg(test)]
+                #[cfg(all(test, unix))]
                 lifecycle.repeat_cleanup_after_identity_release_if_requested();
             } else {
                 let terminated = terminate_cursor_probe(&mut lifecycle).await;
                 if terminated {
                     lifecycle.mark_completed();
-                    #[cfg(test)]
+                    #[cfg(all(test, unix))]
                     lifecycle.repeat_cleanup_after_identity_release_if_requested();
                 }
             }
@@ -9113,7 +9164,7 @@ async fn run_cursor_probe_binary_worker_with_backend(
             .map_err(|_| CursorProbeError::Spawn)?,
     };
     lifecycle.mark_completed();
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     lifecycle.repeat_cleanup_after_identity_release_if_requested();
     if !status.success() {
         return Err(CursorProbeError::NonZeroExit);
@@ -9660,6 +9711,22 @@ fn agent_env_keys(agent_type: AgentType) -> (&'static str, &'static str, &'stati
         // placeholder so the generic cascade never lands on OPENAI_* keys;
         // model selection flows through the Cursor panel / ACP instead.
         AgentType::Cursor => ("CURSOR_API_BASE_URL", "CURSOR_API_KEY", "CURSOR_MODEL"),
+        // The real endpoint knob is `DEEPSEEK_BASE_URL`, read by the
+        // `llm-deepseek` adapter through the launch-environment snapshot —
+        // which, when the host installs none (deepseek-acp does not), falls
+        // back to `process.env`, so codeg's launch env reaches it. It resolves
+        // per request (`config.baseURL ?? env ?? https://api.deepseek.com`),
+        // NOT at load. `DEEPSEEK_ACP_PROVIDER` is a different thing entirely —
+        // the provider ROUTE id (`deepseek-official`), a registry key rather
+        // than a URL — so it must not ride the base-url slot, or binding a
+        // model provider would write an endpoint into the route selector and
+        // break every request. All three keep the generic cascade off the
+        // OPENAI_* keys.
+        AgentType::DeepSeek => (
+            "DEEPSEEK_BASE_URL",
+            "DEEPSEEK_API_KEY",
+            "DEEPSEEK_ACP_MODEL",
+        ),
         _ => ("OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MODEL"),
     }
 }
@@ -9772,6 +9839,7 @@ const CLAUDE_MODEL_KEY_MAP: &[(&str, &str)] = &[
 ///   entry is `None` when the provider's JSON omits that key or has an empty
 ///   value.
 /// - Gemini: returns `GEMINI_MODEL`.
+/// - DeepSeek: returns `DEEPSEEK_ACP_MODEL`.
 /// - Codex: returns `OPENAI_MODEL` so the provider can override env_json (the
 ///   root `model` in `config.toml` is handled separately by
 ///   `provider_codex_model_action`).
@@ -9806,6 +9874,15 @@ pub(crate) fn parse_provider_model(
         AgentType::KimiCode => {
             out.insert(
                 "KIMI_MODEL_NAME".to_string(),
+                trimmed_raw.map(str::to_string),
+            );
+        }
+        // deepseek-acp's launcher reads DEEPSEEK_ACP_MODEL (`readEnv`) and
+        // nothing else; leaving this on the OPENAI_MODEL fallback would apply
+        // a bound provider's URL and key while silently dropping its model.
+        AgentType::DeepSeek => {
+            out.insert(
+                "DEEPSEEK_ACP_MODEL".to_string(),
                 trimmed_raw.map(str::to_string),
             );
         }
@@ -10065,6 +10142,13 @@ fn cascade_update_agent_config(
             // runtime env var through the generic agent settings panel
             // (`acpUpdateAgentEnv`); it does not write provider creds into
             // ~/.grok/config.toml and does not participate in the cascade.
+        }
+        AgentType::DeepSeek => {
+            // deepseek-acp authenticates via `DEEPSEEK_API_KEY` (or
+            // `~/.dsh/.credentials.yaml`, which codeg never writes), injected
+            // as a runtime env var through the generic agent settings panel;
+            // it has no codeg-managed config file and does not participate in
+            // the model-provider credential cascade.
         }
         AgentType::Custom(_) => {
             // Custom agents are deliberately configuration-free: codeg writes
@@ -12764,8 +12848,13 @@ pub async fn acp_list_agent_skills(
 
     if let Some(workspace) = workspace_path.as_deref().map(str::trim) {
         if !workspace.is_empty() {
+            // Same base the WRITE path resolves through `scoped_skill_dirs` —
+            // for DeepSeek that is the repo root, not the workspace. Joining
+            // onto the workspace here instead would make a skill saved from a
+            // nested workspace vanish from the list that is meant to show it.
+            let base = project_skill_base(agent_type, workspace);
             for relative in &spec.project_rel_dirs {
-                let project_dir = PathBuf::from(workspace).join(relative);
+                let project_dir = base.join(relative);
                 locations.push(AgentSkillLocation {
                     scope: AgentSkillScope::Project,
                     path: project_dir.to_string_lossy().to_string(),
@@ -15217,6 +15306,122 @@ wire_api = "chat"
     }
 
     #[test]
+    fn deepseek_skill_storage_spec_mirrors_dsh_skill_roots() {
+        // Both resolvers read the process-wide `$HOME` when their env override
+        // is unset, and other tests mutate HOME via `temp_env`. Pin it (and
+        // clear both overrides) so the spec and the expected paths resolve
+        // against one consistent home. `expected` comes from the same
+        // production helpers so this stays correct on Windows, where
+        // `dirs::home_dir()` ignores the pinned HOME.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        temp_env::with_vars(
+            [
+                ("HOME", Some(tmp.path())),
+                ("DSH_HOME", None::<&std::path::Path>),
+                ("DSH_AGENTS_HOME", None::<&std::path::Path>),
+            ],
+            || {
+                let spec =
+                    skill_storage_spec(AgentType::DeepSeek).expect("DeepSeek supports skills");
+                // `dsh-skill-filesystem` discovers directory bundles AND flat
+                // `.md` files, like Codex and pi.
+                assert_eq!(spec.kind, SkillStorageKind::SkillDirectoryOrMarkdownFile);
+                assert_eq!(spec.project_rel_dirs, vec![".dsh/skills", ".agents/skills"]);
+                // Harness-native dir first (preferred link target), shared
+                // cross-agent store second.
+                let expected = vec![
+                    crate::parsers::deepseek::resolve_dsh_home_dir().join("skills"),
+                    crate::parsers::deepseek::resolve_dsh_agents_home_dir().join("skills"),
+                ];
+                assert_eq!(spec.global_dirs, expected);
+                // The product CLI owns `$DSH_HOME/skills/.system` (the provider
+                // sets `skipSystem` on that root), so codeg never writes there.
+                assert!(is_read_only_skill_path(
+                    AgentType::DeepSeek,
+                    &expected[0].join(".system").join("imagegen")
+                ));
+                assert!(!is_read_only_skill_path(
+                    AgentType::DeepSeek,
+                    &expected[0].join("my-skill")
+                ));
+            },
+        );
+    }
+
+    #[test]
+    fn deepseek_project_skills_hang_off_the_git_root() {
+        // `dsh-skill-filesystem` resolves project roots by walking up to the
+        // nearest `.git`, so opening a package subdirectory must still target
+        // the repo root — otherwise codeg writes a skill the agent never scans.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        let nested = repo.join("packages").join("app");
+        std::fs::create_dir_all(&nested).expect("create nested");
+        // A linked worktree records `.git` as a FILE, which upstream's
+        // `pathExists` accepts — so must this.
+        std::fs::write(repo.join(".git"), "gitdir: /elsewhere\n").expect("write .git file");
+
+        let dirs = scoped_skill_dirs(
+            AgentType::DeepSeek,
+            AgentSkillScope::Project,
+            Some(nested.to_str().expect("utf-8 path")),
+        )
+        .expect("project dirs");
+        assert_eq!(
+            dirs,
+            vec![repo.join(".dsh/skills"), repo.join(".agents/skills")]
+        );
+
+        // No `.git` anywhere above ⇒ fall back to the workspace itself.
+        let bare = tmp.path().join("bare");
+        std::fs::create_dir_all(&bare).expect("create bare");
+        let fallback = scoped_skill_dirs(
+            AgentType::DeepSeek,
+            AgentSkillScope::Project,
+            Some(bare.to_str().expect("utf-8 path")),
+        )
+        .expect("fallback dirs");
+        assert_eq!(fallback[0], bare.join(".dsh/skills"));
+
+        // Every other agent keeps the plain workspace-relative layout.
+        let codex = scoped_skill_dirs(
+            AgentType::Codex,
+            AgentSkillScope::Project,
+            Some(nested.to_str().expect("utf-8 path")),
+        )
+        .expect("codex dirs");
+        assert_eq!(codex[0], nested.join(".codex/skills"));
+
+        // ...and the LIST path must resolve the same base as the WRITE path:
+        // a skill saved from the nested workspace lands at the repo root, so
+        // listing the workspace directly would show it as missing.
+        let saved = repo.join(".dsh/skills").join("demo");
+        std::fs::create_dir_all(&saved).expect("create skill dir");
+        std::fs::write(saved.join("SKILL.md"), "---\nname: demo\n---\nbody\n")
+            .expect("write SKILL.md");
+        let listed = tokio::runtime::Runtime::new()
+            .expect("runtime")
+            .block_on(acp_list_agent_skills(
+                AgentType::DeepSeek,
+                Some(nested.to_string_lossy().to_string()),
+            ))
+            .expect("list skills");
+        assert!(
+            listed.skills.iter().any(|s| s.id == "demo"),
+            "skill saved at the git root must be listed from a nested workspace: {:?}",
+            listed.skills
+        );
+        assert!(
+            listed
+                .locations
+                .iter()
+                .any(|l| l.path == repo.join(".dsh/skills").to_string_lossy()),
+            "the listed project location must be the git root: {:?}",
+            listed.locations
+        );
+    }
+
+    #[test]
     fn parse_provider_model_emits_claude_custom_model_option_trio() {
         // A Claude provider that defines the custom model option must surface all
         // three ANTHROPIC_CUSTOM_MODEL_OPTION* env vars (Some => set) alongside
@@ -16143,7 +16348,12 @@ wire_api = "chat"
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
         assert!(observed, "leader exit was not observed");
-        assert_eq!(unsafe { libc::getpgid(pid as i32) }, pid as i32);
+        assert_eq!(
+            cursor_probe_child_exit_observed_system(pid)
+                .expect("a second waitid WNOWAIT must retain the unreaped leader"),
+            CursorProbeExitObservation::Exited,
+            "WNOWAIT must leave the leader available for identity-safe cleanup"
+        );
 
         let backend = Arc::new(CursorProbeTestBackend::system(false));
         let mut group = CursorProbeProcessGroup::new(Some(pid), backend.clone());
@@ -16186,7 +16396,6 @@ wire_api = "chat"
         .await
         .expect_err("an externally reaped leader loses its identity anchor");
         assert_eq!(error, CursorProbeError::IdentityLost);
-        assert!(!CURSOR_PROBE_TOKIO_KILL_ON_DROP);
         let events = backend.events();
         assert_eq!(
             events,
@@ -16403,9 +16612,7 @@ wire_api = "chat"
             "post-reap cleanup must be a no-op even after numeric PGID reuse"
         );
         assert_probe_pids_gone(&pids).await;
-        assert!(!events
-            .iter()
-            .any(|event| *event == CursorProbeLifecycleEvent::DirectPidKill));
+        assert!(!events.contains(&CursorProbeLifecycleEvent::DirectPidKill));
         let unrelated_survived = unrelated.try_wait().expect("unrelated status").is_none();
         unsafe {
             libc::kill(-unrelated_pid, libc::SIGKILL);
