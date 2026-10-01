@@ -16383,6 +16383,11 @@ struct KiroCommandsAvailableNotification {
     session_id: Option<String>,
     #[serde(default)]
     commands: Vec<serde_json::Value>,
+    /// Everything else a `/name` runs: skills (`serverName: "skill:…"`), file
+    /// prompts from `.kiro/prompts` (`"local"`), and MCP prompts (the server's
+    /// name), each `{name, description, arguments[], serverName}`.
+    #[serde(default)]
+    prompts: Vec<serde_json::Value>,
 }
 
 /// `_kiro.dev/metadata {sessionId, contextUsagePercentage, reasoning}` — sent
@@ -16426,7 +16431,7 @@ struct KiroAgentSwitchedNotification {
 fn kiro_available_commands(notif: &KiroCommandsAvailableNotification) -> Vec<AvailableCommandInfo> {
     const TUI_ONLY: &[&str] = &["reply", "paste", "voice", "quit", "prompts", "rewind"];
     let mut seen = HashSet::new();
-    notif
+    let mut available: Vec<AvailableCommandInfo> = notif
         .commands
         .iter()
         .filter_map(|command| {
@@ -16465,7 +16470,67 @@ fn kiro_available_commands(notif: &KiroCommandsAvailableNotification) -> Vec<Ava
                 input_hint,
             })
         })
-        .collect()
+        .collect();
+    // Skills, `.kiro/prompts` files and MCP prompts. Kiro resolves a prompt
+    // text of `/name args` against the same list, local files first, then
+    // skills, then MCP (verified against kiro-cli 2.24.1: each kind answers
+    // when sent as plain prompt text), so they are offered as commands. A
+    // name a built-in command already took is skipped, as Kiro itself would
+    // run the command.
+    available.extend(notif.prompts.iter().filter_map(|prompt| {
+        let name = prompt.get("name")?.as_str()?.trim();
+        let name = name.strip_prefix('/').unwrap_or(name).trim();
+        if name.is_empty() || !seen.insert(name.to_string()) {
+            return None;
+        }
+        let description = prompt
+            .get("description")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| kiro_prompt_source_label(prompt));
+        Some(AvailableCommandInfo {
+            name: name.to_string(),
+            description,
+            input_hint: kiro_prompt_input_hint(prompt),
+        })
+    }));
+    available
+}
+
+/// What a prompt with no description of its own says in the slash menu: where
+/// it comes from.
+fn kiro_prompt_source_label(prompt: &serde_json::Value) -> String {
+    match prompt.get("serverName").and_then(serde_json::Value::as_str) {
+        Some(server) if server.starts_with("skill:") => "Skill".to_string(),
+        Some("local") | None => "Prompt".to_string(),
+        Some(server) => format!("MCP prompt ({server})"),
+    }
+}
+
+/// The argument hint for a prompt: the names of its declared arguments. A skill
+/// or file prompt declares only Kiro's catch-all `args` ("All arguments"),
+/// which says nothing a user doesn't already know, so it gets none.
+fn kiro_prompt_input_hint(prompt: &serde_json::Value) -> Option<String> {
+    let names: Vec<String> = prompt
+        .get("arguments")?
+        .as_array()?
+        .iter()
+        .filter_map(|arg| {
+            let name = arg.get("name")?.as_str()?.trim();
+            if name.is_empty() {
+                return None;
+            }
+            let required = arg.get("required").and_then(serde_json::Value::as_bool) == Some(true);
+            Some(if required { format!("<{name}>") } else { format!("[{name}]") })
+        })
+        .collect();
+    match names.as_slice() {
+        [] => None,
+        [only] if only == "[args]" => None,
+        _ => Some(names.join(" ")),
+    }
 }
 
 #[cfg(test)]
@@ -16550,6 +16615,49 @@ mod kiro_ext_tests {
         );
         assert_eq!(commands[2].input_hint, None, "an empty hint is no hint");
         assert_eq!(commands[3].input_hint.as_deref(), Some("status | init"));
+    }
+
+    /// `prompts` as kiro-cli 2.24.1 sends it: an MCP prompt, a `.kiro/prompts`
+    /// file and a skill, each answered by Kiro when sent as `/name args`.
+    #[test]
+    fn kiro_skills_and_prompts_join_the_slash_menu() {
+        let notif: KiroCommandsAvailableNotification = serde_json::from_value(serde_json::json!({
+            "sessionId": "s1",
+            "commands": [{"name": "/compact", "description": "Compact conversation history"}],
+            "prompts": [
+                {"name": "mcp_probe", "description": "MCP probe prompt",
+                 "arguments": [{"name": "topic", "description": null, "required": false}],
+                 "serverName": "stub"},
+                {"name": "probe-prompt", "description": null,
+                 "arguments": [{"name": "args", "description": "All arguments", "required": false}],
+                 "serverName": "local"},
+                {"name": "verify-wechat-links", "description": "帮我上班作业手册",
+                 "arguments": [{"name": "args", "description": "All arguments", "required": false}],
+                 "serverName": "skill:config"},
+                {"name": "release", "description": "Cut a release",
+                 "arguments": [{"name": "version", "required": true}, {"name": "notes"}],
+                 "serverName": "deploy"},
+                {"name": "compact", "description": "shadowed by the built-in", "serverName": "local"},
+                {"name": "verify-wechat-links", "description": "duplicate", "serverName": "skill:config"},
+                {"description": "nameless", "serverName": "local"}
+            ]
+        }))
+        .unwrap();
+        let commands = kiro_available_commands(&notif);
+        let rows: Vec<_> = commands
+            .iter()
+            .map(|c| (c.name.as_str(), c.description.as_str(), c.input_hint.as_deref()))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("compact", "Compact conversation history", None),
+                ("mcp_probe", "MCP probe prompt", Some("[topic]")),
+                ("probe-prompt", "Prompt", None),
+                ("verify-wechat-links", "帮我上班作业手册", None),
+                ("release", "Cut a release", Some("<version> [notes]")),
+            ]
+        );
     }
 
     #[test]
