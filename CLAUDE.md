@@ -119,3 +119,14 @@ INSTA_UPDATE=auto cargo test --features test-utils     # 自动写新 .snap
 - ESLint：next/core-web-vitals + typescript + prettier
 - TypeScript：strict 模式，启用 `noUnusedLocals` 和 `noUnusedParameters`
 - Rust：2021 edition，使用 `thiserror` 定义错误类型
+
+## 定制版（keh4l/codeg）
+
+本仓库是上游 [xintaofei/codeg](https://github.com/xintaofei/codeg) 的定制版 fork。
+
+- 分支：`main` 只跟上游、不在上面提交；`keh4l` 是定制版（默认分支，发版从这里打 tag）；给上游的 PR 从 `main` 开分支，不从 `keh4l` 开。
+- 同步上游只用 merge，不 rebase、不 force push `keh4l`。
+- 提交身份 `keh4l <2461454684@qq.com>`，用 `git -c user.name=… -c user.email=…` 传入，不改 git config。
+- fork 专属的改动（更新地址和签名公钥、Releases 链接、安装脚本、`release.yml`、README）同步上游时保留 fork 的版本；版本号写作 `<上游版本>-<n>`。
+- 已发布版本执行过的数据库迁移文件只加不删、不改名。
+- 具体流程在 `.agents/skills/` 下的 skill 里（Kiro 通过 `.kiro/skills` 链接读取）：`codeg-fork-sync`（同步上游、解决冲突）、`codeg-fork-release`（发版）、`codeg-upstream-pr`（向上游提 PR）、`codeg-add-builtin-agent`（新增内置智能体）。

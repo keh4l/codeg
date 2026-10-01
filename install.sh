@@ -2,8 +2,8 @@
 #
 # Codeg Server installer
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/keh4l/codeg/main/install.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/keh4l/codeg/main/install.sh | bash -s -- --version v0.5.0
+#   curl -fsSL https://raw.githubusercontent.com/keh4l/codeg/keh4l/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/keh4l/codeg/keh4l/install.sh | bash -s -- --version v0.5.0
 #
 
 set -euo pipefail

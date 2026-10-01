@@ -60,6 +60,8 @@ description: 把上游 xintaofei/codeg 的更新同步进 keh4l/codeg 定制版�
 | `package.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`（`name = "codeg"` 条目）、`src-tauri/tauri.conf.json` 的 `version` | 上游每次发版都会冲突。**取上游的版本号**（如 `0.33.0`），fork 发版时再改成 `0.33.0-1`。 |
 | fork 配置：`tauri.conf.json` 的 `plugins.updater.pubkey` / `endpoints`，`src-tauri/src/update/verify.rs` 的 `TAURI_PUBKEY_B64`，`src-tauri/src/update/version.rs` 的两个 URL，`status-bar-update.tsx`(+test)、`system-network-settings.tsx` 里的 `keh4l/codeg` 链接，`install.sh` / `install.ps1` 的 `REPO` | **永远保留 fork 的**。上游若改了周边内容，把上游改动接进来但保留这些值。合并后检查：`grep -rn xintaofei src-tauri/tauri.conf.json src-tauri/src/update install.sh install.ps1 src/components/layout/status-bar-update.tsx src/components/settings/system-network-settings.tsx` 应无结果。 |
 | `.github/workflows/release.yml`（可选 Apple 签名 + ad-hoc、Docker 由变量 `CODEG_PUBLISH_DOCKER` 控制）、`test.yml`（push 也跑 `keh4l`）、`sync-upstream.yml` | 接上游的改动，**保留 fork 的这几处改动**。改完用 actionlint 检查（命令见表格下方）。 |
+| `README.md`、`docs/readme/README.*.md`（10 种语言） | **归定制版自己管，冲突一律取 fork 的**（`git checkout --ours`）。它们是精简的定制版说明，功能介绍链接到上游 README，所以上游的 README 改动不搬进来。只有定制版本身变了（加了功能、安装方式变了）才改，10 种语言一起改。 |
+| `AGENTS.md`、`CLAUDE.md` | 接上游的改动，保留末尾的「定制版（keh4l/codeg）」一节。 |
 | Kiro 相关（`parsers/kiro.rs`、`kiro-config-panel.tsx`、`connection.rs` 里的 kiro 段等） | 上游如果合并了 PR xintaofei/codeg#851（尤其是 squash 合并或改过再合），以**上游版本为准**取 `--theirs`；但共享文件里非 Kiro 的 fork 定制仍要保留。 |
 | fork 自己加的功能 | 一般两边都保留，把 fork 的改动重新接到上游的新结构上。 |
 | `Cargo.lock`、`pnpm-lock.yaml` | 先取上游的，再 `cargo build` / `pnpm install` 让它补回 fork 需要的条目；然后把 codeg 自己的版本号按第一行处理。 |

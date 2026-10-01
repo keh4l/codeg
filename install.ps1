@@ -1,7 +1,7 @@
 #
 # Codeg Server installer for Windows
 # Usage:
-#   irm https://raw.githubusercontent.com/keh4l/codeg/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/keh4l/codeg/keh4l/install.ps1 | iex
 #   .\install.ps1 -Version v0.5.0
 #
 
