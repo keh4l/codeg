@@ -1,0 +1,79 @@
+---
+name: codeg-fork-sync
+description: 把上游 xintaofei/codeg 的更新同步进 keh4l/codeg 定制版（keh4l 分支），保留 fork 自己的定制并处理合并冲突。用户说"同步上游 / sync upstream / 合并上游更新 / 处理同步 PR 冲突"时使用。
+---
+
+# 同步上游到定制版
+
+调用参数（可能为空，可能是同步 PR 的链接或编号）：$ARGUMENTS
+
+## 仓库约定（先确认，不符就停下问用户）
+
+- 本地仓库 `/Users/keh4l/Documents/Github/codeg`；`origin` = `keh4l/codeg`（fork），`upstream` = `xintaofei/codeg`。
+- `main`：只跟上游，**不在上面提交**；`keh4l`：定制版，fork 的默认分支，发版从这里打 tag；功能分支另开。
+- 提交身份一律 `keh4l <2461454684@qq.com>`，用 `git -c user.name=keh4l -c user.email=2461454684@qq.com …` 传入，**不改 git config**。
+- 只用 merge，**不 rebase、不 force push** `keh4l`（tag 都在它的历史上）。
+- 自动化：`.github/workflows/sync-upstream.yml` 每天 UTC 01:17 把 `main` 快进到上游，`keh4l` 落后时开一个 `main → keh4l` 的 PR（标题 "Sync upstream into keh4l"）。
+
+## 步骤
+
+1. **看现状**
+   ```bash
+   git status --short            # 必须干净，不干净先问用户
+   gh repo sync keh4l/codeg -b main   # 等于网页 Sync fork；main 有自己的提交会失败 → 停下报告
+   git fetch origin && git fetch upstream
+   git switch keh4l && git pull --ff-only
+   git rev-list --count keh4l..origin/main   # 0 = 已是最新，结束
+   gh pr list -R keh4l/codeg --base keh4l --head main --state open
+   ```
+2. **先记下定制清单**（合并时要护住的东西）：`git diff --stat origin/main...keh4l`。
+3. **合并**
+   ```bash
+   git -c user.name=keh4l -c user.email=2461454684@qq.com merge origin/main
+   ```
+   没冲突也要做第 5 步验证。有冲突按第 4 步处理；想放弃：`git merge --abort`。
+4. **解决冲突**：`git diff --name-only --diff-filter=U` 列出文件，逐个处理（规则见下表）。标记里 `HEAD` 是 keh4l（我们的），`origin/main` 是上游。整文件取一边用 `git checkout --ours|--theirs <file>`，但**文件里还有别的定制时不要整文件取上游**。改完 `git add`，再确认没有残留标记：
+   ```bash
+   grep -rnE '^(<<<<<<<|>>>>>>>)' src src-tauri/src src-tauri/tests .github docs README.md || echo clean
+   ```
+5. **验证**（合并后编译错误也是"冲突"：上游给 enum 加了 match、改了函数签名，fork 的代码要跟着补，见下方经验）
+   ```bash
+   pnpm lint . && pnpm test && pnpm build
+   cd src-tauri
+   cargo test --features test-utils
+   cargo test --no-default-features --bin codeg-server --lib
+   cargo clippy --all-targets --features test-utils -- -D warnings
+   cargo clippy --no-default-features --bin codeg-server --lib -- -D warnings
+   cargo clippy --no-default-features --bin codeg-mcp -- -D warnings
+   ```
+   CI 用最新 stable Rust，本地可能更旧、漏掉新 lint。查 CI 版本：
+   `curl -fsSL https://static.rust-lang.org/dist/channel-rust-stable.toml | sed -n '/^\[pkg\.rustc\]/,/^version/{s/^version = "\([0-9.]*\).*/\1/p;}'`，
+   用旁路工具链跑 clippy（不动默认工具链）：`rustup toolchain install <ver> --profile minimal -c clippy`，`CARGO_TARGET_DIR=/tmp/codeg-target-<ver> cargo +<ver> clippy …`，跑完删掉那个目录（约 4 GB）。
+   若新 lint 报在**上游原有代码**上、上游 main 的 CI 也一样红，不在 fork 里修（避免以后冲突），告诉用户等上游修。
+6. **提交并推送**：有冲突时 `git -c user.name=keh4l -c user.email=2461454684@qq.com commit --no-edit`，然后 `git push origin keh4l`。那个同步 PR 会自动变成已合并。推送后看 `gh run list -R keh4l/codeg -w test.yml -b keh4l -L 1`。
+7. **汇报**：合进了多少个上游提交、哪些文件冲突、各自怎么解决、测试结果。**不要顺手发版**，发版用 `codeg-fork-release`，并先问用户。
+
+## 冲突处理规则
+
+| 位置 | 规则 |
+|---|---|
+| `package.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`（`name = "codeg"` 条目）、`src-tauri/tauri.conf.json` 的 `version` | 上游每次发版都会冲突。**取上游的版本号**（如 `0.33.0`），fork 发版时再改成 `0.33.0-1`。 |
+| fork 配置：`tauri.conf.json` 的 `plugins.updater.pubkey` / `endpoints`，`src-tauri/src/update/verify.rs` 的 `TAURI_PUBKEY_B64`，`src-tauri/src/update/version.rs` 的两个 URL，`status-bar-update.tsx`(+test)、`system-network-settings.tsx` 里的 `keh4l/codeg` 链接，`install.sh` / `install.ps1` 的 `REPO` | **永远保留 fork 的**。上游若改了周边内容，把上游改动接进来但保留这些值。合并后检查：`grep -rn xintaofei src-tauri/tauri.conf.json src-tauri/src/update install.sh install.ps1 src/components/layout/status-bar-update.tsx src/components/settings/system-network-settings.tsx` 应无结果。 |
+| `.github/workflows/release.yml`（可选 Apple 签名 + ad-hoc、Docker 由变量 `CODEG_PUBLISH_DOCKER` 控制）、`test.yml`（push 也跑 `keh4l`）、`sync-upstream.yml` | 接上游的改动，**保留 fork 的这几处改动**。改完用 actionlint 检查（命令见表格下方）。 |
+| Kiro 相关（`parsers/kiro.rs`、`kiro-config-panel.tsx`、`connection.rs` 里的 kiro 段等） | 上游如果合并了 PR xintaofei/codeg#851（尤其是 squash 合并或改过再合），以**上游版本为准**取 `--theirs`；但共享文件里非 Kiro 的 fork 定制仍要保留。 |
+| fork 自己加的功能 | 一般两边都保留，把 fork 的改动重新接到上游的新结构上。 |
+| `Cargo.lock`、`pnpm-lock.yaml` | 先取上游的，再 `cargo build` / `pnpm install` 让它补回 fork 需要的条目；然后把 codeg 自己的版本号按第一行处理。 |
+| 数据库迁移 `src-tauri/src/db/migration/` | 文件**只加不删、不改名**：fork 发布过的版本执行过的迁移，文件必须一直在，否则 sea-orm 报 "Migration file … is missing" 应用起不来。上游把同一个迁移改了名时，两个文件都留着（Kiro 迁移本身可重复执行）。`mod.rs` 的列表冲突时两边都保留，按日期排。 |
+
+工作流文件改过之后：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash | bash -s -- latest /tmp
+/tmp/actionlint -shellcheck= .github/workflows/*.yml && rm /tmp/actionlint
+```
+
+## 经验（以前真遇到过）
+
+- 上游新增了对 `AgentDistribution` 的穷尽 match（`acp/latest_release.rs`），fork 的 `System` 变体没有覆盖 → 编译失败。这类"无文本冲突的冲突"只有编译和测试能发现。
+- 上游的迁移日期排在 fork 迁移之后，而上游已发布的版本执行过它们 → fork 的迁移要改到更晚的日期才能按顺序跑（见 `fix(kiro): date the built-in migration after upstream's newest`）。改名只能在 fork 还没发布过该迁移时做。
+- 合并用的脚本先读后写：曾经"打开即写"把 `mod.rs` 截成 0 字节，用 `git checkout -m -- <file>` 恢复冲突状态重来。
