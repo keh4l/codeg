@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - keh4l
   pull_request:
 
 env:

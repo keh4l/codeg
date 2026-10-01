@@ -340,6 +340,15 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Fork builds without an Apple Developer ID: no certificate means an
+          # ad-hoc signed, un-notarized app (see the unsigned build step below).
+          if [ -z "${APPLE_CERTIFICATE:-}" ]; then
+            echo "CODEG_MACOS_SIGNED=false" >> "$GITHUB_ENV"
+            echo "::notice::No APPLE_CERTIFICATE secret: building an ad-hoc signed, un-notarized macOS app."
+            exit 0
+          fi
+          echo "CODEG_MACOS_SIGNED=true" >> "$GITHUB_ENV"
+
           missing=()
           for name in \
             APPLE_CERTIFICATE \
@@ -403,7 +412,7 @@ jobs:
           security find-identity -v -p codesigning "$keychain_path"
 
       - name: Resolve Apple Developer ID identity
-        if: contains(matrix.target, 'apple-darwin')
+        if: contains(matrix.target, 'apple-darwin') && env.CODEG_MACOS_SIGNED == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -504,7 +513,7 @@ jobs:
           retryAttempts: 2
 
       - name: Build, sign, and upload to draft release (macOS)
-        if: contains(matrix.target, 'apple-darwin')
+        if: contains(matrix.target, 'apple-darwin') && env.CODEG_MACOS_SIGNED == 'true'
         uses: tauri-apps/tauri-action@v0.6.1
         env:
           # The matrix-target sidecar is already staged and verified above.
@@ -520,6 +529,29 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          releaseId: ${{ needs.create-draft-release.outputs.release_id }}
+          tagName: ${{ github.ref_name }}
+          releaseBody: ${{ needs.create-draft-release.outputs.release_body }}
+          releaseDraft: true
+          prerelease: ${{ needs.create-draft-release.outputs.prerelease }}
+          tauriScript: pnpm tauri
+          args: --target ${{ matrix.target }}
+          includeUpdaterJson: true
+          retryAttempts: 2
+
+      - name: Build and upload to draft release (macOS, ad-hoc signed)
+        if: contains(matrix.target, 'apple-darwin') && env.CODEG_MACOS_SIGNED != 'true'
+        uses: tauri-apps/tauri-action@v0.6.1
+        env:
+          CODEG_SKIP_SIDECAR: "1"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # "-" is codesign's ad-hoc identity: Apple Silicon refuses to run an
+          # app with no signature at all. No APPLE_ID here, so Tauri skips
+          # notarization.
+          APPLE_SIGNING_IDENTITY: "-"
         with:
           releaseId: ${{ needs.create-draft-release.outputs.release_id }}
           tagName: ${{ github.ref_name }}
@@ -784,6 +816,8 @@ jobs:
       - create-draft-release
       - build-server
     name: Build Docker image
+    # Fork: opt-in via the repository variable CODEG_PUBLISH_DOCKER=true.
+    if: vars.CODEG_PUBLISH_DOCKER == 'true'
     runs-on: ubuntu-22.04
     permissions:
       contents: read
@@ -862,7 +896,7 @@ jobs:
       - build-tauri
       - build-server
       - build-docker
-    if: ${{ needs.build-tauri.result == 'success' && needs.build-server.result == 'success' && needs.build-docker.result == 'success' }}
+    if: ${{ !cancelled() && needs.build-tauri.result == 'success' && needs.build-server.result == 'success' && (needs.build-docker.result == 'success' || needs.build-docker.result == 'skipped') }}
     runs-on: ubuntu-22.04
     permissions:
       contents: write
