@@ -694,7 +694,7 @@ jobs:
           fi
           for path in "$app/Contents/MacOS/codeg" "$app/Contents/MacOS/codeg-mcp" "$helper_app"; do
             name="$(basename "$path")"
-            if ! codesign -dv "$path" 2>&1 | grep -q 'flags=0x[0-9a-f]*(runtime)'; then
+            if ! codesign -dv "$path" 2>&1 | grep -Eq 'flags=0x[0-9a-f]+\([^)]*runtime[^)]*\)'; then
               echo "FATAL: $name is not signed with the hardened runtime"
               exit 1
             fi
