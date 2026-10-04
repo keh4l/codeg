@@ -1732,6 +1732,11 @@
     "behaviorExit": "Quitter codeg",
     "saveFailed": "Échec de l'enregistrement du comportement de fermeture : {message}"
   },
+  "TabSyncSettings": {
+    "title": "Synchroniser les onglets de conversation entre les fenêtres",
+    "description": "Activé, toutes les fenêtres et tous les appareils connectés au même serveur partagent un même ensemble d’onglets de conversation ouverts, y compris l’ordre, les onglets épinglés et l’onglet actif. Désactivé, chaque fenêtre conserve ses propres onglets, restaurés après un rechargement ou une reconnexion.",
+    "note": "Seuls les onglets ouverts et le focus sont concernés ; la liste des conversations, les messages, l’état d’exécution et les suppressions sont toujours synchronisés. Ce réglage ne s’applique qu’à ce navigateur (ou à l’application de bureau)."
+  },
   "CloseRequestDialog": {
     "askTitle": "Fermer codeg ?",
     "askDescription": "codeg peut continuer à s'exécuter dans la zone de notification pour garder les agents et les terminaux actifs, ou quitter complètement.",

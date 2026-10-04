@@ -30,7 +30,7 @@ pub use conversation::{
 };
 pub use folder::{
     FolderCommandInfo, FolderDetail, FolderGroupDetail, FolderHistoryEntry, OpenedTab,
-    OpenedTabsSnapshot, SaveTabsOutcome, SidebarEntryKind, SidebarLayoutEntry,
+    OpenedTabsSnapshot, SaveTabsOutcome, SidebarEntryKind, SidebarLayoutEntry, TabTarget,
 };
 pub use message::{
     AgentExecutionStats, AgentToolCall, ContentBlock, ImageData, MessageRole, MessageTurn,

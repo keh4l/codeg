@@ -607,6 +607,13 @@ export interface OpenedTabsSnapshot {
   version: number
 }
 
+/** What a client-held conversation tab points at. Mirrors the Rust `TabTarget`;
+ *  sent to `filter_live_tab_targets` by windows that keep their own tab set. */
+export interface TabTarget {
+  folder_id: number
+  conversation_id: number
+}
+
 /** Response of the `save_opened_tabs` compare-and-set. When `accepted` is false
  *  the save was stale (another client won) and `tabs` is the current truth to
  *  reconcile against. */

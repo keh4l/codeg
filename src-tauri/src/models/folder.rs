@@ -86,6 +86,16 @@ pub struct OpenedTab {
     pub is_pinned: bool,
 }
 
+/// What a client-held conversation tab points at, for
+/// `filter_live_tab_targets`. A window that keeps its own tab set (cross-client
+/// tab sync off) never writes `opened_tab`, so the server-side cascades on
+/// conversation / folder deletion can't reach it; it asks with these instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TabTarget {
+    pub folder_id: i32,
+    pub conversation_id: i32,
+}
+
 /// Response for `list_opened_tabs`: the persisted tab set plus the current
 /// workspace tab version. Clients seed their compare-and-set / echo logic from
 /// `version`.

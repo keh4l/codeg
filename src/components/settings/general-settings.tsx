@@ -45,6 +45,7 @@ import { toErrorMessage } from "@/lib/app-error"
 import { CloseBehaviorSettingsSection } from "@/components/settings/close-behavior-settings"
 import { DesktopNotificationSettingsSection } from "@/components/settings/desktop-notification-settings"
 import { NotificationSoundSettingsSection } from "@/components/settings/notification-sound-settings"
+import { TabSyncSettingsSection } from "@/components/settings/tab-sync-settings"
 
 const TERMINAL_SHELL_OPTION_SYSTEM = "system"
 const TERMINAL_SHELL_OPTION_CUSTOM = "custom"
@@ -512,6 +513,8 @@ export function GeneralSettings() {
             )}
           </SettingsSection>
         )}
+
+        <TabSyncSettingsSection />
 
         <CloseBehaviorSettingsSection />
 

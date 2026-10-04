@@ -117,6 +117,7 @@ import type {
   OpenedTab,
   OpenedTabsSnapshot,
   SaveTabsOutcome,
+  TabTarget,
   GitBlobBase64,
   GitStatusEntry,
   GitBranchList,
@@ -2215,6 +2216,13 @@ export async function saveOpenedTabs(
     expectedVersion,
     origin,
   })
+}
+
+/** The subset of `targets` whose conversation and folder still exist. */
+export async function filterLiveTabTargets(
+  targets: TabTarget[]
+): Promise<TabTarget[]> {
+  return getTransport().call("filter_live_tab_targets", { targets })
 }
 
 export async function listOpenFolderDetails(): Promise<FolderDetail[]> {

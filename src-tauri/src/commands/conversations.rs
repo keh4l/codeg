@@ -214,6 +214,28 @@ pub async fn save_opened_tabs(
     .await
 }
 
+/// The subset of `targets` that still points at a live conversation in an
+/// existing folder. Read-only; used by windows that keep their own tab set
+/// (cross-client tab sync off) to drop tabs deleted while they weren't
+/// listening — see [`tab_service::filter_live_tab_targets`].
+pub async fn filter_live_tab_targets_core(
+    conn: &sea_orm::DatabaseConnection,
+    targets: Vec<TabTarget>,
+) -> Result<Vec<TabTarget>, AppCommandError> {
+    tab_service::filter_live_tab_targets(conn, targets)
+        .await
+        .map_err(AppCommandError::from)
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn filter_live_tab_targets(
+    db: tauri::State<'_, AppDatabase>,
+    targets: Vec<TabTarget>,
+) -> Result<Vec<TabTarget>, AppCommandError> {
+    filter_live_tab_targets_core(&db.conn, targets).await
+}
+
 /// Synchronous implementation shared by list_conversations, list_folders, and get_stats.
 fn list_conversations_sync(
     agent_type: Option<AgentType>,
@@ -4784,6 +4806,61 @@ mod tests {
         assert_eq!(evt.channel, TABS_CHANGED_EVENT);
         assert_eq!(evt.payload["origin"], "server");
         assert_eq!(evt.payload["tabs"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn filter_live_tab_targets_core_drops_only_deleted_conversations_and_folders() {
+        let db = fresh_in_memory_db().await;
+        let kept_folder = seed_folder(&db, "/tmp/codeg-tab-filter-kept").await;
+        let closed_folder = seed_folder(&db, "/tmp/codeg-tab-filter-closed").await;
+        let deleted_folder = seed_folder(&db, "/tmp/codeg-tab-filter-deleted").await;
+        let live = create_conversation_core(&db.conn, kept_folder, AgentType::Codex, None)
+            .await
+            .expect("live");
+        let gone = create_conversation_core(&db.conn, kept_folder, AgentType::Codex, None)
+            .await
+            .expect("gone");
+        let in_closed = create_conversation_core(&db.conn, closed_folder, AgentType::Codex, None)
+            .await
+            .expect("in_closed");
+        let in_deleted = create_conversation_core(&db.conn, deleted_folder, AgentType::Codex, None)
+            .await
+            .expect("in_deleted");
+
+        delete_conversation_core(&db.conn, gone).await.expect("delete");
+        folder_service::set_folder_open(&db.conn, closed_folder, false)
+            .await
+            .expect("close folder");
+        folder_service::soft_delete_folder(&db.conn, deleted_folder)
+            .await
+            .expect("delete folder");
+
+        let target = |folder_id, conversation_id| TabTarget {
+            folder_id,
+            conversation_id,
+        };
+        let kept = filter_live_tab_targets_core(
+            &db.conn,
+            vec![
+                target(kept_folder, live),
+                target(kept_folder, gone),
+                target(closed_folder, in_closed),
+                target(deleted_folder, in_deleted),
+                target(kept_folder, 999_999),
+            ],
+        )
+        .await
+        .expect("filter");
+
+        assert_eq!(
+            kept,
+            vec![target(kept_folder, live), target(closed_folder, in_closed)],
+            "a deleted conversation or folder drops the tab; a folder merely removed from the workspace does not"
+        );
+        assert!(filter_live_tab_targets_core(&db.conn, vec![])
+            .await
+            .expect("empty")
+            .is_empty());
     }
 
     #[tokio::test]
