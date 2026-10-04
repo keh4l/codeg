@@ -131,4 +131,8 @@ INSTA_UPDATE=auto cargo test --features test-utils     # 自动写新 .snap
 - 提交身份 `keh4l <2461454684@qq.com>`，用 `git -c user.name=… -c user.email=…` 传入，不改 git config。
 - fork 专属的改动（更新地址和签名公钥、Releases 链接、安装脚本、`release.yml`、README）同步上游时保留 fork 的版本；版本号写作 `<上游版本>-<n>`。
 - 已发布版本执行过的数据库迁移文件只加不删、不改名。
+- 新增功能或改动用户能感知的行为时，实现并验证后**主动更新相关文档**，不等提醒；和代码在同一个功能分支里提交，汇报时列出改了哪些文档、哪些判断不用改及原因。要看的有：
+  - `README.md` 和 `docs/readme/README.*.md`（10 种语言）里「与官方版的区别」列表；
+  - `codeg-fork-sync` 的冲突处理规则表：改了哪些上游文件，同步时要守住什么；
+  - 功能涉及的其它文档：`docs/` 下的专题文档、相关 skill、本节规则。
 - 具体流程在 `.agents/skills/` 下的 skill 里（Kiro 通过 `.kiro/skills` 链接读取）：`codeg-fork-sync`（同步上游、解决冲突）、`codeg-fork-release`（发版）、`codeg-upstream-pr`（向上游提 PR）、`codeg-add-builtin-agent`（新增内置智能体）。
