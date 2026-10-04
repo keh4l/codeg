@@ -5385,23 +5385,73 @@ fn resolve_working_dir(working_dir: Option<&str>) -> PathBuf {
 
 fn claude_raw_sdk_session_meta(
     agent_type: AgentType,
+    cwd: &Path,
 ) -> Option<serde_json::Map<String, serde_json::Value>> {
     if agent_type != AgentType::ClaudeCode {
         return None;
     }
+    Some(claude_session_meta(claude_thinking_summaries_enabled(cwd)))
+}
 
+/// The `_meta` codeg sends with every Claude `session/new|load|resume`.
+///
+/// `thinking_summaries` adds `--thinking-display summarized` to the CLI the
+/// adapter spawns. Recent models default the API's `thinking.display` to
+/// `"omitted"`, so without it every thinking block arrives as a bare signature
+/// and the reasoning panel stays empty. The interactive CLI opts back in through
+/// the `showThinkingSummaries` setting, but the CLI reads that setting only when
+/// it is interactive — the SDK process claude-agent-acp drives is not, and the
+/// adapter sets no display of its own. The flag rides in the SDK's `extraArgs`,
+/// which the adapter merges with its own, rather than in the SDK `thinking`
+/// option: that option also picks the thinking MODE and the adapter lets it
+/// override `MAX_THINKING_TOKENS`, while the flag changes only what is shown.
+fn claude_session_meta(thinking_summaries: bool) -> serde_json::Map<String, serde_json::Value> {
     let mut claude_code = serde_json::Map::new();
     claude_code.insert(
         "emitRawSDKMessages".to_string(),
         serde_json::Value::Bool(true),
     );
+    if thinking_summaries {
+        claude_code.insert(
+            "options".to_string(),
+            serde_json::json!({ "extraArgs": { "thinking-display": "summarized" } }),
+        );
+    }
 
     let mut meta = serde_json::Map::new();
     meta.insert(
         "claudeCode".to_string(),
         serde_json::Value::Object(claude_code),
     );
-    Some(meta)
+    meta
+}
+
+/// Whether a Claude session in `cwd` asks for thinking summaries: yes, unless
+/// the user's Claude settings explicitly set `showThinkingSummaries: false`.
+/// Reads the user, project and local files the adapter's
+/// `--setting-sources=user,project,local` layers, so a project can override the
+/// user default. The user file is resolved the way the history parser resolves
+/// it, from codeg's own `CLAUDE_CONFIG_DIR`.
+fn claude_thinking_summaries_enabled(cwd: &Path) -> bool {
+    let project = cwd.join(".claude");
+    claude_show_thinking_summaries_setting(&[
+        crate::parsers::claude::resolve_claude_config_dir().join("settings.json"),
+        project.join("settings.json"),
+        project.join("settings.local.json"),
+    ]) != Some(false)
+}
+
+/// The explicit `showThinkingSummaries` of the highest-precedence file in
+/// `paths` (later wins) that sets one. Missing or unparsable files count as
+/// not setting it.
+fn claude_show_thinking_summaries_setting(paths: &[PathBuf]) -> Option<bool> {
+    paths.iter().rev().find_map(|path| {
+        let raw = std::fs::read_to_string(path).ok()?;
+        serde_json::from_str::<serde_json::Value>(&raw)
+            .ok()?
+            .get("showThinkingSummaries")?
+            .as_bool()
+    })
 }
 
 /// The client capabilities codeg advertises on Initialize, with per-agent
@@ -5788,7 +5838,7 @@ fn build_new_session_request(
     mcp_servers: Vec<McpServer>,
 ) -> NewSessionRequest {
     let mut req = NewSessionRequest::new(cwd.to_path_buf());
-    if let Some(meta) = claude_raw_sdk_session_meta(agent_type) {
+    if let Some(meta) = claude_raw_sdk_session_meta(agent_type, cwd) {
         req = req.meta(meta);
     }
     if !mcp_servers.is_empty() {
@@ -5804,7 +5854,7 @@ fn build_load_session_request(
     mcp_servers: Vec<McpServer>,
 ) -> LoadSessionRequest {
     let mut req = LoadSessionRequest::new(session_id, cwd.to_path_buf());
-    if let Some(meta) = claude_raw_sdk_session_meta(agent_type) {
+    if let Some(meta) = claude_raw_sdk_session_meta(agent_type, cwd) {
         req = req.meta(meta);
     }
     if !mcp_servers.is_empty() {
@@ -5825,7 +5875,7 @@ fn build_resume_session_request(
     mcp_servers: Vec<McpServer>,
 ) -> ResumeSessionRequest {
     let mut req = ResumeSessionRequest::new(session_id, cwd.to_path_buf());
-    if let Some(meta) = claude_raw_sdk_session_meta(agent_type) {
+    if let Some(meta) = claude_raw_sdk_session_meta(agent_type, cwd) {
         req = req.meta(meta);
     }
     if !mcp_servers.is_empty() {
@@ -23799,7 +23849,8 @@ mod tests {
 
     #[test]
     fn claude_raw_sdk_meta_enabled_only_for_claude() {
-        let claude_meta = claude_raw_sdk_session_meta(AgentType::ClaudeCode)
+        let cwd = Path::new("/tmp/codeg");
+        let claude_meta = claude_raw_sdk_session_meta(AgentType::ClaudeCode, cwd)
             .expect("Claude must have raw SDK meta");
         assert_eq!(
             claude_meta
@@ -23809,7 +23860,54 @@ mod tests {
             Some(true)
         );
 
-        assert!(claude_raw_sdk_session_meta(AgentType::Codex).is_none());
+        assert!(claude_raw_sdk_session_meta(AgentType::Codex, cwd).is_none());
+    }
+
+    #[test]
+    fn claude_session_meta_requests_thinking_summaries_only_when_enabled() {
+        let on = claude_session_meta(true);
+        assert_eq!(
+            on["claudeCode"]["options"]["extraArgs"]["thinking-display"],
+            "summarized"
+        );
+        assert_eq!(on["claudeCode"]["emitRawSDKMessages"], true);
+
+        let off = claude_session_meta(false);
+        assert!(off["claudeCode"].get("options").is_none());
+        assert_eq!(off["claudeCode"]["emitRawSDKMessages"], true);
+    }
+
+    #[test]
+    fn show_thinking_summaries_setting_takes_the_highest_precedence_explicit_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = |name: &str, body: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, body).unwrap();
+            path
+        };
+        let user_on = file("user.json", r#"{"showThinkingSummaries": true}"#);
+        let project_off = file("project.json", r#"{"showThinkingSummaries": false}"#);
+        let unset = file("unset.json", r#"{"model": "opus"}"#);
+        let malformed = file("malformed.json", "{not json");
+        let missing = dir.path().join("missing.json");
+
+        // A later file overrides an earlier one only when it sets the key.
+        assert_eq!(
+            claude_show_thinking_summaries_setting(&[
+                user_on.clone(),
+                project_off.clone(),
+                unset.clone(),
+            ]),
+            Some(false)
+        );
+        assert_eq!(
+            claude_show_thinking_summaries_setting(&[project_off, user_on, malformed.clone()]),
+            Some(true)
+        );
+        assert_eq!(
+            claude_show_thinking_summaries_setting(&[unset, malformed, missing]),
+            None
+        );
     }
 
     #[test]

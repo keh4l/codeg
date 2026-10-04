@@ -26,6 +26,7 @@
 
 - **内置 Kiro CLI 智能体。** Codeg 使用你用 [Kiro 官方安装程序](https://kiro.dev/docs/getting-started/installation/)装好的 `kiro-cli`：可以在输入框里选模型、模式、推理强度和思考开关，用它的斜杠命令，设置权限模式（每次询问或信任所有工具），给它配 MCP 服务器和技能，还能导入并继续它以前的会话。「设置 → 智能体」里的「升级」会调用 Kiro 自己的更新程序。以前作为自定义智能体使用的 Kiro 对话，会迁移到内置的 Kiro 下。这个功能也已经向上游提交：[xintaofei/codeg#851](https://github.com/xintaofei/codeg/pull/851)。
 - **每个浏览器窗口可以有自己的一套标签。** 同一个服务器上开多个窗口时不再互相跟随：在一个窗口里打开、切换或关闭会话标签，其他窗口保持原样，刷新后恢复的也是本窗口自己的标签。会话、消息和删除操作仍会同步到所有窗口。对应「设置 → 常规」里的「跨窗口同步会话标签」：浏览器端默认关闭，桌面端默认开启；打开后所有窗口共用一套标签，与官方版一致。上游的对应需求见 [xintaofei/codeg#547](https://github.com/xintaofei/codeg/issues/547)。
+- **Claude Code 能看到思考过程。** 新模型在官方版里只返回加密的思考签名，Claude 的思考内容一直是空的；定制版会向 API 请求思考摘要，和终端里打开 `showThinkingSummaries` 后的 `claude` 看到的一样。不需要的话，在 `~/.claude/settings.json`（或项目的 `.claude/settings.json`）里写 `"showThinkingSummaries": false`。以前的对话当时就没有返回思考文本，无法补回。
 - **从本仓库获取更新。** 发布包用本 fork 自己的更新密钥签名：定制版不会被更新成官方版，官方版也不会被更新成定制版。
 - **macOS 应用没有经过 Apple 公证**，第一次打开时 macOS 会拦一下（见下方「安装」）。
 - **没有 Docker 镜像。**

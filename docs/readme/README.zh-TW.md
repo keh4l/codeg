@@ -26,6 +26,7 @@
 
 - **內建 Kiro CLI 智慧體。** Codeg 會使用你以 [Kiro 官方安裝程式](https://kiro.dev/docs/getting-started/installation/)安裝好的 `kiro-cli`：可以在輸入框選擇模型、模式、推理強度與思考開關，使用它的斜線指令，設定權限模式（每次詢問或信任所有工具），為它設定 MCP 伺服器與技能，還能匯入並繼續它以前的工作階段。「設定 → 智慧體」裡的「升級」會執行 Kiro 自己的更新程式。以前以自訂智慧體使用的 Kiro 對話，會移轉到內建的 Kiro 底下。這項功能也已經向上游提交：[xintaofei/codeg#851](https://github.com/xintaofei/codeg/pull/851)。
 - **每個瀏覽器視窗可以有自己的一組分頁。** 在同一台伺服器上開多個視窗時不再互相跟隨：在一個視窗裡開啟、切換或關閉會話分頁，其他視窗維持原樣，重新整理後還原的也是本視窗自己的分頁。會話、訊息和刪除操作仍會同步到所有視窗。對應「設定 → 一般」裡的「跨視窗同步會話分頁」：瀏覽器端預設關閉，桌面端預設開啟；開啟後所有視窗共用一組分頁，與官方版一致。上游的對應需求見 [xintaofei/codeg#547](https://github.com/xintaofei/codeg/issues/547)。
+- **Claude Code 能看到思考過程。** 新模型在官方版裡只回傳加密的思考簽章，Claude 的思考內容一直是空的；客製版會向 API 請求思考摘要，和終端機裡開啟 `showThinkingSummaries` 後的 `claude` 看到的一樣。不需要的話，在 `~/.claude/settings.json`（或專案的 `.claude/settings.json`）裡寫入 `"showThinkingSummaries": false`。以前的對話當時就沒有回傳思考文字，無法補回。
 - **從本儲存庫取得更新。** 發行套件以本 fork 自己的更新金鑰簽署：客製版不會被更新成官方版，官方版也不會被更新成客製版。
 - **macOS 應用程式沒有經過 Apple 公證**，第一次開啟時 macOS 會擋一下（見下方「安裝」）。
 - **沒有 Docker 映像檔。**
