@@ -1732,6 +1732,11 @@
     "behaviorExit": "Sair do codeg",
     "saveFailed": "Falha ao salvar o comportamento de fechamento: {message}"
   },
+  "TabSyncSettings": {
+    "title": "Sincronizar abas de conversa entre janelas",
+    "description": "Quando ativado, todas as janelas e dispositivos conectados ao mesmo servidor compartilham um único conjunto de abas de conversa abertas, incluindo a ordem, as fixadas e a aba em foco. Quando desativado, cada janela mantém suas próprias abas, restauradas após recarregar ou reconectar.",
+    "note": "Afeta apenas as abas abertas e o foco; a lista de conversas, as mensagens, o status de execução e as exclusões são sempre sincronizados. Esta configuração vale apenas para este navegador (ou para o aplicativo desktop)."
+  },
   "CloseRequestDialog": {
     "askTitle": "Fechar o codeg?",
     "askDescription": "O codeg pode continuar em execução na bandeja para manter agentes e terminais ativos, ou encerrar por completo.",

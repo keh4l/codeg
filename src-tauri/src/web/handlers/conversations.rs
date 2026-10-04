@@ -90,6 +90,20 @@ pub async fn save_opened_tabs(
 }
 
 #[derive(Deserialize)]
+pub struct FilterLiveTabTargetsParams {
+    pub targets: Vec<TabTarget>,
+}
+
+pub async fn filter_live_tab_targets(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<FilterLiveTabTargetsParams>,
+) -> Result<Json<Vec<TabTarget>>, AppCommandError> {
+    Ok(Json(
+        conv_commands::filter_live_tab_targets_core(&state.db.conn, params.targets).await?,
+    ))
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListConversationsParams {
     pub agent_type: Option<AgentType>,

@@ -225,6 +225,10 @@ pub fn build_router(
             post(handlers::conversations::save_opened_tabs),
         )
         .route(
+            "/filter_live_tab_targets",
+            post(handlers::conversations::filter_live_tab_targets),
+        )
+        .route(
             "/import_local_conversations",
             post(handlers::conversations::import_local_conversations),
         )

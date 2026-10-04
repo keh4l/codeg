@@ -1,16 +1,17 @@
 use chrono::Utc;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::NotSet, ColumnTrait, ConnectionTrait, DatabaseConnection,
-    EntityTrait, QueryFilter, QueryOrder, Set, TransactionTrait,
+    EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait,
 };
+use std::collections::HashSet;
 use std::sync::OnceLock;
 use tokio::sync::Mutex;
 
-use crate::db::entities::opened_tab;
+use crate::db::entities::{conversation, folder, opened_tab};
 use crate::db::error::DbError;
 use crate::db::service::app_metadata_service;
 use crate::models::agent::AgentType;
-use crate::models::OpenedTab;
+use crate::models::{OpenedTab, TabTarget};
 
 /// Serializes all version-mutating tab operations within the process so the
 /// logical clock advances strictly sequentially. Two concurrent writers would
@@ -249,4 +250,52 @@ pub async fn delete_folder_tabs_and_bump(
         version: next,
         emit,
     })
+}
+
+/// Keep only the targets a tab may still point at: the conversation is not
+/// deleted and its tab's folder still exists. The read-only counterpart of the
+/// deletion cascades above, for tab sets the server does not hold — a window
+/// with cross-client tab sync off keeps its tabs to itself, so the cascades
+/// never see them and it re-checks with this after a gap (load, reconnect).
+///
+/// Only deletion counts: a folder that was merely removed from the workspace
+/// still exists, so its tabs stay (the window that removed it closes its own;
+/// `allFolders` likewise keeps such a folder valid for restored drafts).
+pub async fn filter_live_tab_targets<C: ConnectionTrait>(
+    conn: &C,
+    targets: Vec<TabTarget>,
+) -> Result<Vec<TabTarget>, DbError> {
+    if targets.is_empty() {
+        return Ok(targets);
+    }
+    let conversation_ids: HashSet<i32> = targets.iter().map(|t| t.conversation_id).collect();
+    let folder_ids: HashSet<i32> = targets.iter().map(|t| t.folder_id).collect();
+
+    let live_conversations: HashSet<i32> = conversation::Entity::find()
+        .select_only()
+        .column(conversation::Column::Id)
+        .filter(conversation::Column::Id.is_in(conversation_ids))
+        .filter(conversation::Column::DeletedAt.is_null())
+        .into_tuple::<i32>()
+        .all(conn)
+        .await?
+        .into_iter()
+        .collect();
+    let live_folders: HashSet<i32> = folder::Entity::find()
+        .select_only()
+        .column(folder::Column::Id)
+        .filter(folder::Column::Id.is_in(folder_ids))
+        .filter(folder::Column::DeletedAt.is_null())
+        .into_tuple::<i32>()
+        .all(conn)
+        .await?
+        .into_iter()
+        .collect();
+
+    Ok(targets
+        .into_iter()
+        .filter(|t| {
+            live_conversations.contains(&t.conversation_id) && live_folders.contains(&t.folder_id)
+        })
+        .collect())
 }

@@ -8,6 +8,7 @@ import { useAcpActions } from "@/contexts/acp-connections-context"
 import { useWorkspaceActions } from "@/contexts/workspace-context"
 import { useSortedAvailableAgents } from "@/hooks/use-sorted-available-agents"
 import { onTransportReconnect, subscribe } from "@/lib/platform"
+import { useTabSyncEnabled } from "@/lib/tab-sync-prefs"
 import {
   pruneOrphanDraftsOnce,
   runCorrectionOnce,
@@ -71,6 +72,7 @@ export function TabProvider({ children }: TabProviderProps) {
   const tabsHydrated = useTabStore((s) => s.tabsHydrated)
   const saveReconcileTick = useTabStore((s) => s.saveReconcileTick)
   const reseedTick = useTabStore((s) => s.reseedTick)
+  const tabSyncEnabled = useTabSyncEnabled()
 
   // ── Runtime dependency injection ─────────────────────────────────────────────
   // Labels first (declared before hydrate) so seed titles are translated before
@@ -111,8 +113,15 @@ export function TabProvider({ children }: TabProviderProps) {
     useTabStore.getState().consumeDraftRetargets()
   }, [draftRetargetRequests])
 
-  // Hydrate from persisted opened_tabs on mount.
+  // Hydrate from persisted opened_tabs on mount (or, with tab sync off, from
+  // this window's own copy).
   useEffect(() => useTabStore.getState().hydrate(), [])
+
+  // Follow the tab-sync preference live. Re-run on hydration too: a flip that
+  // landed while the snapshot was loading is applied once there is a set.
+  useEffect(() => {
+    useTabStore.getState().setTabSync(tabSyncEnabled)
+  }, [tabSyncEnabled, tabsHydrated])
 
   // Debounced compare-and-set save + broadcast.
   useEffect(() => {
@@ -134,7 +143,12 @@ export function TabProvider({ children }: TabProviderProps) {
     void (async () => {
       const dispose = await subscribe<ConversationChange>(
         CONVERSATION_CHANGED_EVENT,
-        (change) => useTabStore.getState().handleChildConversationChange(change)
+        (change) => {
+          const store = useTabStore.getState()
+          store.handleChildConversationChange(change)
+          if (change.kind === "deleted")
+            store.handleConversationDeleted(change.id)
+        }
       )
       if (disposed) dispose()
       else unlisten = dispose

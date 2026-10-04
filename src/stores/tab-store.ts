@@ -3,10 +3,18 @@ import { useShallow } from "zustand/react/shallow"
 import { useAppWorkspaceStore } from "@/stores/app-workspace-store"
 import { registerBackendScopedStoreReset } from "@/stores/backend-scoped-store-reset"
 import {
+  filterLiveTabTargets,
   getFolderConversation,
   listOpenedTabs,
   saveOpenedTabs,
 } from "@/lib/api"
+import { loadTabSyncEnabled } from "@/lib/tab-sync-prefs"
+import {
+  readWindowGroupBlob,
+  readWindowTabs,
+  writeWindowGroupBlob,
+  writeWindowTabs,
+} from "@/lib/window-tabs-storage"
 import { resolveDefaultAgent } from "@/lib/resolve-default-agent"
 import { formatConversationTitle } from "@/lib/conversation-title"
 import {
@@ -47,6 +55,7 @@ import type {
   ConversationStatus,
   DbConversationSummary,
   OpenedTab,
+  OpenedTabsSnapshot,
   TabsChanged,
 } from "@/lib/types"
 
@@ -306,6 +315,12 @@ export interface TabStoreState {
   handleChildReconnect: () => void
   handleTabsChanged: (change: TabsChanged) => void
   refetchTabs: () => Promise<void>
+  /** Switch between the shared tab set and this window's own (see
+   *  `tab-sync-prefs.ts`). No-op before hydration and when unchanged. */
+  setTabSync: (enabled: boolean) => void
+  /** A conversation was deleted somewhere: a window-local tab set drops its
+   *  tabs here (the shared set learns it from the server's snapshot). */
+  handleConversationDeleted: (conversationId: number) => void
   correctDraftAgents: () => void
   recoverActiveContext: () => void
   consumePreviewReplaced: () => void
@@ -370,6 +385,11 @@ let runtime: TabRuntime = defaultRuntime()
 // `lastSavedPayload` — JSON of the last persisted payload; draft-only changes
 //   match it and skip the save.
 let version = 0
+// Which set this window holds: the shared, server-kept one (`opened_tabs`, CAS
+// saves, `tabs://changed`) or its own (`window-tabs-storage.ts`). Taken from
+// the preference by `hydrate` and moved only by `setTabSync`, so every path
+// below agrees on which set it is looking at.
+let tabSyncEnabled = loadTabSyncEnabled()
 let applyingRemote = false
 let remoteActivationPending = false
 let pendingRemote: TabsChanged | null = null
@@ -781,7 +801,11 @@ function readPersistedGroupState(): {
   })
   if (typeof window === "undefined") return fallback()
   try {
-    const raw = localStorage.getItem(TAB_GROUPS_STORAGE_KEY)
+    // A window that keeps its own tabs keeps its own layout: its session copy
+    // first, the shared blob only for a window that has none yet.
+    const raw =
+      (loadTabSyncEnabled() ? null : readWindowGroupBlob()) ??
+      localStorage.getItem(TAB_GROUPS_STORAGE_KEY)
     if (raw) {
       const parsed = JSON.parse(raw) as Record<string, unknown>
       if (parsed && isLayoutNode(parsed.layout)) {
@@ -871,6 +895,9 @@ function persistGroupState() {
   } catch {
     /* ignore */
   }
+  // Always written, read only while tab sync is off — so turning it off later
+  // restores this window's layout rather than the last-saved one.
+  writeWindowGroupBlob(blob)
 }
 
 /**
@@ -2133,10 +2160,13 @@ export const useTabStore = create<TabStoreState>()((set, get) => ({
 
   hydrate: () => {
     let cancelled = false
+    tabSyncEnabled = loadTabSyncEnabled()
     void (async () => {
       let snapshotLoaded = false
       try {
-        const snap = await listOpenedTabs()
+        const snap = tabSyncEnabled
+          ? await listOpenedTabs()
+          : await readLiveWindowTabs()
         if (cancelled) return
         snapshotLoaded = true
         tabsSnapshotLoaded = true
@@ -2243,7 +2273,10 @@ export const useTabStore = create<TabStoreState>()((set, get) => ({
           // sweep runs, so a draft opened in the meantime is never swept. Only
           // safe once the tab set is known — after a failed fetch every key
           // would look orphaned and the user's unsent text would be deleted.
-          if (snapshotLoaded) {
+          // Skipped for a window-local tab set: sibling windows on this origin
+          // hold drafts this one has never seen, and their keys look orphaned
+          // from here just the same.
+          if (snapshotLoaded && tabSyncEnabled) {
             sweepOrphanDraftKeys(
               () =>
                 new Set(
@@ -2289,6 +2322,15 @@ export const useTabStore = create<TabStoreState>()((set, get) => ({
         clearTimeout(saveTimer)
         saveTimer = null
       }
+      return
+    }
+
+    if (!tabSyncEnabled) {
+      // Window-local: the write is the whole save — no version to compare and
+      // no other client to tell. Written straight away (it is cheap), so a
+      // window closed right after a change still keeps it.
+      writeWindowTabs(items)
+      lastSavedPayload = payload
       return
     }
 
@@ -2461,6 +2503,10 @@ export const useTabStore = create<TabStoreState>()((set, get) => ({
   },
 
   handleTabsChanged: (change) => {
+    // A window-local tab set is not the shared one, so nothing said about the
+    // shared one applies — not even the server's deletion cascades, which
+    // reach this window as `conversation://changed` / `folder://changed`.
+    if (!tabSyncEnabled) return
     if (change.origin === TAB_ORIGIN) {
       // Our own accepted save, echoed back: nothing to apply, but the snapshot
       // is authoritative — record it as the merge ancestor in case it beats the
@@ -2483,6 +2529,12 @@ export const useTabStore = create<TabStoreState>()((set, get) => ({
   },
 
   refetchTabs: async () => {
+    if (!tabSyncEnabled) {
+      // Nothing to re-read: this window's set lives here. What can have gone
+      // stale while it wasn't listening is what the tabs point at.
+      await dropDeletedWindowTabs()
+      return
+    }
     try {
       const snap = await listOpenedTabs()
       const change: TabsChanged = {
@@ -2514,6 +2566,58 @@ export const useTabStore = create<TabStoreState>()((set, get) => ({
     } catch (err) {
       console.error("[TabStore] refetchTabs failed:", err)
     }
+  },
+
+  setTabSync: (enabled) => {
+    // Before hydration there is nothing to carry over: `hydrate` reads the
+    // preference itself, and TabProvider re-applies it once hydrated in case
+    // it flipped while the snapshot was loading.
+    if (!get().tabsHydrated) return
+    if (enabled === tabSyncEnabled) return
+    tabSyncEnabled = enabled
+    if (saveTimer) {
+      clearTimeout(saveTimer)
+      saveTimer = null
+    }
+    pendingRemote = null
+    applyingRemote = false
+
+    if (!enabled) {
+      // Leaving the shared set: the window keeps exactly the tabs it has, and
+      // from here on they are its own.
+      const items = buildPersistItems(get().rawTabs, get().activeTabId)
+      writeWindowTabs(items)
+      lastSavedPayload = JSON.stringify(items)
+      return
+    }
+
+    // Joining the shared set: merge rather than pick a side. With no common
+    // ancestor every tab on either side counts as an addition the other has not
+    // seen, so `applyRemoteSnapshot` keeps the union and — when this window
+    // brought tabs the server lacks — clears the baseline so the save effect
+    // pushes them. Nothing open anywhere is closed by turning sync on.
+    version = 0
+    serverKnownTabKeys = new Set()
+    void (async () => {
+      try {
+        const snap = await listOpenedTabs()
+        if (!tabSyncEnabled) return
+        applyRemoteSnapshot({
+          version: snap.version,
+          origin: "server",
+          tabs: snap.items,
+        })
+      } catch (err) {
+        // Still joined: the reconnect refetch (or the first rejected save)
+        // merges against the same empty ancestor.
+        console.error("[TabStore] joining the shared tab set failed:", err)
+      }
+    })()
+  },
+
+  handleConversationDeleted: (conversationId) => {
+    if (tabSyncEnabled) return
+    dropTabsPointingAtDeleted((tab) => tab.conversationId === conversationId)
   },
 
   correctDraftAgents: () => {
@@ -2824,6 +2928,7 @@ export function resetTabStore() {
     groupPersistTimer = null
   }
   version = 0
+  tabSyncEnabled = loadTabSyncEnabled()
   applyingRemote = false
   remoteActivationPending = false
   pendingRemote = null
@@ -3036,6 +3141,121 @@ function applyRemoteSnapshot(change: TabsChanged) {
   lastSavedPayload = diverged
     ? null
     : JSON.stringify(buildPersistItems(nextTabs, nextActiveId))
+  useTabStore.setState({ rawTabs: nextTabs, activeTabId: nextActiveId })
+  recomputeTabs()
+}
+
+// ── Window-local tab set (cross-client tab sync off) ───────────────────────────
+// The server's deletion cascades only reach `opened_tabs`, so a window keeping
+// its own set has to drop tabs for deleted conversations / folders itself: live
+// from `conversation://changed` / `folder://changed`, and after any gap in
+// listening (load, reconnect) by asking the backend what still exists.
+
+/** `items` minus tabs whose conversation or folder is gone. A failed check
+ *  keeps everything — not knowing is no reason to close a tab. */
+async function keepLiveTabs(items: OpenedTab[]): Promise<OpenedTab[]> {
+  const targets = items.flatMap((it) =>
+    it.conversation_id != null
+      ? [{ folder_id: it.folder_id, conversation_id: it.conversation_id }]
+      : []
+  )
+  if (targets.length === 0) return items
+  try {
+    const live = await filterLiveTabTargets(targets)
+    const liveKeys = new Set(
+      live.map((t) => `${t.folder_id}:${t.conversation_id}`)
+    )
+    return items.filter(
+      (it) =>
+        it.conversation_id != null &&
+        liveKeys.has(`${it.folder_id}:${it.conversation_id}`)
+    )
+  } catch (err) {
+    console.error("[TabStore] checking window tabs failed:", err)
+    return items
+  }
+}
+
+/** The window-local counterpart of `listOpenedTabs`: this window's stored set
+ *  (or the most recent window's, for a new one), minus what was deleted while
+ *  nothing was listening. Version 0 — nothing here is compare-and-set.
+ *
+ *  With nothing stored anywhere — the first load with sync off, typically
+ *  right after it became the browser default — the window starts from the
+ *  shared set once, the same way turning sync off mid-session keeps the tabs
+ *  it had. A failed read starts empty and is tried again next load.
+ *
+ *  Whatever was read is written straight back as this window's own copy: one
+ *  started from the most recent window's set must own it from the first load,
+ *  or a reload before its first change would pick up that other window's
+ *  latest tabs instead of its own. */
+async function readLiveWindowTabs(): Promise<OpenedTabsSnapshot> {
+  let stored = readWindowTabs()
+  let found = stored != null
+  if (stored == null) {
+    stored = await listOpenedTabs().then(
+      (snap) => {
+        found = true
+        return snap.items.filter((it) => it.conversation_id != null)
+      },
+      () => []
+    )
+  }
+  const items = await keepLiveTabs(stored)
+  if (found) writeWindowTabs(items)
+  return { items, version: 0 }
+}
+
+/** Re-check the open conversation tabs and drop the ones whose target is gone.
+ *  Only tabs that were part of the check can go: one opened while it was in
+ *  flight was never asked about. */
+async function dropDeletedWindowTabs() {
+  const st = useTabStore.getState()
+  if (!st.tabsHydrated) return
+  const items = buildPersistItems(st.rawTabs, st.activeTabId)
+  if (items.length === 0) return
+  const live = await keepLiveTabs(items)
+  if (live.length === items.length || tabSyncEnabled) return
+  const checked = snapshotSyncKeys(items)
+  const liveKeys = snapshotSyncKeys(live)
+  dropTabsPointingAtDeleted((tab) => {
+    const key = tabSyncKey(tab)
+    return key != null && checked.has(key) && !liveKeys.has(key)
+  })
+}
+
+/** Remove tabs whose target was deleted elsewhere. Not a user close: nothing
+ *  is offered back by "reopen closed tab", the pane is not activated, and — as
+ *  in `applyRemoteSnapshot` — a focus change it forces doesn't pull the window
+ *  into the conversations route, nor is the workspace left blank. */
+function dropTabsPointingAtDeleted(
+  shouldDrop: (tab: TabItemInternal) => boolean
+) {
+  const prev = useTabStore.getState()
+  const next = prev.rawTabs.filter((tab) => !shouldDrop(tab))
+  if (next.length === prev.rawTabs.length) return
+
+  let nextTabs = next
+  let nextActiveId: string | null
+  if (next.length === 0) {
+    if (useAppWorkspaceStore.getState().folders.length === 0) {
+      nextActiveId = null
+    } else {
+      const replacement = makeReplacementDraftTab()
+      nextTabs = [replacement]
+      nextActiveId = replacement.id
+    }
+  } else if (
+    prev.activeTabId != null &&
+    next.some((tab) => tab.id === prev.activeTabId)
+  ) {
+    nextActiveId = prev.activeTabId
+  } else {
+    nextActiveId = next[0].id
+  }
+  if (nextActiveId !== prev.activeTabId) {
+    remoteActivationPending = true
+  }
   useTabStore.setState({ rawTabs: nextTabs, activeTabId: nextActiveId })
   recomputeTabs()
 }

@@ -1732,6 +1732,11 @@
     "behaviorExit": "Salir de codeg",
     "saveFailed": "No se pudo guardar el comportamiento de cierre: {message}"
   },
+  "TabSyncSettings": {
+    "title": "Sincronizar pestañas de conversación entre ventanas",
+    "description": "Si está activado, todas las ventanas y dispositivos conectados al mismo servidor comparten un único conjunto de pestañas de conversación abiertas, incluidos el orden, las fijadas y la pestaña enfocada. Si está desactivado, cada ventana conserva sus propias pestañas, que se restauran tras recargar o reconectar.",
+    "note": "Solo afecta a las pestañas abiertas y al foco; la lista de conversaciones, los mensajes, el estado de ejecución y las eliminaciones se sincronizan siempre. Este ajuste se aplica solo a este navegador (o a la aplicación de escritorio)."
+  },
   "CloseRequestDialog": {
     "askTitle": "¿Cerrar codeg?",
     "askDescription": "codeg puede seguir ejecutándose en la bandeja para mantener activos los agentes y las terminales, o salir por completo.",
