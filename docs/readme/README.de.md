@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/keh4l/codeg/releases/latest"><img src="https://img.shields.io/github/v/release/keh4l/codeg?style=flat&color=e91e63" alt="Neuestes Release" /></a>
-  <a href="https://github.com/xintaofei/codeg"><img src="https://img.shields.io/badge/upstream-xintaofei%2Fcodeg-24292f?style=flat" alt="Upstream" /></a>
+  <a href="https://github.com/spacering-net/codeg"><img src="https://img.shields.io/badge/upstream-spacering--net%2Fcodeg-24292f?style=flat" alt="Upstream" /></a>
   <a href="../../LICENSE"><img src="https://img.shields.io/github/license/keh4l/codeg?style=flat" alt="Lizenz" /></a>
 </p>
 
@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <strong><a href="https://github.com/xintaofei/codeg">Codeg</a>, der Multi-Agent-Coding-Workspace von xintaofei, angepasst von keh4l</strong><br/>
+  <strong><a href="https://github.com/spacering-net/codeg">Codeg</a>, der Multi-Agent-Coding-Workspace von xintaofei, angepasst von keh4l</strong><br/>
   Alle KI-Coding-Agenten an einem Ort, die zusammenarbeiten. Folgt dem Upstream eng und ergänzt ein paar Funktionen.
 </p>
 
@@ -49,7 +49,7 @@
 - Du kannst ihm MCP-Server und Skills geben und frühere Sitzungen importieren und fortsetzen.
 - „Aktualisieren“ unter Einstellungen → Agenten startet Kiros eigenen Updater.
 - Unterhaltungen, die du mit Kiro als benutzerdefiniertem Agenten geführt hast, wandern zum eingebauten Agenten.
-- Upstream vorgeschlagen: [xintaofei/codeg#851](https://github.com/xintaofei/codeg/pull/851).
+- Upstream vorgeschlagen: [spacering-net/codeg#851](https://github.com/spacering-net/codeg/pull/851).
 
 </details>
 
@@ -61,7 +61,7 @@
 - Nach dem Neuladen kommen die Tabs genau dieses Fensters zurück.
 - Konversationen, Nachrichten und Löschungen erreichen weiterhin alle Fenster.
 - Gesteuert über „Konversationstabs fensterübergreifend synchronisieren“ unter Einstellungen → Allgemein – im Browser standardmäßig aus, in der Desktop-App an. Eingeschaltet teilen sich alle Fenster wie im offiziellen Build einen Satz Tabs.
-- Upstream angefragt in [xintaofei/codeg#547](https://github.com/xintaofei/codeg/issues/547).
+- Upstream angefragt in [spacering-net/codeg#547](https://github.com/spacering-net/codeg/issues/547).
 
 </details>
 
@@ -85,7 +85,7 @@
 
 |  | Diese Version | Offizielle Version |
 | --- | --- | --- |
-| Downloads und Updates | [Releases](https://github.com/keh4l/codeg/releases) dieses Repositorys, mit dem eigenen Schlüssel dieses Forks signiert | Releases von [xintaofei/codeg](https://github.com/xintaofei/codeg/releases) |
+| Downloads und Updates | [Releases](https://github.com/keh4l/codeg/releases) dieses Repositorys, mit dem eigenen Schlüssel dieses Forks signiert | Releases von [spacering-net/codeg](https://github.com/spacering-net/codeg/releases) |
 | Version | `<Upstream-Version>-<n>`: `0.33.0-2` ist die 2. Version auf Basis von Upstream 0.33.0 | z. B. `0.33.0` |
 | macOS-Notarisierung | Nein; beim ersten Start einmal erlauben (siehe [Installation](#installation)) | Ja |
 | Docker-Image | Nein | Ja |
@@ -138,7 +138,7 @@ Beide installieren aus den Releases dieses Repositorys, und auch der eingebaute 
 
 ## Dokumentation
 
-Funktionen, Konfiguration und Nutzung beschreiben das offizielle [README](https://github.com/xintaofei/codeg/blob/main/docs/readme/README.de.md) und [docs.codeg.app](https://docs.codeg.app). Sie beziehen sich auf die offizielle Version; die Unterschiede stehen oben.
+Funktionen, Konfiguration und Nutzung beschreiben das offizielle [README](https://github.com/spacering-net/codeg/blob/main/docs/readme/README.de.md) und [docs.codeg.app](https://docs.codeg.app). Sie beziehen sich auf die offizielle Version; die Unterschiede stehen oben.
 
 ## Lizenz und Danksagung
 

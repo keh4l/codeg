@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/keh4l/codeg/releases/latest"><img src="https://img.shields.io/github/v/release/keh4l/codeg?style=flat&color=e91e63" alt="最新版本" /></a>
-  <a href="https://github.com/xintaofei/codeg"><img src="https://img.shields.io/badge/upstream-xintaofei%2Fcodeg-24292f?style=flat" alt="上游仓库" /></a>
+  <a href="https://github.com/spacering-net/codeg"><img src="https://img.shields.io/badge/upstream-spacering--net%2Fcodeg-24292f?style=flat" alt="上游仓库" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/github/license/keh4l/codeg?style=flat" alt="许可证" /></a>
 </p>
 
@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <strong>xintaofei 的多智能体编码工作台 <a href="https://github.com/xintaofei/codeg">Codeg</a>，由 keh4l 定制</strong><br/>
+  <strong>xintaofei 的多智能体编码工作台 <a href="https://github.com/spacering-net/codeg">Codeg</a>，由 keh4l 定制</strong><br/>
   把各种 AI 编码智能体放在一起使用、相互协作。紧跟上游，另外加了几个功能。
 </p>
 
@@ -49,7 +49,7 @@
 - 可以给它配 MCP 服务器和技能，还能导入并继续它以前的会话。
 - 「设置 → 智能体」里的「升级」调用 Kiro 自己的更新程序。
 - 以前作为自定义智能体使用的 Kiro 对话，会迁移到内置的 Kiro 下。
-- 已向上游提交：[xintaofei/codeg#851](https://github.com/xintaofei/codeg/pull/851)。
+- 已向上游提交：[spacering-net/codeg#851](https://github.com/spacering-net/codeg/pull/851)。
 
 </details>
 
@@ -61,7 +61,7 @@
 - 刷新后恢复的是本窗口自己的标签。
 - 会话、消息和删除操作仍会同步到所有窗口。
 - 开关是「设置 → 常规」里的「跨窗口同步会话标签」：浏览器端默认关闭，桌面端默认开启。打开后所有窗口共用一套标签，和官方版一样。
-- 上游的对应需求：[xintaofei/codeg#547](https://github.com/xintaofei/codeg/issues/547)。
+- 上游的对应需求：[spacering-net/codeg#547](https://github.com/spacering-net/codeg/issues/547)。
 
 </details>
 
@@ -85,7 +85,7 @@
 
 |  | 定制版 | 官方版 |
 | --- | --- | --- |
-| 下载与更新 | 本仓库的 [Releases](https://github.com/keh4l/codeg/releases)，用本 fork 自己的密钥签名 | [xintaofei/codeg](https://github.com/xintaofei/codeg/releases) 的 Releases |
+| 下载与更新 | 本仓库的 [Releases](https://github.com/keh4l/codeg/releases)，用本 fork 自己的密钥签名 | [spacering-net/codeg](https://github.com/spacering-net/codeg/releases) 的 Releases |
 | 版本号 | 上游版本-序号，如 `0.33.0-2` 是基于上游 0.33.0 的第 2 个定制版 | 如 `0.33.0` |
 | macOS 公证 | 没有，第一次打开要放行一次（见[安装](#安装)） | 有 |
 | Docker 镜像 | 没有 | 有 |
@@ -138,7 +138,7 @@ $env:CODEG_STATIC_DIR="$env:LOCALAPPDATA\codeg\web"; codeg-server
 
 ## 文档
 
-功能、配置和用法请看官方 [README](https://github.com/xintaofei/codeg/blob/main/docs/readme/README.zh-CN.md) 和 [docs.codeg.app](https://docs.codeg.app)。它们描述的是官方版，区别见上文。
+功能、配置和用法请看官方 [README](https://github.com/spacering-net/codeg/blob/main/docs/readme/README.zh-CN.md) 和 [docs.codeg.app](https://docs.codeg.app)。它们描述的是官方版，区别见上文。
 
 ## 许可证与鸣谢
 

@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/keh4l/codeg/releases/latest"><img src="https://img.shields.io/github/v/release/keh4l/codeg?style=flat&color=e91e63" alt="Última versión" /></a>
-  <a href="https://github.com/xintaofei/codeg"><img src="https://img.shields.io/badge/upstream-xintaofei%2Fcodeg-24292f?style=flat" alt="Proyecto original" /></a>
+  <a href="https://github.com/spacering-net/codeg"><img src="https://img.shields.io/badge/upstream-spacering--net%2Fcodeg-24292f?style=flat" alt="Proyecto original" /></a>
   <a href="../../LICENSE"><img src="https://img.shields.io/github/license/keh4l/codeg?style=flat" alt="Licencia" /></a>
 </p>
 
@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <strong><a href="https://github.com/xintaofei/codeg">Codeg</a>, el espacio de trabajo multiagente de xintaofei, personalizado por keh4l</strong><br/>
+  <strong><a href="https://github.com/spacering-net/codeg">Codeg</a>, el espacio de trabajo multiagente de xintaofei, personalizado por keh4l</strong><br/>
   Todos tus agentes de programación con IA en un solo lugar, trabajando juntos. Sigue de cerca al proyecto original y añade algunas funciones.
 </p>
 
@@ -49,7 +49,7 @@
 - Puedes darle servidores MCP y skills, e importar y reanudar sus sesiones anteriores.
 - Actualizar, en Ajustes → Agentes, ejecuta el propio actualizador de Kiro.
 - Las conversaciones que tenías con Kiro como agente personalizado pasan al agente integrado.
-- Propuesto al proyecto original: [xintaofei/codeg#851](https://github.com/xintaofei/codeg/pull/851).
+- Propuesto al proyecto original: [spacering-net/codeg#851](https://github.com/spacering-net/codeg/pull/851).
 
 </details>
 
@@ -61,7 +61,7 @@
 - Al recargar vuelven las pestañas de esa ventana.
 - Las conversaciones, los mensajes y las eliminaciones siguen llegando a todas las ventanas.
 - Es el interruptor «Sincronizar pestañas de conversación entre ventanas» en Ajustes → General: desactivado por defecto en el navegador y activado en la aplicación de escritorio. Activado, todas las ventanas comparten un mismo conjunto de pestañas, como en la versión oficial.
-- Solicitado al proyecto original en [xintaofei/codeg#547](https://github.com/xintaofei/codeg/issues/547).
+- Solicitado al proyecto original en [spacering-net/codeg#547](https://github.com/spacering-net/codeg/issues/547).
 
 </details>
 
@@ -85,7 +85,7 @@
 
 |  | Esta versión | Versión oficial |
 | --- | --- | --- |
-| Descargas y actualizaciones | [Releases](https://github.com/keh4l/codeg/releases) de este repositorio, firmadas con la clave propia de este fork | Releases de [xintaofei/codeg](https://github.com/xintaofei/codeg/releases) |
+| Descargas y actualizaciones | [Releases](https://github.com/keh4l/codeg/releases) de este repositorio, firmadas con la clave propia de este fork | Releases de [spacering-net/codeg](https://github.com/spacering-net/codeg/releases) |
 | Versión | `<versión original>-<n>`: `0.33.0-2` es la 2.ª versión basada en la 0.33.0 original | p. ej. `0.33.0` |
 | Notarización en macOS | No; hay que permitirla una vez al abrirla por primera vez (ver [Instalación](#instalación)) | Sí |
 | Imagen de Docker | No | Sí |
@@ -138,7 +138,7 @@ Ambos instalan desde las versiones de este repositorio, y el actualizador integr
 
 ## Documentación
 
-Para funciones, configuración y uso, consulta el [README](https://github.com/xintaofei/codeg/blob/main/docs/readme/README.es.md) oficial y [docs.codeg.app](https://docs.codeg.app). Describen la versión oficial; las diferencias están arriba.
+Para funciones, configuración y uso, consulta el [README](https://github.com/spacering-net/codeg/blob/main/docs/readme/README.es.md) oficial y [docs.codeg.app](https://docs.codeg.app). Describen la versión oficial; las diferencias están arriba.
 
 ## Licencia y agradecimientos
 

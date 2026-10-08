@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/keh4l/codeg/releases/latest"><img src="https://img.shields.io/github/v/release/keh4l/codeg?style=flat&color=e91e63" alt="Latest release" /></a>
-  <a href="https://github.com/xintaofei/codeg"><img src="https://img.shields.io/badge/upstream-xintaofei%2Fcodeg-24292f?style=flat" alt="Upstream" /></a>
+  <a href="https://github.com/spacering-net/codeg"><img src="https://img.shields.io/badge/upstream-spacering--net%2Fcodeg-24292f?style=flat" alt="Upstream" /></a>
   <a href="../../LICENSE"><img src="https://img.shields.io/github/license/keh4l/codeg?style=flat" alt="License" /></a>
 </p>
 
@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <strong>xintaofei's multi-agent coding workspace <a href="https://github.com/xintaofei/codeg">Codeg</a>, customized by keh4l</strong><br/>
+  <strong>xintaofei's multi-agent coding workspace <a href="https://github.com/spacering-net/codeg">Codeg</a>, customized by keh4l</strong><br/>
   Every AI coding agent in one place, working together. Follows upstream closely and adds a few features.
 </p>
 
@@ -49,7 +49,7 @@
 - Give it MCP servers and skills, and import and resume its past sessions.
 - Upgrade in Settings → Agents runs Kiro's own updater.
 - Conversations you had with Kiro as a custom agent move over to the built-in one.
-- Proposed upstream as [xintaofei/codeg#851](https://github.com/xintaofei/codeg/pull/851).
+- Proposed upstream as [spacering-net/codeg#851](https://github.com/spacering-net/codeg/pull/851).
 
 </details>
 
@@ -61,7 +61,7 @@
 - A reload brings back that window's own tabs.
 - Conversations, messages and deletions still reach every window.
 - It's the "Sync open conversation tabs across windows" switch in Settings → General: off by default in a browser, on in the desktop app. Turned on, all windows share one set of tabs, as in the official build.
-- Requested upstream in [xintaofei/codeg#547](https://github.com/xintaofei/codeg/issues/547).
+- Requested upstream in [spacering-net/codeg#547](https://github.com/spacering-net/codeg/issues/547).
 
 </details>
 
@@ -85,7 +85,7 @@
 
 |  | This build | Official build |
 | --- | --- | --- |
-| Downloads and updates | This repository's [Releases](https://github.com/keh4l/codeg/releases), signed with this fork's own key | [xintaofei/codeg](https://github.com/xintaofei/codeg/releases) Releases |
+| Downloads and updates | This repository's [Releases](https://github.com/keh4l/codeg/releases), signed with this fork's own key | [spacering-net/codeg](https://github.com/spacering-net/codeg/releases) Releases |
 | Version | `<upstream version>-<n>`: `0.33.0-2` is the 2nd build on upstream 0.33.0 | e.g. `0.33.0` |
 | macOS notarization | None; allow it once on first launch (see [Install](#install)) | Yes |
 | Docker image | None | Yes |
@@ -138,7 +138,7 @@ Both install from this repository's releases, and the server's built-in updater 
 
 ## Documentation
 
-For features, configuration and usage, see the official [README](https://github.com/xintaofei/codeg#readme) and [docs.codeg.app](https://docs.codeg.app). They describe the official build; the differences are listed above.
+For features, configuration and usage, see the official [README](https://github.com/spacering-net/codeg#readme) and [docs.codeg.app](https://docs.codeg.app). They describe the official build; the differences are listed above.
 
 ## License and acknowledgments
 

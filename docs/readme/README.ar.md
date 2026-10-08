@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/keh4l/codeg/releases/latest"><img src="https://img.shields.io/github/v/release/keh4l/codeg?style=flat&color=e91e63" alt="أحدث إصدار" /></a>
-  <a href="https://github.com/xintaofei/codeg"><img src="https://img.shields.io/badge/upstream-xintaofei%2Fcodeg-24292f?style=flat" alt="المشروع الأصلي" /></a>
+  <a href="https://github.com/spacering-net/codeg"><img src="https://img.shields.io/badge/upstream-spacering--net%2Fcodeg-24292f?style=flat" alt="المشروع الأصلي" /></a>
   <a href="../../LICENSE"><img src="https://img.shields.io/github/license/keh4l/codeg?style=flat" alt="الترخيص" /></a>
 </p>
 
@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <strong><a href="https://github.com/xintaofei/codeg">Codeg</a>، مساحة العمل البرمجية متعددة الوكلاء من xintaofei، بتخصيص keh4l</strong><br/>
+  <strong><a href="https://github.com/spacering-net/codeg">Codeg</a>، مساحة العمل البرمجية متعددة الوكلاء من xintaofei، بتخصيص keh4l</strong><br/>
   كل وكلاء البرمجة بالذكاء الاصطناعي في مكان واحد، يعملون معًا. تتابع المشروع الأصلي عن قرب وتضيف بعض الميزات.
 </p>
 
@@ -49,7 +49,7 @@
 - يمكنك تزويده بخوادم MCP والمهارات، واستيراد جلساته السابقة ومتابعتها.
 - يشغّل زر «ترقية» في الإعدادات ← الوكلاء أداة التحديث الخاصة بـ Kiro.
 - تنتقل المحادثات التي أجريتها مع Kiro كوكيل مخصّص إلى الوكيل المدمج.
-- مقترحة على المشروع الأصلي أيضًا: [xintaofei/codeg#851](https://github.com/xintaofei/codeg/pull/851).
+- مقترحة على المشروع الأصلي أيضًا: [spacering-net/codeg#851](https://github.com/spacering-net/codeg/pull/851).
 
 </details>
 
@@ -61,7 +61,7 @@
 - عند إعادة التحميل تعود علامات تبويب تلك النافذة نفسها.
 - تصل المحادثات والرسائل وعمليات الحذف إلى كل النوافذ كما في السابق.
 - يتحكم في ذلك مفتاح «مزامنة علامات تبويب المحادثات بين النوافذ» في الإعدادات ← عام: معطّل افتراضيًا في المتصفح ومفعّل في تطبيق سطح المكتب. وعند تفعيله تتشارك كل النوافذ مجموعة واحدة من علامات التبويب كما في الإصدار الرسمي.
-- طُلبت هذه الميزة من المشروع الأصلي في [xintaofei/codeg#547](https://github.com/xintaofei/codeg/issues/547).
+- طُلبت هذه الميزة من المشروع الأصلي في [spacering-net/codeg#547](https://github.com/spacering-net/codeg/issues/547).
 
 </details>
 
@@ -85,7 +85,7 @@
 
 |  | هذه النسخة | النسخة الرسمية |
 | --- | --- | --- |
-| التنزيل والتحديث | [Releases](https://github.com/keh4l/codeg/releases) في هذا المستودع، موقّعة بمفتاح هذا الفرع الخاص | ‏Releases في [xintaofei/codeg](https://github.com/xintaofei/codeg/releases) |
+| التنزيل والتحديث | [Releases](https://github.com/keh4l/codeg/releases) في هذا المستودع، موقّعة بمفتاح هذا الفرع الخاص | ‏Releases في [spacering-net/codeg](https://github.com/spacering-net/codeg/releases) |
 | رقم الإصدار | `<إصدار المشروع الأصلي>-<رقم>`: ‏`0.33.0-2` هو الإصدار الثاني المبني على الإصدار الأصلي 0.33.0 | مثل `0.33.0` |
 | توثيق macOS | لا؛ يلزم السماح به مرة واحدة عند أول فتح (انظر [التثبيت](#التثبيت)) | نعم |
 | صورة Docker | لا | نعم |
@@ -138,7 +138,7 @@ $env:CODEG_STATIC_DIR="$env:LOCALAPPDATA\codeg\web"; codeg-server
 
 ## التوثيق
 
-للتعرّف على الميزات والإعدادات وطريقة الاستخدام، راجع [README](https://github.com/xintaofei/codeg/blob/main/docs/readme/README.ar.md) الرسمي و[docs.codeg.app](https://docs.codeg.app). يصفان النسخة الرسمية؛ والاختلافات مذكورة أعلاه.
+للتعرّف على الميزات والإعدادات وطريقة الاستخدام، راجع [README](https://github.com/spacering-net/codeg/blob/main/docs/readme/README.ar.md) الرسمي و[docs.codeg.app](https://docs.codeg.app). يصفان النسخة الرسمية؛ والاختلافات مذكورة أعلاه.
 
 ## الترخيص والشكر
 

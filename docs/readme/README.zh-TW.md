@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/keh4l/codeg/releases/latest"><img src="https://img.shields.io/github/v/release/keh4l/codeg?style=flat&color=e91e63" alt="最新版本" /></a>
-  <a href="https://github.com/xintaofei/codeg"><img src="https://img.shields.io/badge/upstream-xintaofei%2Fcodeg-24292f?style=flat" alt="上游儲存庫" /></a>
+  <a href="https://github.com/spacering-net/codeg"><img src="https://img.shields.io/badge/upstream-spacering--net%2Fcodeg-24292f?style=flat" alt="上游儲存庫" /></a>
   <a href="../../LICENSE"><img src="https://img.shields.io/github/license/keh4l/codeg?style=flat" alt="授權" /></a>
 </p>
 
@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <strong>xintaofei 的多智慧體程式設計工作台 <a href="https://github.com/xintaofei/codeg">Codeg</a>，由 keh4l 客製</strong><br/>
+  <strong>xintaofei 的多智慧體程式設計工作台 <a href="https://github.com/spacering-net/codeg">Codeg</a>，由 keh4l 客製</strong><br/>
   把各種 AI 程式設計智慧體放在一起使用、彼此協作。緊跟上游，另外加了幾項功能。
 </p>
 
@@ -49,7 +49,7 @@
 - 可以為它設定 MCP 伺服器與技能，還能匯入並繼續它以前的工作階段。
 - 「設定 → 智慧體」裡的「升級」會執行 Kiro 自己的更新程式。
 - 以前以自訂智慧體使用的 Kiro 對話，會移轉到內建的 Kiro 底下。
-- 已向上游提交：[xintaofei/codeg#851](https://github.com/xintaofei/codeg/pull/851)。
+- 已向上游提交：[spacering-net/codeg#851](https://github.com/spacering-net/codeg/pull/851)。
 
 </details>
 
@@ -61,7 +61,7 @@
 - 重新整理後還原的是本視窗自己的分頁。
 - 會話、訊息和刪除操作仍會同步到所有視窗。
 - 開關是「設定 → 一般」裡的「跨視窗同步會話分頁」：瀏覽器端預設關閉，桌面端預設開啟。開啟後所有視窗共用一組分頁，和官方版一樣。
-- 上游的對應需求：[xintaofei/codeg#547](https://github.com/xintaofei/codeg/issues/547)。
+- 上游的對應需求：[spacering-net/codeg#547](https://github.com/spacering-net/codeg/issues/547)。
 
 </details>
 
@@ -85,7 +85,7 @@
 
 |  | 客製版 | 官方版 |
 | --- | --- | --- |
-| 下載與更新 | 本儲存庫的 [Releases](https://github.com/keh4l/codeg/releases)，以本 fork 自己的金鑰簽署 | [xintaofei/codeg](https://github.com/xintaofei/codeg/releases) 的 Releases |
+| 下載與更新 | 本儲存庫的 [Releases](https://github.com/keh4l/codeg/releases)，以本 fork 自己的金鑰簽署 | [spacering-net/codeg](https://github.com/spacering-net/codeg/releases) 的 Releases |
 | 版本號 | 上游版本-序號，如 `0.33.0-2` 是基於上游 0.33.0 的第 2 個客製版 | 如 `0.33.0` |
 | macOS 公證 | 沒有，第一次開啟要放行一次（見[安裝](#安裝)） | 有 |
 | Docker 映像檔 | 沒有 | 有 |
@@ -138,7 +138,7 @@ $env:CODEG_STATIC_DIR="$env:LOCALAPPDATA\codeg\web"; codeg-server
 
 ## 文件
 
-功能、設定與用法請看官方 [README](https://github.com/xintaofei/codeg/blob/main/docs/readme/README.zh-TW.md) 和 [docs.codeg.app](https://docs.codeg.app)。它們描述的是官方版，差異見上文。
+功能、設定與用法請看官方 [README](https://github.com/spacering-net/codeg/blob/main/docs/readme/README.zh-TW.md) 和 [docs.codeg.app](https://docs.codeg.app)。它們描述的是官方版，差異見上文。
 
 ## 授權與致謝
 

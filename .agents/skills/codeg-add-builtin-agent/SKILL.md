@@ -83,7 +83,7 @@ description: 给 Codeg 新增一个内置 ACP 智能体（像 Kiro CLI 那样）
     pnpm tauri dev --config '{"identifier":"app.codeg.dev"}' > /tmp/codeg-dev-run.log 2>&1 &
   ```
   在 Codeg 里运行的 agent 会继承 `CODEG_DATA_DIR`、`TMPDIR`、`KIRO_SESSION_ID`、`GIT_CONFIG_*`，所以必须用 `env -i` 清掉。要用真实数据测试时，先 `sqlite3 "<正式库>" ".backup '<dev 数据目录>/codeg.db'"` 复制一份，**迁移只在副本上跑**。
-- **服务端 + 网页**：`pnpm build` 后用 `CODEG_HOST=127.0.0.1 CODEG_PORT=<端口> CODEG_TOKEN=<随机> CODEG_DATA_DIR=<副本目录> CODEG_HOME=<临时目录> CODEG_STATIC_DIR=$PWD/out src-tauri/target/debug/codeg-server` 启动（同样 `env -i` 并带上代理），浏览器打开 `/login` 填令牌。接口参数是 camelCase。告诉用户这个服务没有对外暴露、需要令牌。
+- **服务端 + 网页**：`pnpm build`，再在 `src-tauri/` 下 `cargo build --no-default-features --features server-bin --bin codeg-server`（不开 `server-bin` 不会产出这个二进制），然后用 `CODEG_HOST=127.0.0.1 CODEG_PORT=<端口> CODEG_TOKEN=<随机> CODEG_DATA_DIR=<副本目录> CODEG_HOME=<临时目录> CODEG_STATIC_DIR=$PWD/out src-tauri/target/debug/codeg-server` 启动（同样 `env -i` 并带上代理），浏览器打开 `/login` 填令牌。接口参数是 camelCase。告诉用户这个服务没有对外暴露、需要令牌。
 - 实际走一遍：选择器切换真的到达 agent、斜杠命令、权限模式、读/写/改/命令/搜索/MCP 工具卡片显示、历史导入后与实时一致、升级/安装按钮。
 - 测完：只停自己启动的进程；临时目录和测试数据先问用户再删。
 

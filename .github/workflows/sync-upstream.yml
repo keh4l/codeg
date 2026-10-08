@@ -1,7 +1,7 @@
 name: Sync upstream
 
 # Fork maintenance (keh4l/codeg only):
-#   1. fast-forward `main` to xintaofei/codeg:main — the same as the
+#   1. fast-forward `main` to spacering-net/codeg:main — the same as the
 #      "Sync fork" button, so `main` never carries commits of its own;
 #   2. open a PR bringing `main` into `keh4l`, the custom branch releases are
 #      cut from. Merge it with a merge commit once its checks pass; when it
