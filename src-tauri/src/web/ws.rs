@@ -6,6 +6,7 @@ use axum::{
     extract::{Extension, WebSocketUpgrade},
     response::IntoResponse,
 };
+use futures_util::{Sink, SinkExt};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
@@ -166,15 +167,8 @@ async fn handle_ws_connection(
             outgoing = outbound_rx.recv() => {
                 match outgoing {
                     Some(msg) => {
-                        match serde_json::to_string(&msg) {
-                            Ok(text) => {
-                                if socket.send(Message::Text(text.into())).await.is_err() {
-                                    break;
-                                }
-                            }
-                            Err(e) => {
-                                tracing::warn!("[WS][WARN] failed to serialize ServerMsg: {e}");
-                            }
+                        if !write_server_msg(&mut socket, &msg).await {
+                            break;
                         }
                     }
                     // Channel closed only when all senders dropped — i.e. this
@@ -221,14 +215,19 @@ async fn handle_ws_connection(
                     Some(Ok(Message::Text(text))) => {
                         match serde_json::from_str::<ClientMsg>(&text) {
                             Ok(cmsg) => {
-                                handle_client_msg(
+                                let socket_open = handle_client_msg(
                                     cmsg,
                                     &state,
+                                    &mut socket,
                                     &outbound_tx,
+                                    &mut outbound_rx,
                                     &cleanup_tx,
                                     &mut subscriptions,
                                     &mut next_epoch,
                                 ).await;
+                                if !socket_open {
+                                    break;
+                                }
                             }
                             Err(e) => {
                                 tracing::warn!("[WS][WARN] malformed client message: {e}");
@@ -251,14 +250,85 @@ async fn handle_ws_connection(
     }
 }
 
+/// Serialize one frame onto the socket. `false` once the socket is gone; a
+/// frame that fails to serialize is logged and skipped.
+async fn write_server_msg<S>(socket: &mut S, msg: &ServerMsg) -> bool
+where
+    S: Sink<Message> + Unpin,
+{
+    match serde_json::to_string(msg) {
+        Ok(text) => socket.send(Message::Text(text.into())).await.is_ok(),
+        Err(e) => {
+            tracing::warn!("[WS][WARN] failed to serialize ServerMsg: {e}");
+            true
+        }
+    }
+}
+
+/// Queue a frame the main loop produces itself (an attach's snapshot or
+/// replay, a `detached`, a `pong`) behind what the forwarders already queued.
+///
+/// The main loop is the only reader of `outbound_rx`, so waiting on
+/// `outbound_tx.send(..)` here deadlocks as soon as the forwarders have
+/// filled the queue: the loop waits for a slot only it can free. It then
+/// never reads the socket again, so the task outlives its client, and every
+/// forwarder stays parked on `send` holding its broadcast receiver — which
+/// keeps the last few thousand events of that connection, and of the global
+/// firehose, alive for the rest of the process. Instead, write queued frames
+/// out while waiting, which is what frees the slot.
+///
+/// The reservation is made once and kept across iterations: a pending
+/// `reserve` holds its place among the waiting senders, so forwarders that
+/// refill every freed slot cannot starve it.
+///
+/// Returns `false` once the socket or the queue is gone.
+async fn enqueue_from_loop<S>(
+    socket: &mut S,
+    outbound_tx: &mpsc::Sender<ServerMsg>,
+    outbound_rx: &mut mpsc::Receiver<ServerMsg>,
+    msg: ServerMsg,
+) -> bool
+where
+    S: Sink<Message> + Unpin,
+{
+    let reserve = outbound_tx.reserve();
+    tokio::pin!(reserve);
+    loop {
+        tokio::select! {
+            biased;
+            permit = &mut reserve => {
+                return match permit {
+                    Ok(permit) => {
+                        permit.send(msg);
+                        true
+                    }
+                    Err(_) => false,
+                };
+            }
+            queued = outbound_rx.recv() => match queued {
+                Some(queued) => {
+                    if !write_server_msg(socket, &queued).await {
+                        return false;
+                    }
+                }
+                None => return false,
+            },
+        }
+    }
+}
+
+/// Returns `false` once the socket is gone, so the main loop can stop.
+#[allow(clippy::too_many_arguments)]
 async fn handle_client_msg(
     msg: ClientMsg,
     state: &Arc<AppState>,
+    socket: &mut WebSocket,
     outbound_tx: &mpsc::Sender<ServerMsg>,
+    outbound_rx: &mut mpsc::Receiver<ServerMsg>,
     cleanup_tx: &mpsc::Sender<(String, u64)>,
     subscriptions: &mut HashMap<String, ActiveSubscription>,
     next_epoch: &mut u64,
-) {
+) -> bool {
     match msg {
         ClientMsg::Attach {
             subscription_id,
@@ -285,8 +355,10 @@ async fn handle_client_msg(
                     // Send the initial frame (snapshot or replay) BEFORE
                     // spawning the forwarder so the client sees state
                     // before the first live event.
-                    if outbound_tx.send(outcome.initial_msg).await.is_err() {
-                        return;
+                    if !enqueue_from_loop(socket, outbound_tx, outbound_rx, outcome.initial_msg)
+                        .await
+                    {
+                        return false;
                     }
                     // Allocate a fresh epoch for this spawn. wrapping_add is
                     // defensive — u64 overflow per WS session is impossible
@@ -304,14 +376,14 @@ async fn handle_client_msg(
                         cleanup_tx.clone(),
                     );
                     subscriptions.insert(subscription_id, ActiveSubscription { handle, epoch });
+                    true
                 }
                 Err(reason) => {
-                    let _ = outbound_tx
-                        .send(ServerMsg::Detached {
-                            subscription_id,
-                            reason,
-                        })
-                        .await;
+                    let frame = ServerMsg::Detached {
+                        subscription_id,
+                        reason,
+                    };
+                    enqueue_from_loop(socket, outbound_tx, outbound_rx, frame).await
                 }
             }
         }
@@ -319,9 +391,10 @@ async fn handle_client_msg(
             if let Some(sub) = subscriptions.remove(&subscription_id) {
                 sub.handle.abort();
             }
+            true
         }
         ClientMsg::Ping => {
-            let _ = outbound_tx.send(ServerMsg::Pong).await;
+            enqueue_from_loop(socket, outbound_tx, outbound_rx, ServerMsg::Pong).await
         }
     }
 }
@@ -377,5 +450,94 @@ mod tests {
         apply_cleanup_signal(&mut subs, "missing", 1);
 
         assert!(subs.contains_key("other"));
+    }
+
+    fn detached(subscription_id: &str) -> ServerMsg {
+        ServerMsg::Detached {
+            subscription_id: subscription_id.to_string(),
+            reason: DetachReason::Lagged,
+        }
+    }
+
+    fn frame_text(frame: &Message) -> &str {
+        match frame {
+            Message::Text(text) => text.as_str(),
+            other => panic!("expected a text frame, got {other:?}"),
+        }
+    }
+
+    /// The main loop is the queue's only reader, so the plain
+    /// `send().await` this replaced never returned once forwarders had
+    /// filled the queue.
+    #[tokio::test]
+    async fn enqueue_on_a_full_queue_writes_the_oldest_frame_out_to_make_room() {
+        let (tx, mut rx) = mpsc::channel::<ServerMsg>(OUTBOUND_CAPACITY);
+        for i in 0..OUTBOUND_CAPACITY {
+            tx.try_send(detached(&format!("sub-{i}"))).unwrap();
+        }
+        let mut socket: Vec<Message> = Vec::new();
+
+        let queued = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            enqueue_from_loop(&mut socket, &tx, &mut rx, ServerMsg::Pong),
+        )
+        .await
+        .expect("enqueue must not wait on a slot only its caller can free");
+
+        assert!(queued);
+        assert_eq!(socket.len(), 1, "one frame out frees the one slot needed");
+        assert!(frame_text(&socket[0]).contains("\"sub-0\""));
+        // Order is kept: the pong lands behind every frame queued before it.
+        let mut rest = Vec::new();
+        while let Ok(msg) = rx.try_recv() {
+            rest.push(msg);
+        }
+        assert_eq!(rest.len(), OUTBOUND_CAPACITY);
+        assert!(matches!(rest.last(), Some(ServerMsg::Pong)));
+    }
+
+    #[tokio::test]
+    async fn enqueue_is_not_starved_by_a_forwarder_refilling_every_slot() {
+        let (tx, mut rx) = mpsc::channel::<ServerMsg>(OUTBOUND_CAPACITY);
+        // A busy session's forwarder: always parked on `send`, so it is
+        // first in line for every slot the main loop frees.
+        let forwarder_tx = tx.clone();
+        let forwarder =
+            tokio::spawn(async move { while forwarder_tx.send(detached("busy")).await.is_ok() {} });
+        while tx.capacity() > 0 {
+            tokio::task::yield_now().await;
+        }
+        let mut socket: Vec<Message> = Vec::new();
+
+        let queued = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            enqueue_from_loop(&mut socket, &tx, &mut rx, ServerMsg::Pong),
+        )
+        .await
+        .expect("a forwarder refilling the queue must not starve the main loop");
+
+        assert!(queued);
+        // The forwarder that was already waiting gets the first freed slot,
+        // the pong the next: two frames out, however hot the forwarder.
+        assert_eq!(socket.len(), 2);
+        forwarder.abort();
+        let mut saw_pong = false;
+        while let Ok(msg) = rx.try_recv() {
+            saw_pong |= matches!(msg, ServerMsg::Pong);
+        }
+        assert!(saw_pong);
+    }
+
+    #[tokio::test]
+    async fn enqueue_reports_a_closed_socket() {
+        let (tx, mut rx) = mpsc::channel::<ServerMsg>(OUTBOUND_CAPACITY);
+        for _ in 0..OUTBOUND_CAPACITY {
+            tx.try_send(ServerMsg::Pong).unwrap();
+        }
+        // A sink whose peer is gone: every write fails.
+        let (mut socket, peer) = futures::channel::mpsc::unbounded::<Message>();
+        drop(peer);
+
+        assert!(!enqueue_from_loop(&mut socket, &tx, &mut rx, ServerMsg::Pong).await);
     }
 }

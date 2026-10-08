@@ -348,22 +348,27 @@ impl TerminalManager {
             }
         }
 
-        let child = pair
+        let mut child = pair
             .slave
             .spawn_command(cmd)
             .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
 
         drop(pair.slave);
 
-        let writer = pair
+        let pipes = pair
             .master
             .take_writer()
-            .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
-
-        let reader = pair
-            .master
-            .try_clone_reader()
-            .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
+            .and_then(|writer| Ok((writer, pair.master.try_clone_reader()?)));
+        let (writer, reader) = match pipes {
+            Ok(pipes) => pipes,
+            Err(e) => {
+                // Reap the shell we are abandoning: dropping the child does
+                // not wait on it (see `read_loop`).
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(TerminalError::SpawnFailed(e.to_string()));
+            }
+        };
 
         let terminal_id = opts.terminal_id;
         // Boundary-, length-, and NUL-safe prefix for the PTY thread names; see
@@ -702,12 +707,17 @@ fn read_loop(
         }
     }
 
-    // Terminal exited — remove from map and clean up temp files. Poison-tolerant
-    // like the scrollback lock above: this runs on the long-lived `pty-reader-*`
-    // thread, and refusing the removal would leak the entry and its temp files
-    // for the rest of the process.
-    if let Some(mut instance) = lock_terminals(terminals).remove(&terminal_id) {
-        cleanup_temp_files(&mut instance.temp_files);
+    // Terminal exited — remove from map, reap the shell and clean up temp
+    // files. Poison-tolerant like the scrollback lock above: this runs on the
+    // long-lived `pty-reader-*` thread, and refusing the removal would leak the
+    // entry and its temp files for the rest of the process. The reap matters
+    // as much: on unix the child is a bare `std::process::Child`, which does
+    // not wait on drop, so dropping it would leave the shell a zombie for the
+    // server's lifetime. Taken out of the map first so the table lock is not
+    // held across the kill's grace period.
+    let exited = lock_terminals(terminals).remove(&terminal_id);
+    if let Some(mut instance) = exited {
+        terminate_terminal(&mut instance);
     }
 
     emit_terminal_exit_event(emitter, &terminal_id);
@@ -742,7 +752,7 @@ fn thread_name_prefix(terminal_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     #[cfg(not(target_os = "windows"))]
-    use super::{Arc, EventEmitter, SpawnOptions, TerminalManager};
+    use super::{lock_terminals, Arc, EventEmitter, SpawnOptions, TerminalManager};
     use super::{thread_name_prefix, Scrollback, SCROLLBACK_MAX_CHARS};
 
     #[test]
@@ -893,5 +903,59 @@ mod tests {
         assert_eq!(payload["terminalId"], "svc-e2e");
 
         let _ = manager.kill("svc-e2e");
+    }
+
+    /// A shell that exits on its own (`exit`, Ctrl-D, a finished command from
+    /// the command menu) is reaped, not just dropped: on unix the child is a
+    /// bare `std::process::Child`, and an unreaped one stays a zombie for as
+    /// long as the server runs.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_shell_that_exits_on_its_own_is_reaped() {
+        use crate::web::event_bridge::WebEventBroadcaster;
+        use std::time::Duration;
+
+        let broadcaster = Arc::new(WebEventBroadcaster::new());
+        let mut events = broadcaster.subscribe();
+        let emitter = EventEmitter::test_web_only(broadcaster);
+
+        let manager = TerminalManager::new();
+        manager
+            .spawn_with_id(
+                SpawnOptions {
+                    terminal_id: "reap-e2e".to_string(),
+                    working_dir: std::env::temp_dir().to_string_lossy().to_string(),
+                    owner_window_label: "main".to_string(),
+                    shell: Some("/bin/sh".to_string()),
+                    // Long enough to read the pid below, then exits by itself.
+                    initial_command: Some("sleep 1".to_string()),
+                    extra_env: None,
+                    temp_files: vec![],
+                },
+                emitter,
+            )
+            .expect("spawn");
+        // The PTY's own child: on macOS `/bin/sh` is a launcher that runs the
+        // real shell as ITS child and reaps it, so the shell's `$$` would not
+        // be the process this manager has to wait on.
+        let pid = lock_terminals(&manager.terminals)["reap-e2e"]
+            ._child
+            .process_id()
+            .expect("child pid") as i32;
+
+        tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                let event = events.recv().await.expect("event bus");
+                if event.channel == "terminal://exit/reap-e2e" {
+                    return;
+                }
+            }
+        })
+        .await
+        .expect("the terminal exits");
+
+        // A zombie still answers signal 0; only a reaped process is gone.
+        let still_there = unsafe { libc::kill(pid, 0) } == 0;
+        assert!(!still_there, "shell {pid} was left a zombie");
     }
 }
