@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/keh4l/codeg/releases/latest"><img src="https://img.shields.io/github/v/release/keh4l/codeg?style=flat&color=e91e63" alt="최신 릴리스" /></a>
-  <a href="https://github.com/xintaofei/codeg"><img src="https://img.shields.io/badge/upstream-xintaofei%2Fcodeg-24292f?style=flat" alt="업스트림" /></a>
+  <a href="https://github.com/spacering-net/codeg"><img src="https://img.shields.io/badge/upstream-spacering--net%2Fcodeg-24292f?style=flat" alt="업스트림" /></a>
   <a href="../../LICENSE"><img src="https://img.shields.io/github/license/keh4l/codeg?style=flat" alt="라이선스" /></a>
 </p>
 
@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <strong>xintaofei의 멀티 에이전트 코딩 워크스페이스 <a href="https://github.com/xintaofei/codeg">Codeg</a>, keh4l의 커스텀 빌드</strong><br/>
+  <strong>xintaofei의 멀티 에이전트 코딩 워크스페이스 <a href="https://github.com/spacering-net/codeg">Codeg</a>, keh4l의 커스텀 빌드</strong><br/>
   여러 AI 코딩 에이전트를 한곳에서 쓰고 서로 협업하게 해 줍니다. 업스트림을 꾸준히 따라가면서 몇 가지 기능을 더했습니다.
 </p>
 
@@ -49,7 +49,7 @@
 - MCP 서버와 스킬을 설정할 수 있고, 지난 세션을 가져와 이어서 진행할 수 있습니다.
 - 설정 → 에이전트의 '업그레이드'는 Kiro 자체 업데이트 프로그램을 실행합니다.
 - 커스텀 에이전트로 쓰던 Kiro 대화는 내장 Kiro로 옮겨집니다.
-- 업스트림에도 제안되어 있습니다: [xintaofei/codeg#851](https://github.com/xintaofei/codeg/pull/851).
+- 업스트림에도 제안되어 있습니다: [spacering-net/codeg#851](https://github.com/spacering-net/codeg/pull/851).
 
 </details>
 
@@ -61,7 +61,7 @@
 - 새로고침하면 그 창의 탭이 그대로 돌아옵니다.
 - 대화, 메시지, 삭제는 여전히 모든 창에 반영됩니다.
 - 설정 → 일반의 '창 간 대화 탭 동기화'로 바꿀 수 있습니다. 브라우저에서는 기본으로 꺼져 있고 데스크톱 앱에서는 켜져 있습니다. 켜면 공식 빌드처럼 모든 창이 하나의 탭 세트를 공유합니다.
-- 업스트림 요청: [xintaofei/codeg#547](https://github.com/xintaofei/codeg/issues/547).
+- 업스트림 요청: [spacering-net/codeg#547](https://github.com/spacering-net/codeg/issues/547).
 
 </details>
 
@@ -85,7 +85,7 @@
 
 |  | 이 빌드 | 공식 빌드 |
 | --- | --- | --- |
-| 다운로드와 업데이트 | 이 저장소의 [Releases](https://github.com/keh4l/codeg/releases), 이 포크 자체의 키로 서명 | [xintaofei/codeg](https://github.com/xintaofei/codeg/releases)의 Releases |
+| 다운로드와 업데이트 | 이 저장소의 [Releases](https://github.com/keh4l/codeg/releases), 이 포크 자체의 키로 서명 | [spacering-net/codeg](https://github.com/spacering-net/codeg/releases)의 Releases |
 | 버전 | `<업스트림 버전>-<번호>`: `0.33.0-2`는 업스트림 0.33.0 기반의 두 번째 빌드 | 예: `0.33.0` |
 | macOS 공증 | 없음, 처음 열 때 한 번 허용 필요([설치](#설치) 참고) | 있음 |
 | Docker 이미지 | 없음 | 있음 |
@@ -138,7 +138,7 @@ $env:CODEG_STATIC_DIR="$env:LOCALAPPDATA\codeg\web"; codeg-server
 
 ## 문서
 
-기능, 설정, 사용법은 공식 [README](https://github.com/xintaofei/codeg/blob/main/docs/readme/README.ko.md)와 [docs.codeg.app](https://docs.codeg.app)을 참고하세요. 공식 빌드 기준으로 쓰여 있으며, 다른 점은 위에 정리되어 있습니다.
+기능, 설정, 사용법은 공식 [README](https://github.com/spacering-net/codeg/blob/main/docs/readme/README.ko.md)와 [docs.codeg.app](https://docs.codeg.app)을 참고하세요. 공식 빌드 기준으로 쓰여 있으며, 다른 점은 위에 정리되어 있습니다.
 
 ## 라이선스와 감사의 말
 

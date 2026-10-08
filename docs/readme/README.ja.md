@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/keh4l/codeg/releases/latest"><img src="https://img.shields.io/github/v/release/keh4l/codeg?style=flat&color=e91e63" alt="最新リリース" /></a>
-  <a href="https://github.com/xintaofei/codeg"><img src="https://img.shields.io/badge/upstream-xintaofei%2Fcodeg-24292f?style=flat" alt="上流リポジトリ" /></a>
+  <a href="https://github.com/spacering-net/codeg"><img src="https://img.shields.io/badge/upstream-spacering--net%2Fcodeg-24292f?style=flat" alt="上流リポジトリ" /></a>
   <a href="../../LICENSE"><img src="https://img.shields.io/github/license/keh4l/codeg?style=flat" alt="ライセンス" /></a>
 </p>
 
@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <strong>xintaofei のマルチエージェント・コーディングワークスペース <a href="https://github.com/xintaofei/codeg">Codeg</a> を keh4l がカスタマイズ</strong><br/>
+  <strong>xintaofei のマルチエージェント・コーディングワークスペース <a href="https://github.com/spacering-net/codeg">Codeg</a> を keh4l がカスタマイズ</strong><br/>
   さまざまな AI コーディングエージェントを一か所で使い、連携させられます。上流に密に追従しつつ、いくつか機能を加えています。
 </p>
 
@@ -49,7 +49,7 @@
 - MCP サーバーとスキルを設定でき、過去のセッションを取り込んで再開できます。
 - 設定 → エージェントの「アップグレード」は Kiro 自身のアップデーターを実行します。
 - カスタムエージェントとして使っていた Kiro の会話は、組み込みの Kiro に移行されます。
-- 上流にも提案済みです：[xintaofei/codeg#851](https://github.com/xintaofei/codeg/pull/851)。
+- 上流にも提案済みです：[spacering-net/codeg#851](https://github.com/spacering-net/codeg/pull/851)。
 
 </details>
 
@@ -61,7 +61,7 @@
 - 再読み込みすると、そのウィンドウ自身のタブが戻ります。
 - 会話、メッセージ、削除はこれまでどおりすべてのウィンドウに反映されます。
 - 設定 → 一般の「ウィンドウ間で会話タブを同期」で切り替えます。ブラウザでは既定でオフ、デスクトップアプリではオンです。オンにすると、公式版と同じくすべてのウィンドウが一つのタブセットを共有します。
-- 上流への要望：[xintaofei/codeg#547](https://github.com/xintaofei/codeg/issues/547)。
+- 上流への要望：[spacering-net/codeg#547](https://github.com/spacering-net/codeg/issues/547)。
 
 </details>
 
@@ -85,7 +85,7 @@
 
 |  | このビルド | 公式版 |
 | --- | --- | --- |
-| ダウンロードと更新 | このリポジトリの [Releases](https://github.com/keh4l/codeg/releases)。このフォーク独自の鍵で署名 | [xintaofei/codeg](https://github.com/xintaofei/codeg/releases) の Releases |
+| ダウンロードと更新 | このリポジトリの [Releases](https://github.com/keh4l/codeg/releases)。このフォーク独自の鍵で署名 | [spacering-net/codeg](https://github.com/spacering-net/codeg/releases) の Releases |
 | バージョン | 上流バージョン-番号。`0.33.0-2` は上流 0.33.0 をベースにした 2 番目のビルド | 例：`0.33.0` |
 | macOS の公証 | なし。初回起動時に一度許可が必要（[インストール](#インストール)を参照） | あり |
 | Docker イメージ | なし | あり |
@@ -138,7 +138,7 @@ $env:CODEG_STATIC_DIR="$env:LOCALAPPDATA\codeg\web"; codeg-server
 
 ## ドキュメント
 
-機能・設定・使い方は、公式の [README](https://github.com/xintaofei/codeg/blob/main/docs/readme/README.ja.md) と [docs.codeg.app](https://docs.codeg.app) を参照してください。これらは公式版について書かれています。違いは上記のとおりです。
+機能・設定・使い方は、公式の [README](https://github.com/spacering-net/codeg/blob/main/docs/readme/README.ja.md) と [docs.codeg.app](https://docs.codeg.app) を参照してください。これらは公式版について書かれています。違いは上記のとおりです。
 
 ## ライセンスと謝辞
 

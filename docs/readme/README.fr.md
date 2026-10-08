@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/keh4l/codeg/releases/latest"><img src="https://img.shields.io/github/v/release/keh4l/codeg?style=flat&color=e91e63" alt="Dernière version" /></a>
-  <a href="https://github.com/xintaofei/codeg"><img src="https://img.shields.io/badge/upstream-xintaofei%2Fcodeg-24292f?style=flat" alt="Projet d'origine" /></a>
+  <a href="https://github.com/spacering-net/codeg"><img src="https://img.shields.io/badge/upstream-spacering--net%2Fcodeg-24292f?style=flat" alt="Projet d'origine" /></a>
   <a href="../../LICENSE"><img src="https://img.shields.io/github/license/keh4l/codeg?style=flat" alt="Licence" /></a>
 </p>
 
@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <strong><a href="https://github.com/xintaofei/codeg">Codeg</a>, l'espace de travail multi-agents de xintaofei, personnalisé par keh4l</strong><br/>
+  <strong><a href="https://github.com/spacering-net/codeg">Codeg</a>, l'espace de travail multi-agents de xintaofei, personnalisé par keh4l</strong><br/>
   Tous vos agents de code IA au même endroit, qui travaillent ensemble. Suit de près le projet d'origine et ajoute quelques fonctionnalités.
 </p>
 
@@ -49,7 +49,7 @@
 - Vous pouvez lui donner des serveurs MCP et des skills, et importer et reprendre ses sessions passées.
 - « Mettre à jour » dans Réglages → Agents lance l'outil de mise à jour de Kiro lui-même.
 - Les conversations que vous aviez avec Kiro en tant qu'agent personnalisé passent sur l'agent intégré.
-- Proposé en amont : [xintaofei/codeg#851](https://github.com/xintaofei/codeg/pull/851).
+- Proposé en amont : [spacering-net/codeg#851](https://github.com/spacering-net/codeg/pull/851).
 
 </details>
 
@@ -61,7 +61,7 @@
 - Un rechargement restaure les onglets de cette fenêtre.
 - Les conversations, les messages et les suppressions atteignent toujours toutes les fenêtres.
 - C'est l'interrupteur « Synchroniser les onglets de conversation entre les fenêtres » dans Réglages → Général : désactivé par défaut dans un navigateur, activé dans l'application de bureau. Activé, toutes les fenêtres partagent un même ensemble d'onglets, comme dans la version officielle.
-- Demandé en amont dans [xintaofei/codeg#547](https://github.com/xintaofei/codeg/issues/547).
+- Demandé en amont dans [spacering-net/codeg#547](https://github.com/spacering-net/codeg/issues/547).
 
 </details>
 
@@ -85,7 +85,7 @@
 
 |  | Cette version | Version officielle |
 | --- | --- | --- |
-| Téléchargements et mises à jour | [Releases](https://github.com/keh4l/codeg/releases) de ce dépôt, signées avec la clé propre à ce fork | Releases de [xintaofei/codeg](https://github.com/xintaofei/codeg/releases) |
+| Téléchargements et mises à jour | [Releases](https://github.com/keh4l/codeg/releases) de ce dépôt, signées avec la clé propre à ce fork | Releases de [spacering-net/codeg](https://github.com/spacering-net/codeg/releases) |
 | Version | `<version d'origine>-<n>` : `0.33.0-2` est la 2ᵉ version basée sur la 0.33.0 d'origine | par ex. `0.33.0` |
 | Notarisation macOS | Non ; à autoriser une fois au premier lancement (voir [Installation](#installation)) | Oui |
 | Image Docker | Non | Oui |
@@ -138,7 +138,7 @@ Les deux installent depuis les versions de ce dépôt, et l'outil de mise à jou
 
 ## Documentation
 
-Pour les fonctionnalités, la configuration et l'utilisation, consultez le [README](https://github.com/xintaofei/codeg/blob/main/docs/readme/README.fr.md) officiel et [docs.codeg.app](https://docs.codeg.app). Ils décrivent la version officielle ; les différences sont listées ci-dessus.
+Pour les fonctionnalités, la configuration et l'utilisation, consultez le [README](https://github.com/spacering-net/codeg/blob/main/docs/readme/README.fr.md) officiel et [docs.codeg.app](https://docs.codeg.app). Ils décrivent la version officielle ; les différences sont listées ci-dessus.
 
 ## Licence et remerciements
 

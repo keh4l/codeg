@@ -1,6 +1,6 @@
 ---
 name: codeg-fork-sync
-description: 把上游 xintaofei/codeg 的更新同步进 keh4l/codeg 定制版（keh4l 分支），保留 fork 自己的定制并处理合并冲突。用户说"同步上游 / sync upstream / 合并上游更新 / 处理同步 PR 冲突"时使用。
+description: 把上游 spacering-net/codeg 的更新同步进 keh4l/codeg 定制版（keh4l 分支），保留 fork 自己的定制并处理合并冲突。用户说"同步上游 / sync upstream / 合并上游更新 / 处理同步 PR 冲突"时使用。
 ---
 
 # 同步上游到定制版
@@ -9,7 +9,7 @@ description: 把上游 xintaofei/codeg 的更新同步进 keh4l/codeg 定制版�
 
 ## 仓库约定（先确认，不符就停下问用户）
 
-- 本地仓库 `/Users/keh4l/Documents/Github/codeg`；`origin` = `keh4l/codeg`（fork），`upstream` = `xintaofei/codeg`。
+- 本地仓库 `/Users/keh4l/Documents/Github/codeg`；`origin` = `keh4l/codeg`（fork），`upstream` = `spacering-net/codeg`（2026-10 从 `xintaofei/codeg` 迁来，旧地址会重定向；作者仍是 xintaofei）。
 - `main`：只跟上游，**不在上面提交**；`keh4l`：定制版，fork 的默认分支，发版从这里打 tag；功能分支另开。
 - 提交身份一律 `keh4l <2461454684@qq.com>`，用 `git -c user.name=keh4l -c user.email=2461454684@qq.com …` 传入，**不改 git config**。
 - 只用 merge，**不 rebase、不 force push** `keh4l`（tag 都在它的历史上）。
@@ -36,15 +36,15 @@ description: 把上游 xintaofei/codeg 的更新同步进 keh4l/codeg 定制版�
    ```bash
    grep -rnE '^(<<<<<<<|>>>>>>>)' src src-tauri/src src-tauri/tests .github docs README.md || echo clean
    ```
-5. **验证**（合并后编译错误也是"冲突"：上游给 enum 加了 match、改了函数签名，fork 的代码要跟着补，见下方经验）
+5. **验证**（合并后编译错误也是"冲突"：上游给 enum 加了 match、改了函数签名，fork 的代码要跟着补，见下方经验）。先跑完前端再跑 Rust，**不要并行**：桌面版编译要读 `pnpm build` 的产物 `out/`，构建途中它不存在，会报 ``resource path `../out` doesn't exist``。
    ```bash
    pnpm lint . && pnpm test && pnpm build
    cd src-tauri
    cargo test --features test-utils
-   cargo test --no-default-features --bin codeg-server --lib
+   cargo test --no-default-features --features server-bin --bin codeg-server --lib
    cargo clippy --all-targets --features test-utils -- -D warnings
-   cargo clippy --no-default-features --bin codeg-server --lib -- -D warnings
-   cargo clippy --no-default-features --bin codeg-mcp -- -D warnings
+   cargo clippy --no-default-features --features server-bin --bin codeg-server --lib -- -D warnings
+   cargo clippy --no-default-features --features mcp-bin --bin codeg-mcp -- -D warnings
    ```
    CI 用最新 stable Rust，本地可能更旧、漏掉新 lint。查 CI 版本：
    `curl -fsSL https://static.rust-lang.org/dist/channel-rust-stable.toml | sed -n '/^\[pkg\.rustc\]/,/^version/{s/^version = "\([0-9.]*\).*/\1/p;}'`，
@@ -58,12 +58,12 @@ description: 把上游 xintaofei/codeg 的更新同步进 keh4l/codeg 定制版�
 | 位置 | 规则 |
 |---|---|
 | `package.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`（`name = "codeg"` 条目）、`src-tauri/tauri.conf.json` 的 `version` | 上游每次发版都会冲突。**取上游的版本号**（如 `0.33.0`），fork 发版时再改成 `0.33.0-1`。 |
-| fork 配置：`tauri.conf.json` 的 `plugins.updater.pubkey` / `endpoints`，`src-tauri/src/update/verify.rs` 的 `TAURI_PUBKEY_B64`，`src-tauri/src/update/version.rs` 的两个 URL，`status-bar-update.tsx`(+test)、`system-network-settings.tsx` 里的 `keh4l/codeg` 链接，`install.sh` / `install.ps1` 的 `REPO` | **永远保留 fork 的**。上游若改了周边内容，把上游改动接进来但保留这些值。合并后检查：`grep -rn xintaofei src-tauri/tauri.conf.json src-tauri/src/update install.sh install.ps1 src/components/layout/status-bar-update.tsx src/components/settings/system-network-settings.tsx` 应无结果。 |
+| fork 配置：`tauri.conf.json` 的 `plugins.updater.pubkey` / `endpoints`，`src-tauri/src/update/verify.rs` 的 `TAURI_PUBKEY_B64`，`src-tauri/src/update/version.rs` 的两个 URL，`status-bar-update.tsx`(+test)、`system-network-settings.tsx` 里的 `keh4l/codeg` 链接，`install.sh` / `install.ps1` 的 `REPO` | **永远保留 fork 的**。上游若改了周边内容，把上游改动接进来但保留这些值。合并后检查：`grep -rn -e xintaofei -e spacering-net src-tauri/tauri.conf.json src-tauri/src/update install.sh install.ps1 src/components/layout/status-bar-update.tsx src/components/layout/status-bar-update.test.tsx src/components/settings/system-network-settings.tsx` 应无结果。 |
 | `.github/workflows/release.yml`（可选 Apple 签名 + ad-hoc、Docker 由变量 `CODEG_PUBLISH_DOCKER` 控制）、`test.yml`（push 也跑 `keh4l`）、`sync-upstream.yml` | 接上游的改动，**保留 fork 的这几处改动**。改完用 actionlint 检查（命令见表格下方）。 |
 | `README.md`、`docs/readme/README.*.md`（10 种语言） | **归定制版自己管，冲突一律取 fork 的**（`git checkout --ours`）。它们是精简的定制版说明，功能介绍链接到上游 README，所以上游的 README 改动不搬进来。定制版的 `README.md` 是**简体中文**，英文在 fork 独有的 `docs/readme/README.en.md`，fork 删掉了 `docs/readme/README.zh-CN.md`：上游改了这个文件时会出现 modify/delete 冲突，`git rm` 保持删除。只有定制版本身变了（加了功能、安装方式变了）才改，10 种语言一起改，结构（功能卡片、展开细节、「发布方式」表、安装小节）保持一致。 |
 | `AGENTS.md`、`CLAUDE.md` | 接上游的改动，保留末尾的「定制版（keh4l/codeg）」一节。 |
-| Kiro 相关（`parsers/kiro.rs`、`kiro-config-panel.tsx`、`connection.rs` 里的 kiro 段等） | 上游如果合并了 PR xintaofei/codeg#851（尤其是 squash 合并或改过再合），以**上游版本为准**取 `--theirs`；但共享文件里非 Kiro 的 fork 定制仍要保留。 |
-| 窗口级标签（「跨窗口同步会话标签」开关）：`src/stores/tab-store.ts` 里按 `tabSyncEnabled` 分支的几处（`hydrate`、`runSaveEffect`、`handleTabsChanged`、`refetchTabs`、`setTabSync`、`handleConversationDeleted`、分组 blob 的读写和文件末尾的窗口本地函数），`tab-context.tsx` 的接线，后端 `filter_live_tab_targets`（`tab_service.rs`、`commands/conversations.rs`、web handler、`router.rs`、`lib.rs` 注册、`TabTarget` 模型），`general-settings.tsx` 里的 `<TabSyncSettingsSection />`，i18n 的 `TabSyncSettings`；fork 独有文件 `tab-sync-prefs.ts`、`window-tabs-storage.ts`、`tab-sync-settings.tsx`、`tab-context.window-local.test.tsx` | **两边都保留**，把 fork 的分支接到上游的新结构上。不变的规则：同步关闭时不读写共享的 `opened_tabs`、忽略 `tabs://changed`，删除靠 `conversation://changed` 和 `filter_live_tab_targets`；共享模式的代码路径和上游保持一致。jsdom 被当作浏览器，默认关闭同步，所以上游测试里驱动共享标签集合的部分要把 `workspace:tab-sync` 设成 `"true"`（`tab-context.test.tsx` 的 `seedWorkspaceStore` 和 `tab-store-reopen-position.test.ts` 已经这么做）；上游新增这类测试文件时照做。上游如果自己实现了 xintaofei/codeg#547，改用上游的方案，删掉这套。 |
+| Kiro 相关（`parsers/kiro.rs`、`kiro-config-panel.tsx`、`connection.rs` 里的 kiro 段等） | 上游如果合并了 PR spacering-net/codeg#851（尤其是 squash 合并或改过再合），以**上游版本为准**取 `--theirs`；但共享文件里非 Kiro 的 fork 定制仍要保留。 |
+| 窗口级标签（「跨窗口同步会话标签」开关）：`src/stores/tab-store.ts` 里按 `tabSyncEnabled` 分支的几处（`hydrate`、`runSaveEffect`、`handleTabsChanged`、`refetchTabs`、`setTabSync`、`handleConversationDeleted`、分组 blob 的读写和文件末尾的窗口本地函数），`tab-context.tsx` 的接线，后端 `filter_live_tab_targets`（`tab_service.rs`、`commands/conversations.rs`、web handler、`router.rs`、`lib.rs` 注册、`TabTarget` 模型），`general-settings.tsx` 里的 `<TabSyncSettingsSection />`，i18n 的 `TabSyncSettings`；fork 独有文件 `tab-sync-prefs.ts`、`window-tabs-storage.ts`、`tab-sync-settings.tsx`、`tab-context.window-local.test.tsx` | **两边都保留**，把 fork 的分支接到上游的新结构上。不变的规则：同步关闭时不读写共享的 `opened_tabs`、忽略 `tabs://changed`，删除靠 `conversation://changed` 和 `filter_live_tab_targets`；共享模式的代码路径和上游保持一致。jsdom 被当作浏览器，默认关闭同步，所以上游测试里驱动共享标签集合的部分要把 `workspace:tab-sync` 设成 `"true"`（`tab-context.test.tsx` 的 `seedWorkspaceStore` 和 `tab-store-reopen-position.test.ts` 已经这么做）；上游新增这类测试文件时照做。上游如果自己实现了 spacering-net/codeg#547，改用上游的方案，删掉这套。 |
 | Claude 思考摘要：`src-tauri/src/acp/connection.rs` 的 `claude_raw_sdk_session_meta`（多了 `cwd` 参数）、`claude_session_meta`、`claude_thinking_summaries_enabled`、`claude_show_thinking_summaries_setting`，三个 `build_*_session_request` 里的调用，和对应测试 | **两边都保留**。不变的规则：Claude 的 `session/new`、`session/load`、`session/resume` 都带 `_meta.claudeCode.options.extraArgs["thinking-display"] = "summarized"`，只有 Claude 设置（用户、项目、local 三层）里显式写了 `showThinkingSummaries: false` 才不带。参数放在 `extraArgs` 里，不用 SDK 的 `thinking` 选项：那个选项会连思考模式一起改，还会盖掉 `MAX_THINKING_TOKENS`。上游如果也往 `_meta.claudeCode.options` 里加东西，合进同一个对象，不要互相覆盖。上游或 claude-agent-acp 自己开始设置 thinking display（或 CLI 在非交互模式下也读 `showThinkingSummaries`）后，改用它们的方案，删掉这套。 |
 | fork 自己加的功能 | 一般两边都保留，把 fork 的改动重新接到上游的新结构上。 |
 | `Cargo.lock`、`pnpm-lock.yaml` | 先取上游的，再 `cargo build` / `pnpm install` 让它补回 fork 需要的条目；然后把 codeg 自己的版本号按第一行处理。 |
@@ -80,4 +80,5 @@ curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/downl
 
 - 上游新增了对 `AgentDistribution` 的穷尽 match（`acp/latest_release.rs`），fork 的 `System` 变体没有覆盖 → 编译失败。这类"无文本冲突的冲突"只有编译和测试能发现。
 - 上游的迁移日期排在 fork 迁移之后，而上游已发布的版本执行过它们 → fork 的迁移要改到更晚的日期才能按顺序跑（见 `fix(kiro): date the built-in migration after upstream's newest`）。改名只能在 fork 还没发布过该迁移时做。
-- 合并用的脚本先读后写：曾经"打开即写"把 `mod.rs` 截成 0 字节，用 `git checkout -m -- <file>` 恢复冲突状态重来。
+- 合并用的脚本先读后写：曾经"打开即写"把 `mod.rs` 截成 0 字节，用 `git checkout -m -- <file>` 恢复冲突状态重来。按冲突块批量取一边后，`git diff origin/main -- <file>` 看一眼，确认没有吞掉行（曾把 `tauri.conf.json` 的 `version` 行弄丢）。
+- 0.34.0 时上游从 `xintaofei/codeg` 迁到 `spacering-net/codeg`，把更新地址、安装脚本、应用内链接一并改了 → fork 配置表里那些文件全部冲突，冲突块里都是地址，逐块保留 `keh4l/codeg`，上游在同一文件里的其它改动照收。

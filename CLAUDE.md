@@ -124,7 +124,7 @@ INSTA_UPDATE=auto cargo test --features test-utils     # 自动写新 .snap
 
 ## 定制版（keh4l/codeg）
 
-本仓库是上游 [xintaofei/codeg](https://github.com/xintaofei/codeg) 的定制版 fork。
+本仓库是上游 [spacering-net/codeg](https://github.com/spacering-net/codeg)（2026-10 从 `xintaofei/codeg` 迁来，旧地址会重定向）的定制版 fork。
 
 - 分支：`main` 只跟上游、不在上面提交；`keh4l` 是定制版（默认分支，发版从这里打 tag）；给上游的 PR 从 `main` 开分支，不从 `keh4l` 开。
 - 同步上游只用 merge，不 rebase、不 force push `keh4l`。
