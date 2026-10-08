@@ -412,16 +412,32 @@ fn git_check_ignored_paths(
         .spawn()
         .map_err(AppCommandError::io)?;
 
-    if let Some(mut stdin) = child.stdin.take() {
-        for path in paths {
-            stdin
-                .write_all(path.as_bytes())
-                .map_err(AppCommandError::io)?;
-            stdin.write_all(&[0]).map_err(AppCommandError::io)?;
-        }
-    }
-
-    let output = child.wait_with_output().map_err(AppCommandError::io)?;
+    // Feed stdin from a second thread while this one collects the output, and
+    // wait on the child whatever the writes do. git can exit before reading
+    // all of stdin (not a repository, dubious ownership, a pruned worktree):
+    // returning on that EPIPE dropped the child unwaited, and a dropped
+    // `std::process::Child` stays a zombie for the server's lifetime. Writing
+    // and reading in turn could also stall once both pipes fill.
+    let stdin = child.stdin.take();
+    let (output, written) = std::thread::scope(|scope| {
+        let writer = stdin.map(|mut stdin| {
+            scope.spawn(move || -> std::io::Result<()> {
+                for path in paths {
+                    stdin.write_all(path.as_bytes())?;
+                    stdin.write_all(&[0])?;
+                }
+                Ok(())
+            })
+        });
+        let output = child.wait_with_output();
+        let written = writer.map_or(Ok(()), |writer| {
+            writer
+                .join()
+                .unwrap_or_else(|_| Err(std::io::Error::other("stdin writer panicked")))
+        });
+        (output, written)
+    });
+    let output = output.map_err(AppCommandError::io)?;
 
     // Exit code 1 means "no matches", which is expected.
     if !output.status.success() && output.status.code() != Some(1) {
@@ -430,6 +446,7 @@ fn git_check_ignored_paths(
             String::from_utf8_lossy(&output.stderr).to_string(),
         ));
     }
+    written.map_err(AppCommandError::io)?;
 
     let mut ignored = HashSet::new();
     for raw in output.stdout.split(|byte| *byte == 0) {
@@ -2227,5 +2244,28 @@ mod tests {
         // `.git/index` is git-metadata → drives a git-status refresh, exactly
         // like a normal repo's in-tree `.git/index`.
         assert!(is_git_metadata_rel_path(".git/index"));
+    }
+
+    /// git refuses outside a repository before reading stdin, so a path list
+    /// larger than the pipe fails the writes with EPIPE. That used to return
+    /// early with the child unwaited — a zombie `git` per call — and report
+    /// the EPIPE instead of git's own error.
+    #[test]
+    fn check_ignore_waits_for_a_git_that_exits_before_reading_stdin() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths: Vec<String> = (0..50_000)
+            .map(|i| format!("some/deeply/nested/dir/file-{i}.txt"))
+            .collect();
+
+        let err = git_check_ignored_paths(&dir.path().to_string_lossy(), &paths)
+            .expect_err("not a git repository");
+
+        assert!(
+            matches!(
+                err.code,
+                crate::app_error::AppErrorCode::ExternalCommandFailed
+            ),
+            "expected git's own failure, got {err:?}"
+        );
     }
 }
