@@ -9,7 +9,7 @@ description: 把一个通用功能贡献给上游 spacering-net/codeg：从 main
 
 ## 约定
 
-- 仓库 `/Users/keh4l/Documents/Github/codeg`；`origin` = `keh4l/codeg`（fork，默认分支是 `keh4l`），`upstream` = `spacering-net/codeg`（2026-10 从 `xintaofei/codeg` 迁来，旧地址会重定向）。
+- 仓库：Mac 上 `/Users/keh4l/Documents/Github/codeg`，Linux 服务器上 `/www/gitroot/codeg`；`origin` = `keh4l/codeg`（fork，默认分支是 `keh4l`），`upstream` = `spacering-net/codeg`（2026-10 从 `xintaofei/codeg` 迁来，旧地址会重定向）。
 - 给上游的分支**从 `main` 开，不从 `keh4l` 开**——`keh4l` 带着 fork 的更新地址、签名公钥、版本号，这些绝不能进上游 PR。
 - 提交身份 `git -c user.name=keh4l -c user.email=2461454684@qq.com …`；提交信息照上游风格：`feat(<scope>): <小写开头的结论>` / `fix(...)` / `chore(...)`，正文分段讲清"为什么、怎么做、取舍"（参考 `git log upstream/main` 里的 `feat(antigravity): add Google Antigravity as a built-in agent`）。
 - 只有用户明确要求时才提交、推送、开 PR。不推 `main`，PR 开出后不 rebase、不 force push（用 merge 跟进上游）。
@@ -33,11 +33,12 @@ description: 把一个通用功能贡献给上游 spacering-net/codeg：从 main
    cargo clippy --no-default-features --features server-bin --bin codeg-server --lib -- -D warnings
    cargo clippy --no-default-features --features mcp-bin --bin codeg-mcp -- -D warnings
    ```
-   CI 的 clippy 是最新 stable，本地往往更旧（曾因此漏掉 `explicit_counter_loop`）。查版本：
+   在 Linux 服务器上：直接跑 `/root/codeg-staging/run-gate.sh`（上面这些再加 cli 的测试和 clippy），它已经处理好 root 跑测试、测试线程和 `pnpm test --maxWorkers=50%`，原因见 `CLAUDE.md`「定制版」一节。注意那是 `main` 上开的分支：`CLAUDE.md` 的这一节和 fork 的 skill 只在 `keh4l` 上，`git show keh4l:CLAUDE.md` 查看。
+   CI 的 clippy 是最新 stable，本地往往更旧（曾因此漏掉 `explicit_counter_loop`）。Linux 服务器的默认工具链就是 stable，`rustup update stable` 后直接跑上面的 clippy；Mac 上查版本：
    `curl -fsSL https://static.rust-lang.org/dist/channel-rust-stable.toml | sed -n '/^\[pkg\.rustc\]/,/^version/{s/^version = "\([0-9.]*\).*/\1/p;}'`，
    然后 `rustup toolchain install <ver> --profile minimal -c clippy`，用 `CARGO_TARGET_DIR=/tmp/codeg-target-<ver> cargo +<ver> clippy …` 跑上面三条 clippy，结束后删掉那个目录。
    另外：`rustfmt --edition 2021` 只格式化**新文件**（上游老文件本来就没统一格式化，整文件格式化会制造大量无关改动）；前端改动跑 `pnpm exec prettier --check <files>`。
-4. **提交、推送，在 fork 里先跑一遍全平台 CI**（Linux / macOS / Windows × desktop / server + 前端；本机跑不了 Windows/Linux）
+4. **提交、推送，在 fork 里先跑一遍全平台 CI**（Linux / macOS / Windows × desktop / server + 前端；Mac 上跑不了 Windows/Linux，服务器上跑不了 macOS/Windows）
    ```bash
    git push -u origin feat/<name>
    gh pr create -R keh4l/codeg --base main --head feat/<name> --draft \

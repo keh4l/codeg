@@ -135,4 +135,8 @@ INSTA_UPDATE=auto cargo test --features test-utils     # 自动写新 .snap
   - `README.md`（简体中文，默认显示）和 `docs/readme/README.*.md`（其余 9 种语言，英文是 `README.en.md`）里「与官方版的区别」一节：功能卡片、对应的展开细节和「发布方式」表，10 种语言结构保持一致；
   - `codeg-fork-sync` 的冲突处理规则表：改了哪些上游文件，同步时要守住什么；
   - 功能涉及的其它文档：`docs/` 下的专题文档、相关 skill、本节规则。
-- 具体流程在 `.agents/skills/` 下的 skill 里（Kiro 通过 `.kiro/skills` 链接读取）：`codeg-fork-sync`（同步上游、解决冲突）、`codeg-fork-release`（发版）、`codeg-upstream-pr`（向上游提 PR）、`codeg-add-builtin-agent`（新增内置智能体）。
+- 维护环境有两处：Mac（`/Users/keh4l/Documents/Github/codeg`）和 Linux 服务器（`/www/gitroot/codeg`，Ubuntu 24.04，无显示器）。Rust 编译和全部门禁放服务器上跑（Mac 内存小，编译会卡死）；桌面开发版（`pnpm tauri dev`）和只在 macOS 上的功能回 Mac 验证。在服务器上：
+  - 同时跑着用户正在用的 Codeg（端口 3080，宝塔守护）：不要停、重启或替换它，测试实例换端口和数据目录，只停自己启动的进程。
+  - 硬盘慢：`src-tauri/target` 是挂在内存里的 tmpfs（重启后清空），`/www/gitroot/.cargo/config.toml` 把 dev 调试信息降到行号表，不要把 `CARGO_TARGET_DIR` 指回硬盘。
+  - 以 root 运行、CPU 单核慢：`cargo test` 要去掉 root 无视文件权限的能力并减少测试线程，`setpriv --inh-caps=-dac_override,-dac_read_search,-fowner --bounding-set=-dac_override,-dac_read_search,-fowner -- cargo test … -- --test-threads=28`，否则「文件不可读 / 目录只读时应当失败」的用例和只给异步步骤 50 ms 的用例会失败；`pnpm test` 加 `--maxWorkers=50%`，否则重的 jsdom 用例会超过 5 秒超时。整套门禁可以直接跑 `/root/codeg-staging/run-gate.sh`（已按这些处理；`SKIP="<步骤名> …"` 跳过已通过的步骤，日志在 `/root/codeg-staging/gate/`）。
+- 具体流程在 `.agents/skills/` 下的 skill 里（Kiro 通过 `.kiro/skills` 链接读取，Claude Code 通过 `.claude/skills` 链接读取；`.claude` 被 gitignore，新 clone 要自己建：`mkdir -p .claude/skills && for d in .agents/skills/*; do ln -sfn ../../$d .claude/skills/${d##*/}; done`）：`codeg-fork-sync`（同步上游、解决冲突）、`codeg-fork-release`（发版）、`codeg-upstream-pr`（向上游提 PR）、`codeg-add-builtin-agent`（新增内置智能体）。

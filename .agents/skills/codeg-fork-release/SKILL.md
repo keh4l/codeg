@@ -9,7 +9,7 @@ description: 为 keh4l/codeg 定制版发一个新版本（改版本号、写双
 
 ## 约定
 
-- 仓库 `/Users/keh4l/Documents/Github/codeg`，从 **`keh4l` 分支**发版；`origin` = `keh4l/codeg`。
+- 仓库：Mac 上 `/Users/keh4l/Documents/Github/codeg`，Linux 服务器上 `/www/gitroot/codeg`，从 **`keh4l` 分支**发版；`origin` = `keh4l/codeg`。
 - 提交身份 `git -c user.name=keh4l -c user.email=2461454684@qq.com …`，不改 git config。
 - 版本号 = 上游版本 + `-N`（N 只能是数字，Windows 安装包要求）：上游 `0.32.4` 上的第一版是 `0.32.4-1`，再发是 `0.32.4-2`；同步到上游 `0.33.0` 后从 `0.33.0-1` 开始。带 `-rc` 的 tag 会被标成预发布。
 - `release.yml` 由 tag `v*.*.*` 触发，检查两件事：tag 等于 `v` + `tauri.conf.json` 的 version；tag 指向的提交在默认分支 `keh4l` 上。**发版说明 = tag 指向的那个提交的提交信息**，标题是 `codeg vX`。
