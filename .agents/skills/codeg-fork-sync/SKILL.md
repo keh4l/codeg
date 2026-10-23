@@ -9,7 +9,7 @@ description: 把上游 spacering-net/codeg 的更新同步进 keh4l/codeg 定制
 
 ## 仓库约定（先确认，不符就停下问用户）
 
-- 本地仓库 `/Users/keh4l/Documents/Github/codeg`；`origin` = `keh4l/codeg`（fork），`upstream` = `spacering-net/codeg`（2026-10 从 `xintaofei/codeg` 迁来，旧地址会重定向；作者仍是 xintaofei）。
+- 本地仓库：Mac 上 `/Users/keh4l/Documents/Github/codeg`，Linux 服务器上 `/www/gitroot/codeg`（Rust 编译放服务器，见 `CLAUDE.md`「定制版」一节）；`origin` = `keh4l/codeg`（fork），`upstream` = `spacering-net/codeg`（2026-10 从 `xintaofei/codeg` 迁来，旧地址会重定向；作者仍是 xintaofei）。
 - `main`：只跟上游，**不在上面提交**；`keh4l`：定制版，fork 的默认分支，发版从这里打 tag；功能分支另开。
 - 提交身份一律 `keh4l <2461454684@qq.com>`，用 `git -c user.name=keh4l -c user.email=2461454684@qq.com …` 传入，**不改 git config**。
 - 只用 merge，**不 rebase、不 force push** `keh4l`（tag 都在它的历史上）。
@@ -48,8 +48,9 @@ description: 把上游 spacering-net/codeg 的更新同步进 keh4l/codeg 定制
    cargo clippy --no-default-features --features mcp-bin --bin codeg-mcp -- -D warnings
    cargo clippy --no-default-features --features cli-bin --bin codeg-cli --lib -- -D warnings
    ```
+   在 Linux 服务器上：直接跑 `/root/codeg-staging/run-gate.sh`（上面这些加 `browser:agent` 两项），它已经处理好 root 跑测试、测试线程和 `pnpm test --maxWorkers=50%`，原因见 `CLAUDE.md`「定制版」一节。
    上游改了 `install.sh` 时再跑 CI 的 install-sh 检查：`/bin/bash -n install.sh && /bin/bash scripts/test-install-stop.sh install.sh`。CI 带 `CODEG_INSTALL_TEST_STRICT=1`，本机没有免密 sudo 时它会在「另一个用户的进程」那一项报 FAIL（上游的脚本也一样），本地不带这个变量跑，那一项显示 SKIP。
-   CI 用最新 stable Rust，本地可能更旧、漏掉新 lint。查 CI 版本：
+   CI 用最新 stable Rust，本地可能更旧、漏掉新 lint。Linux 服务器的默认工具链就是 stable，先 `rustup update stable` 再跑上面的 clippy 即可，不用下面的旁路工具链。Mac 上查 CI 版本：
    `curl -fsSL https://static.rust-lang.org/dist/channel-rust-stable.toml | sed -n '/^\[pkg\.rustc\]/,/^version/{s/^version = "\([0-9.]*\).*/\1/p;}'`，
    用旁路工具链跑 clippy（不动默认工具链）：`rustup toolchain install <ver> --profile minimal -c clippy`，`CARGO_TARGET_DIR=/tmp/codeg-target-<ver> cargo +<ver> clippy …`，跑完删掉那个目录（约 4 GB）。
    若新 lint 报在**上游原有代码**上、上游 main 的 CI 也一样红，不在 fork 里修（避免以后冲突），告诉用户等上游修。
