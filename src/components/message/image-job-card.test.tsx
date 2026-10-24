@@ -4,7 +4,18 @@ import { NextIntlClientProvider } from "next-intl"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import enMessages from "@/i18n/messages/en.json"
-import type { AdaptedToolCallPart } from "@/lib/adapters/ai-elements-adapter"
+import {
+  StaticConnectionStoreProvider,
+  type ConnectionStoreApi,
+} from "@/contexts/acp-connections-context"
+import {
+  StaticDelegationProvider,
+  type DelegationContextValue,
+} from "@/contexts/delegation-context"
+import type {
+  AdaptedContentPart,
+  AdaptedToolCallPart,
+} from "@/lib/adapters/ai-elements-adapter"
 import type { AdaptedImageJobPart } from "@/lib/image-gen/tool-calls"
 
 const getImageJobStatus = vi.fn()
@@ -21,6 +32,7 @@ vi.mock("@/components/message/file-reference-actions", () => ({
   FileReferenceActions: ({ children }: { children: ReactNode }) => children,
 }))
 
+import { ContentPartsRenderer } from "./content-parts-renderer"
 import { ImageJobCard } from "./image-job-card"
 
 const card = enMessages.ImageGeneration
@@ -158,5 +170,60 @@ describe("ImageJobCard", () => {
     )
     // The path stays, so the user can see where it was meant to be.
     expect(screen.getByText(PATH)).toBeInTheDocument()
+  })
+})
+
+describe("an image job in a reply", () => {
+  const STORE: ConnectionStoreApi = {
+    getConnection: () => undefined,
+    getConnectPending: () => undefined,
+    getConnectError: () => undefined,
+    getActiveKey: () => null,
+    subscribeKey: () => () => {},
+    subscribeActiveKey: () => () => {},
+  }
+  const DELEGATION: DelegationContextValue = {
+    findByParentToolUseId: () => undefined,
+    findByChildConversationId: () => undefined,
+    findByTaskId: () => undefined,
+  }
+  const later: AdaptedToolCallPart = {
+    type: "tool-call",
+    toolCallId: "call-later",
+    toolName: "bash",
+    input: JSON.stringify({ command: "ls" }),
+    state: "output-available",
+    output: "cat.png",
+  }
+
+  function renderReply(parts: AdaptedContentPart[]) {
+    return render(
+      <NextIntlClientProvider locale="en" messages={enMessages}>
+        <StaticConnectionStoreProvider store={STORE}>
+          <StaticDelegationProvider value={DELEGATION}>
+            <ContentPartsRenderer parts={parts} role="assistant" />
+          </StaticDelegationProvider>
+        </StaticConnectionStoreProvider>
+      </NextIntlClientProvider>
+    )
+  }
+
+  const row = () => document.querySelector('[data-step-key="imgjob:call-1"]')
+
+  it("hangs on the timeline's rail when more work follows it", async () => {
+    renderReply([part(mcp(SAVED)), later])
+    expect(await screen.findByAltText("cat.png")).toBeInTheDocument()
+    expect(row()).toHaveAttribute("data-status", "succeeded")
+  })
+
+  it("turns its ring with the job while it runs", () => {
+    renderReply([part(null), later])
+    expect(row()).toHaveAttribute("data-status", "running")
+  })
+
+  it("stands as the reply's answer when it ends the reply", async () => {
+    renderReply([later, part(mcp(SAVED))])
+    expect(await screen.findByAltText("cat.png")).toBeInTheDocument()
+    expect(row()).toBeNull()
   })
 })

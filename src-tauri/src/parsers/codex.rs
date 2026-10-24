@@ -1431,6 +1431,7 @@ fn unwrap_code_mode_script(
             is_error,
             agent_stats: None,
             images: Vec::new(),
+            exit_code: None,
         }
     };
 
@@ -1815,6 +1816,7 @@ fn unwrap_completed_mcp_calls(
             is_error: item.is_error,
             agent_stats: None,
             images: Vec::new(),
+            exit_code: None,
         });
     }
     Some((uses, results))
@@ -3667,6 +3669,7 @@ impl CodexParser {
                                                 is_error: false,
                                                 agent_stats: None,
                                                 images: Vec::new(),
+                                                exit_code: None,
                                             },
                                         ],
                                         timestamp,
@@ -4518,6 +4521,7 @@ impl CodexParser {
                                             is_error: false,
                                             agent_stats: None,
                                             images: Vec::new(),
+                                            exit_code: None,
                                         }],
                                         timestamp,
                                         usage: None,
@@ -4594,6 +4598,7 @@ impl CodexParser {
                                                 is_error,
                                                 agent_stats: None,
                                                 images: Vec::new(),
+                                                exit_code: None,
                                             }],
                                             timestamp,
                                             usage: None,
@@ -4716,6 +4721,7 @@ impl CodexParser {
                                             is_error,
                                             agent_stats: None,
                                             images: Vec::new(),
+                                            exit_code: None,
                                         }],
                                         timestamp,
                                         usage: None,
@@ -5870,6 +5876,7 @@ fn push_plan_review_marker(messages: &mut Vec<UnifiedMessage>, timestamp: DateTi
                 is_error: false,
                 agent_stats: None,
                 images: Vec::new(),
+                exit_code: None,
             },
         ],
         timestamp,
@@ -6556,6 +6563,7 @@ fn codex_compaction_divider(
             is_error: false,
             agent_stats: None,
             images: Vec::new(),
+            exit_code: None,
         },
     ];
     if let Some(summary) = summary {

@@ -7,7 +7,16 @@ import { NextIntlClientProvider } from "next-intl"
 import { describe, expect, it } from "vitest"
 
 import { AskQuestionResultCard } from "./ask-question-result-card"
+import { ContentPartsRenderer } from "./content-parts-renderer"
 import enMessages from "@/i18n/messages/en.json"
+import {
+  StaticConnectionStoreProvider,
+  type ConnectionStoreApi,
+} from "@/contexts/acp-connections-context"
+import {
+  StaticDelegationProvider,
+  type DelegationContextValue,
+} from "@/contexts/delegation-context"
 import { foldCollectCalls } from "@/lib/image-gen/tool-calls"
 import type { AdaptedToolCallPart } from "@/lib/adapters/ai-elements-adapter"
 
@@ -94,5 +103,48 @@ describe("an ask that is still waiting to be collected", () => {
     expect(screen.queryByText(result.awaiting)).toBeNull()
     fireEvent.click(screen.getByTestId("ask-question-result-card"))
     expect(screen.getByRole("radio", { name: /Rewrite/ })).toBeChecked()
+  })
+})
+
+describe("a collected answer whose question is not in view", () => {
+  const STORE: ConnectionStoreApi = {
+    getConnection: () => undefined,
+    getConnectPending: () => undefined,
+    getConnectError: () => undefined,
+    getActiveKey: () => null,
+    subscribeKey: () => () => {},
+    subscribeActiveKey: () => () => {},
+  }
+  const DELEGATION: DelegationContextValue = {
+    findByParentToolUseId: () => undefined,
+    findByChildConversationId: () => undefined,
+    findByTaskId: () => undefined,
+  }
+
+  it("draws the question record on the timeline, not a generic call", () => {
+    render(
+      <NextIntlClientProvider locale="en" messages={enMessages}>
+        <StaticConnectionStoreProvider store={STORE}>
+          <StaticDelegationProvider value={DELEGATION}>
+            <ContentPartsRenderer
+              parts={[
+                {
+                  type: "tool-call",
+                  toolCallId: "collect",
+                  toolName: "mcp__codeg-mcp__get_question_answer",
+                  input: JSON.stringify({ question_id: "q-1" }),
+                  state: "output-available",
+                  output: ANSWER,
+                },
+              ]}
+              role="assistant"
+            />
+          </StaticDelegationProvider>
+        </StaticConnectionStoreProvider>
+      </NextIntlClientProvider>
+    )
+    expect(screen.getByTestId("ask-question-result-card")).toHaveTextContent(
+      "Rewrite"
+    )
   })
 })

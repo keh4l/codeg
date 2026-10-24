@@ -9,14 +9,21 @@
  * image shows up the moment it is saved rather than when the agent next
  * checks. The image is read from the saved file, so the card works the same
  * after a reload, for as long as the file is there.
+ *
+ * In the reply's answer it is the card alone (`ImageJobCard`); among the
+ * steps it hangs on the activity timeline's rail (`ImageJobRow`), its ring
+ * following the job.
  */
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, type ComponentProps } from "react"
 import { FileImage } from "lucide-react"
 import { useTranslations } from "next-intl"
 
 import { FileReferenceActions } from "@/components/message/file-reference-actions"
 import { GeneratedImagesBlock } from "@/components/message/generated-images-block"
+import { HostedRow } from "@/components/message/activity/rows/hosted-row"
+import { IMAGE_ICON } from "@/components/message/activity/step-visuals"
+import type { StepStatus } from "@/lib/activity/types"
 import type { UserImageDisplay } from "@/lib/adapters/ai-elements-adapter"
 import {
   getImageJobStatus,
@@ -61,7 +68,13 @@ function fileName(path: string): string {
   return path.split(/[\\/]/).pop() || path
 }
 
-export function ImageJobCard({ part }: { part: AdaptedImageJobPart }) {
+interface ImageJobState {
+  /** The job as the rail's ring shows it. */
+  status: StepStatus
+  block: ComponentProps<typeof GeneratedImagesBlock>
+}
+
+function useImageJob(part: AdaptedImageJobPart): ImageJobState {
   const t = useTranslations("ImageGeneration")
   const openFileTarget = useOpenFileTarget()
   const { call, polls } = part
@@ -210,23 +223,47 @@ export function ImageJobCard({ part }: { part: AdaptedImageJobPart }) {
 
   const prompt = job?.revisedPrompt || input?.prompt || null
 
+  return {
+    status: failed ? "failed" : running ? "running" : "succeeded",
+    block: {
+      revisedPrompt: prompt,
+      image: failed ? null : image,
+      status: failed
+        ? "failed"
+        : running || (path && !image)
+          ? "in_progress"
+          : "completed",
+      pendingText: running
+        ? t("generating", { seconds: elapsedSeconds })
+        : t("loading"),
+      failedText,
+      footer,
+    },
+  }
+}
+
+export function ImageJobCard({ part }: { part: AdaptedImageJobPart }) {
+  return <GeneratedImagesBlock {...useImageJob(part).block} />
+}
+
+/** The card among a reply's steps, on the timeline's rail. */
+export function ImageJobRow({
+  stepKey,
+  part,
+}: {
+  stepKey: string
+  part: AdaptedImageJobPart
+}) {
+  const t = useTranslations("Folder.chat.activity")
+  const { status, block } = useImageJob(part)
   return (
-    <GeneratedImagesBlock
-      className="mb-2"
-      revisedPrompt={prompt}
-      image={failed ? null : image}
-      status={
-        failed
-          ? "failed"
-          : running || (path && !image)
-            ? "in_progress"
-            : "completed"
-      }
-      pendingText={
-        running ? t("generating", { seconds: elapsedSeconds }) : t("loading")
-      }
-      failedText={failedText}
-      footer={footer}
-    />
+    <HostedRow
+      stepKey={stepKey}
+      icon={IMAGE_ICON}
+      status={status}
+      kindLabel={t("kind.image")}
+    >
+      <GeneratedImagesBlock {...block} />
+    </HostedRow>
   )
 }

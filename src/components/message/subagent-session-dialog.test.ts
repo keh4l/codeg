@@ -63,35 +63,32 @@ describe("mergeAssistantRuns", () => {
     input: "{}",
     state: "output-available",
   })
-  const group = (...ids: string[]): AdaptedContentPart => ({
-    type: "tool-group",
-    items: ids.map(call),
-    isStreaming: false,
-  })
   const message = (
     id: string,
     role: AdaptedMessage["role"],
     content: AdaptedContentPart[]
   ): AdaptedMessage => ({ id, role, content, timestamp: "2026-10-17" })
 
-  it("folds a run of assistant messages into one, tool calls into one pill", () => {
+  it("folds a run of assistant messages into one, its steps in order", () => {
     const merged = mergeAssistantRuns([
       message("u", "user", [{ type: "text", text: "Find the bug" }]),
-      message("a1", "assistant", [group("t1")]),
-      message("a2", "assistant", [group("t2")]),
+      message("a1", "assistant", [call("t1")]),
+      message("a2", "assistant", [call("t2")]),
       message("a3", "assistant", [{ type: "text", text: "Found it." }]),
     ])
     expect(merged.map((m) => m.id)).toEqual(["u", "a1"])
-    const [pill, text] = merged[1].content
-    expect(pill.type === "tool-group" && pill.items.length).toBe(2)
-    expect(text).toEqual({ type: "text", text: "Found it." })
+    expect(merged[1].content).toEqual([
+      call("t1"),
+      call("t2"),
+      { type: "text", text: "Found it." },
+    ])
   })
 
   it("keeps a user message between assistant runs as their boundary", () => {
     const merged = mergeAssistantRuns([
-      message("a1", "assistant", [group("t1")]),
+      message("a1", "assistant", [call("t1")]),
       message("u", "user", [{ type: "text", text: "more" }]),
-      message("a2", "assistant", [group("t2")]),
+      message("a2", "assistant", [call("t2")]),
     ])
     expect(merged.map((m) => m.id)).toEqual(["a1", "u", "a2"])
   })

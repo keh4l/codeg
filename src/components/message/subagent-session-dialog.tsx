@@ -50,7 +50,6 @@ import {
 } from "@/components/ui/drawer"
 import {
   adaptMessageTurns,
-  mergeAdjacentToolGroups,
   type AdaptedMessage,
 } from "@/lib/adapters/ai-elements-adapter"
 import { getConversation } from "@/lib/api"
@@ -123,7 +122,8 @@ export function inProgressToolCallsByTurn(
  * One block per run of consecutive assistant messages, the way the main thread
  * folds them (`mergeConsecutiveAssistantTurns`). Claude Code records every API
  * message of a child as a turn of its own, so without this each step is a
- * separate block and back-to-back tool calls never fold into one pill.
+ * reply with a timeline of its own, and back-to-back commands or reads never
+ * fold into one group row.
  */
 export function mergeAssistantRuns(
   messages: AdaptedMessage[]
@@ -134,7 +134,7 @@ export function mergeAssistantRuns(
     if (message.role === "assistant" && last?.role === "assistant") {
       out[out.length - 1] = {
         ...last,
-        content: mergeAdjacentToolGroups([...last.content, ...message.content]),
+        content: [...last.content, ...message.content],
       }
     } else {
       out.push(message)
