@@ -141,11 +141,11 @@
 <summary><strong>Results for agents with short time-outs</strong>: details</summary>
 <br/>
 
-- How long an agent waits for one MCP tool call varies: ZCode 30 seconds; Cursor, Kimi, DeepSeek and OpenCode 60 seconds; Codex 5 minutes; Claude Code, Qoder, CodeBuddy and Grok practically without a limit. In the official build, `get_delegation_status` (waiting for a delegated task's result) can wait a long time in one call and `ask_user_question` (a question for you) waits until you answer; past the deadline the agent treats the call as failed and carries on, so the question counts as unanswered.
-- This build gives these tools a cap per agent, below its deadline: for example 20 seconds on ZCode, 45 seconds on OpenCode, 4 minutes on Codex; agents without a limit get no cap, as in the official build. When the cap is reached without a result, the call returns and tells the agent how to keep waiting.
+- How long an agent waits for one MCP tool call varies: ZCode 30 seconds; Cursor, Kimi and DeepSeek 60 seconds; Codex 5 minutes; Claude Code, OpenCode, Qoder, CodeBuddy and Grok practically without a limit. In the official build, `get_delegation_status` (waiting for a delegated task's result) can wait a long time in one call and `ask_user_question` (a question for you) waits until you answer; past the deadline the agent treats the call as failed and carries on, so the question counts as unanswered.
+- This build gives these tools a cap per agent, below its deadline: for example 20 seconds on ZCode, 45 seconds on Cursor, 4 minutes on Codex; agents without a limit get no cap, as in the official build. When the cap is reached without a result, the call returns and tells the agent how to keep waiting.
 - Questions: if you haven't answered by then, the question card stays where it is and the agent keeps waiting with a new tool, `get_question_answer`; once you answer, the answer shows in the original question card.
 - Delegated tasks: one `get_delegation_status` call waits at most up to the cap, then returns the tasks' current status. Image generation works the same way; see the previous section.
-- While waiting, the agent gets a progress update every 10 seconds, which lets agents that extend their deadline on progress, such as OpenCode, wait longer.
+- While waiting, the agent gets a progress update every 10 seconds, which lets agents that extend their deadline on progress, such as CommandCode, wait longer.
 
 </details>
 
@@ -153,7 +153,7 @@
 <summary><strong>Only the agents you use</strong>: details</summary>
 <br/>
 
-- There are close to 20 built-in agents, and the official build enables all of them, installed or not: a long settings list, a new-conversation picker crowded with agents that aren't installed (the conversation page never installs one, so picking one gets you nowhere), and an install check for every one each time the settings page opens.
+- There are 20 built-in agents, and the official build enables all of them, installed or not: a long settings list, a new-conversation picker crowded with agents that aren't installed (the conversation page never installs one, so picking one gets you nowhere), and an install check for every one each time the settings page opens.
 - In this build, Settings → Agents lists only “My agents”, which you can still drag to reorder. “Add” in its title bar and the row below the list open “Add agents”: search by name or description, filter by installed / not installed, find the agents already installed here first, and add several at a time. One that isn't installed is installed from its details once added.
 - The switch in an agent's details is “My agents”: turn it off to take the agent off the list, with undo. It is the official build's “enabled” setting, so the new-conversation picker, delegation and everything else follow it.
 - Opening the settings page checks only “My agents”; any other agent is checked when you open it.

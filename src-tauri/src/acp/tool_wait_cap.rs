@@ -16,12 +16,13 @@
 //! |---|---|---|
 //! | ZCode (bridge 0.72) | 30 s wall clock, progress does not extend it | 20 s |
 //! | Cursor, Kimi Code, DeepSeek | 60 s (MCP SDK default) | 45 s |
-//! | OpenCode 1.19 | 60 s, restarted by progress notifications | 45 s |
 //! | CommandCode 1.84 | 80 s idle, restarted by progress | 60 s |
+//! | MiniMax Code 0.7 | 120 s wall clock, progress does not extend it | 90 s |
 //! | Kiro, Trae | not established (Kiro documents 120 s) | 90 s |
 //! | Antigravity 1.4 | 180 s | 150 s |
 //! | Codex (codex-acp 2.2), Hermes 0.22 | 300 s | 240 s |
 //! | Gemini CLI 0.60 | 600 s | 480 s |
+//! | OpenCode 2.x | 12 h wall clock (1.x: 60 s, restarted by progress) | none |
 //! | Claude Code, Qoder, CodeBuddy, Grok | an hour or more | none |
 //! | Custom agents | unknown | 20 s |
 //!
@@ -36,15 +37,17 @@ use crate::models::agent::AgentType;
 pub fn codeg_mcp_wait_cap(agent_type: AgentType) -> Option<Duration> {
     let secs = match agent_type {
         AgentType::ZCode => 20,
-        AgentType::Cursor | AgentType::KimiCode | AgentType::DeepSeek | AgentType::OpenCode => 45,
+        AgentType::Cursor | AgentType::KimiCode | AgentType::DeepSeek => 45,
         AgentType::CommandCode => 60,
-        AgentType::Kiro | AgentType::Trae => 90,
+        AgentType::MiniMaxCode | AgentType::Kiro | AgentType::Trae => 90,
         AgentType::Antigravity => 150,
         AgentType::Codex | AgentType::Hermes => 240,
         AgentType::Gemini => 480,
-        AgentType::ClaudeCode | AgentType::Qoder | AgentType::CodeBuddy | AgentType::Grok => {
-            return None
-        }
+        AgentType::ClaudeCode
+        | AgentType::Qoder
+        | AgentType::CodeBuddy
+        | AgentType::Grok
+        | AgentType::OpenCode => return None,
         // These never receive codeg-mcp (no MCP over the wire), but give them
         // the safe value rather than none should that ever change.
         AgentType::OpenClaw | AgentType::Cline | AgentType::Pi => 20,
@@ -65,8 +68,8 @@ mod tests {
             (AgentType::Cursor, 60),
             (AgentType::KimiCode, 60),
             (AgentType::DeepSeek, 60),
-            (AgentType::OpenCode, 60),
             (AgentType::CommandCode, 80),
+            (AgentType::MiniMaxCode, 120),
             (AgentType::Antigravity, 180),
             (AgentType::Codex, 300),
             (AgentType::Hermes, 300),
@@ -88,6 +91,7 @@ mod tests {
             AgentType::Qoder,
             AgentType::CodeBuddy,
             AgentType::Grok,
+            AgentType::OpenCode,
         ] {
             assert_eq!(codeg_mcp_wait_cap(agent), None, "{agent:?}");
         }

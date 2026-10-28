@@ -141,11 +141,11 @@
 <summary><strong>Resultados para agentes com tempo limite curto</strong>: detalhes</summary>
 <br/>
 
-- Quanto um agente espera por uma chamada de ferramenta MCP varia: ZCode, 30 segundos; Cursor, Kimi, DeepSeek e OpenCode, 60 segundos; Codex, 5 minutos; Claude Code, Qoder, CodeBuddy e Grok, praticamente sem limite. Na versão oficial, `get_delegation_status` (esperar o resultado de uma tarefa delegada) pode esperar muito numa só chamada e `ask_user_question` (uma pergunta para você) espera até você responder; passado o prazo, o agente trata a chamada como falha e segue em frente, então a pergunta conta como sem resposta.
-- Esta versão dá a essas ferramentas um teto por agente, abaixo do prazo dele: por exemplo 20 segundos no ZCode, 45 segundos no OpenCode, 4 minutos no Codex; agentes sem limite ficam sem teto, como na versão oficial. Ao chegar ao teto sem resultado, a chamada volta e diz ao agente como continuar esperando.
+- Quanto um agente espera por uma chamada de ferramenta MCP varia: ZCode, 30 segundos; Cursor, Kimi e DeepSeek, 60 segundos; Codex, 5 minutos; Claude Code, OpenCode, Qoder, CodeBuddy e Grok, praticamente sem limite. Na versão oficial, `get_delegation_status` (esperar o resultado de uma tarefa delegada) pode esperar muito numa só chamada e `ask_user_question` (uma pergunta para você) espera até você responder; passado o prazo, o agente trata a chamada como falha e segue em frente, então a pergunta conta como sem resposta.
+- Esta versão dá a essas ferramentas um teto por agente, abaixo do prazo dele: por exemplo 20 segundos no ZCode, 45 segundos no Cursor, 4 minutos no Codex; agentes sem limite ficam sem teto, como na versão oficial. Ao chegar ao teto sem resultado, a chamada volta e diz ao agente como continuar esperando.
 - Perguntas: se você ainda não respondeu, o cartão da pergunta continua onde está e o agente segue esperando com uma ferramenta nova, `get_question_answer`; quando você responde, a resposta aparece no cartão original.
 - Tarefas delegadas: cada chamada a `get_delegation_status` espera no máximo até o teto e devolve o estado atual das tarefas. A geração de imagens funciona do mesmo jeito; veja a seção anterior.
-- Enquanto espera, o agente recebe um aviso de progresso a cada 10 segundos, o que permite aos agentes que estendem o prazo com o progresso, como o OpenCode, esperar mais.
+- Enquanto espera, o agente recebe um aviso de progresso a cada 10 segundos, o que permite aos agentes que estendem o prazo com o progresso, como o CommandCode, esperar mais.
 
 </details>
 
@@ -153,7 +153,7 @@
 <summary><strong>Só os agentes que você usa</strong>: detalhes</summary>
 <br/>
 
-- São quase 20 agentes integrados, e a versão oficial ativa todos, instalados ou não: uma lista longa nas configurações, um seletor de nova conversa cheio de agentes não instalados (a página de conversa nunca instala nenhum, então escolher um não leva a nada) e uma verificação de cada um sempre que a página de configurações abre.
+- São 20 agentes integrados, e a versão oficial ativa todos, instalados ou não: uma lista longa nas configurações, um seletor de nova conversa cheio de agentes não instalados (a página de conversa nunca instala nenhum, então escolher um não leva a nada) e uma verificação de cada um sempre que a página de configurações abre.
 - Nesta versão, Configurações → Agentes lista só “Meus agentes”, que ainda podem ser reordenados arrastando. “Adicionar” na barra de título e a linha abaixo da lista abrem “Adicionar agentes”: busque por nome ou descrição, filtre por instalados / não instalados, encontre primeiro os já instalados nesta máquina e adicione vários de uma vez. Um não instalado é instalado pelos detalhes depois de adicionado.
 - O interruptor nos detalhes de um agente é “Meus agentes”: desligue para tirar o agente da lista, com desfazer. É a configuração “ativado” da versão oficial, então o seletor de nova conversa, a delegação e todo o resto seguem ele.
 - Ao abrir a página de configurações, só “Meus agentes” são verificados; qualquer outro agente é verificado quando você o abre.

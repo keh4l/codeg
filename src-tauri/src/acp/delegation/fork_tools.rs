@@ -10,7 +10,7 @@
 //!   had not finished.
 //! - **Progress.** While any call waits, a `notifications/progress` goes out
 //!   every [`PROGRESS_INTERVAL`] when the client asked for them, which
-//!   restarts the timer on hosts that allow that (OpenCode, CommandCode) and
+//!   restarts the timer on hosts that allow that (CommandCode) and
 //!   the idle timer on others (Claude Code, Qoder, CodeBuddy).
 //! - **Images.** `image_generate` / `image_get_result`, served by
 //!   `crate::image_gen` in the parent.

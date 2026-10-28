@@ -141,11 +141,11 @@
 <summary><strong>Des résultats même pour les agents au délai court</strong> : détails</summary>
 <br/>
 
-- Le temps qu'un agent attend un appel d'outil MCP varie : ZCode 30 secondes ; Cursor, Kimi, DeepSeek et OpenCode 60 secondes ; Codex 5 minutes ; Claude Code, Qoder, CodeBuddy et Grok pratiquement sans limite. Dans la version officielle, `get_delegation_status` (attendre le résultat d'une tâche déléguée) peut attendre longtemps en un seul appel et `ask_user_question` (une question pour vous) attend votre réponse ; passé le délai, l'agent considère l'appel comme échoué et continue, si bien que la question compte comme restée sans réponse.
-- Cette version donne à ces outils un plafond par agent, inférieur à son délai : par exemple 20 secondes sur ZCode, 45 secondes sur OpenCode, 4 minutes sur Codex ; les agents sans limite n'ont pas de plafond, comme dans la version officielle. Plafond atteint sans résultat, l'appel revient et indique à l'agent comment continuer d'attendre.
+- Le temps qu'un agent attend un appel d'outil MCP varie : ZCode 30 secondes ; Cursor, Kimi et DeepSeek 60 secondes ; Codex 5 minutes ; Claude Code, OpenCode, Qoder, CodeBuddy et Grok pratiquement sans limite. Dans la version officielle, `get_delegation_status` (attendre le résultat d'une tâche déléguée) peut attendre longtemps en un seul appel et `ask_user_question` (une question pour vous) attend votre réponse ; passé le délai, l'agent considère l'appel comme échoué et continue, si bien que la question compte comme restée sans réponse.
+- Cette version donne à ces outils un plafond par agent, inférieur à son délai : par exemple 20 secondes sur ZCode, 45 secondes sur Cursor, 4 minutes sur Codex ; les agents sans limite n'ont pas de plafond, comme dans la version officielle. Plafond atteint sans résultat, l'appel revient et indique à l'agent comment continuer d'attendre.
 - Questions : si vous n'avez pas encore répondu, la carte de la question reste en place et l'agent continue d'attendre avec un nouvel outil, `get_question_answer` ; une fois votre réponse donnée, elle s'affiche dans la carte d'origine.
 - Tâches déléguées : un appel à `get_delegation_status` attend au plus jusqu'au plafond, puis renvoie l'état actuel des tâches. La génération d'images fonctionne de la même façon ; voir la section précédente.
-- Pendant l'attente, l'agent reçoit un point d'avancement toutes les 10 secondes, ce qui permet aux agents qui prolongent leur délai selon l'avancement, comme OpenCode, d'attendre plus longtemps.
+- Pendant l'attente, l'agent reçoit un point d'avancement toutes les 10 secondes, ce qui permet aux agents qui prolongent leur délai selon l'avancement, comme CommandCode, d'attendre plus longtemps.
 
 </details>
 
@@ -153,7 +153,7 @@
 <summary><strong>Seulement les agents que vous utilisez</strong> : détails</summary>
 <br/>
 
-- Il y a près de 20 agents intégrés, et la version officielle les active tous, installés ou non : une longue liste dans les réglages, un sélecteur de nouvelle conversation rempli d'agents non installés (la page de conversation n'en installe jamais, les choisir ne mène à rien) et une vérification de chacun à chaque ouverture de la page des réglages.
+- Il y a 20 agents intégrés, et la version officielle les active tous, installés ou non : une longue liste dans les réglages, un sélecteur de nouvelle conversation rempli d'agents non installés (la page de conversation n'en installe jamais, les choisir ne mène à rien) et une vérification de chacun à chaque ouverture de la page des réglages.
 - Dans cette version, Réglages → Agents IA ne liste que « Mes agents », toujours réordonnables par glisser-déposer. « Ajouter » dans la barre de titre et la ligne sous la liste ouvrent « Ajouter des agents » : recherche par nom ou description, filtre installés / non installés, agents déjà installés ici en premier, ajout de plusieurs à la fois. Un agent non installé s'installe depuis ses détails une fois ajouté.
 - L'interrupteur dans les détails d'un agent, c'est « Mes agents » : désactivez-le pour retirer l'agent de la liste, avec annulation possible. C'est le réglage « activé » de la version officielle, donc le sélecteur de nouvelle conversation, la délégation et tout le reste le suivent.
 - À l'ouverture de la page des réglages, seuls « Mes agents » sont vérifiés ; tout autre agent l'est quand vous l'ouvrez.

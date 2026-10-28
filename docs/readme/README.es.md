@@ -141,11 +141,11 @@
 <summary><strong>Resultados para agentes con tiempos de espera cortos</strong>: detalles</summary>
 <br/>
 
-- Cuánto espera un agente por una llamada a una herramienta MCP varía: ZCode, 30 segundos; Cursor, Kimi, DeepSeek y OpenCode, 60 segundos; Codex, 5 minutos; Claude Code, Qoder, CodeBuddy y Grok, prácticamente sin límite. En la versión oficial, `get_delegation_status` (esperar el resultado de una tarea delegada) puede esperar mucho en una sola llamada y `ask_user_question` (una pregunta para ti) espera hasta que respondas; pasado el plazo, el agente da la llamada por fallida y sigue, así que la pregunta cuenta como sin responder.
-- Esta versión da a estas herramientas un límite por agente, por debajo de su plazo: por ejemplo 20 segundos en ZCode, 45 en OpenCode y 4 minutos en Codex; los agentes sin límite no tienen tope, como en la versión oficial. Si se llega al tope sin resultado, la llamada vuelve y le dice al agente cómo seguir esperando.
+- Cuánto espera un agente por una llamada a una herramienta MCP varía: ZCode, 30 segundos; Cursor, Kimi y DeepSeek, 60 segundos; Codex, 5 minutos; Claude Code, OpenCode, Qoder, CodeBuddy y Grok, prácticamente sin límite. En la versión oficial, `get_delegation_status` (esperar el resultado de una tarea delegada) puede esperar mucho en una sola llamada y `ask_user_question` (una pregunta para ti) espera hasta que respondas; pasado el plazo, el agente da la llamada por fallida y sigue, así que la pregunta cuenta como sin responder.
+- Esta versión da a estas herramientas un límite por agente, por debajo de su plazo: por ejemplo 20 segundos en ZCode, 45 en Cursor y 4 minutos en Codex; los agentes sin límite no tienen tope, como en la versión oficial. Si se llega al tope sin resultado, la llamada vuelve y le dice al agente cómo seguir esperando.
 - Preguntas: si para entonces no has respondido, la tarjeta de la pregunta sigue donde está y el agente sigue esperando con una herramienta nueva, `get_question_answer`; cuando respondes, la respuesta aparece en la tarjeta original.
 - Tareas delegadas: cada llamada a `get_delegation_status` espera como mucho hasta el tope y devuelve el estado actual de las tareas. La generación de imágenes funciona igual; consulta la sección anterior.
-- Mientras espera, el agente recibe un aviso de progreso cada 10 segundos, con lo que los agentes que alargan su plazo con el progreso, como OpenCode, pueden esperar más.
+- Mientras espera, el agente recibe un aviso de progreso cada 10 segundos, con lo que los agentes que alargan su plazo con el progreso, como CommandCode, pueden esperar más.
 
 </details>
 
@@ -153,7 +153,7 @@
 <summary><strong>Solo los agentes que usas</strong>: detalles</summary>
 <br/>
 
-- Hay cerca de 20 agentes integrados y la versión oficial los activa todos, estén instalados o no: una lista de ajustes larga, un selector de nueva conversación lleno de agentes sin instalar (la página de conversación nunca instala uno, así que elegirlo no sirve de nada) y una comprobación de cada uno cada vez que se abre la página de ajustes.
+- Hay 20 agentes integrados y la versión oficial los activa todos, estén instalados o no: una lista de ajustes larga, un selector de nueva conversación lleno de agentes sin instalar (la página de conversación nunca instala uno, así que elegirlo no sirve de nada) y una comprobación de cada uno cada vez que se abre la página de ajustes.
 - En esta versión, Ajustes → Agentes muestra solo «Mis agentes», que se pueden seguir reordenando arrastrando. «Añadir» en su barra de título y la fila bajo la lista abren «Añadir agentes»: busca por nombre o descripción, filtra por instalados / no instalados, encuentra primero los ya instalados en este equipo y añade varios a la vez. Uno que no esté instalado se instala desde sus detalles una vez añadido.
 - El interruptor de los detalles de un agente es «Mis agentes»: apágalo para quitar el agente de la lista, con opción de deshacer. Es el ajuste «activado» de la versión oficial, así que el selector de nueva conversación, la delegación y todo lo demás lo siguen.
 - Al abrir la página de ajustes solo se comprueban «Mis agentes»; cualquier otro agente se comprueba cuando lo abres.

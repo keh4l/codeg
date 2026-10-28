@@ -141,11 +141,11 @@
 <summary><strong>Ergebnisse auch bei Agenten mit kurzem Timeout</strong> – Details</summary>
 <br/>
 
-- Wie lange ein Agent auf einen MCP-Tool-Aufruf wartet, ist verschieden: ZCode 30 Sekunden; Cursor, Kimi, DeepSeek und OpenCode 60 Sekunden; Codex 5 Minuten; Claude Code, Qoder, CodeBuddy und Grok praktisch unbegrenzt. Im offiziellen Build kann `get_delegation_status` (Warten auf das Ergebnis einer delegierten Aufgabe) in einem Aufruf lange warten, und `ask_user_question` (eine Frage an dich) wartet, bis du antwortest; nach Ablauf der Frist wertet der Agent den Aufruf als fehlgeschlagen und macht weiter, die Frage gilt also als unbeantwortet.
-- Dieser Build gibt diesen Tools je Agent eine Obergrenze unterhalb seiner Frist: etwa 20 Sekunden bei ZCode, 45 Sekunden bei OpenCode, 4 Minuten bei Codex; Agenten ohne Frist bekommen keine, wie im offiziellen Build. Ist die Grenze ohne Ergebnis erreicht, kehrt der Aufruf zurück und sagt dem Agenten, wie er weiter wartet.
+- Wie lange ein Agent auf einen MCP-Tool-Aufruf wartet, ist verschieden: ZCode 30 Sekunden; Cursor, Kimi und DeepSeek 60 Sekunden; Codex 5 Minuten; Claude Code, OpenCode, Qoder, CodeBuddy und Grok praktisch unbegrenzt. Im offiziellen Build kann `get_delegation_status` (Warten auf das Ergebnis einer delegierten Aufgabe) in einem Aufruf lange warten, und `ask_user_question` (eine Frage an dich) wartet, bis du antwortest; nach Ablauf der Frist wertet der Agent den Aufruf als fehlgeschlagen und macht weiter, die Frage gilt also als unbeantwortet.
+- Dieser Build gibt diesen Tools je Agent eine Obergrenze unterhalb seiner Frist: etwa 20 Sekunden bei ZCode, 45 Sekunden bei Cursor, 4 Minuten bei Codex; Agenten ohne Frist bekommen keine, wie im offiziellen Build. Ist die Grenze ohne Ergebnis erreicht, kehrt der Aufruf zurück und sagt dem Agenten, wie er weiter wartet.
 - Fragen: Hast du bis dahin nicht geantwortet, bleibt die Fragekarte stehen, und der Agent wartet mit einem neuen Tool weiter, `get_question_answer`; sobald du antwortest, steht die Antwort in der ursprünglichen Fragekarte.
 - Delegierte Aufgaben: Ein Aufruf von `get_delegation_status` wartet höchstens bis zur Grenze und liefert dann den aktuellen Stand der Aufgaben. Bei der Bildgenerierung ist es genauso; siehe vorheriger Abschnitt.
-- Während des Wartens bekommt der Agent alle 10 Sekunden eine Fortschrittsmeldung, sodass Agenten, die ihre Frist bei Fortschritt verlängern, etwa OpenCode, länger warten können.
+- Während des Wartens bekommt der Agent alle 10 Sekunden eine Fortschrittsmeldung, sodass Agenten, die ihre Frist bei Fortschritt verlängern, etwa CommandCode, länger warten können.
 
 </details>
 
@@ -153,7 +153,7 @@
 <summary><strong>Nur die Agenten, die du nutzt</strong> – Details</summary>
 <br/>
 
-- Es gibt fast 20 eingebaute Agenten, und der offizielle Build aktiviert alle, ob installiert oder nicht: eine lange Liste in den Einstellungen, eine Auswahl für neue Unterhaltungen voller nicht installierter Agenten (die Unterhaltungsseite installiert nie einen, die Wahl bringt also nichts) und eine Installationsprüfung für jeden bei jedem Öffnen der Einstellungsseite.
+- Es gibt 20 eingebaute Agenten, und der offizielle Build aktiviert alle, ob installiert oder nicht: eine lange Liste in den Einstellungen, eine Auswahl für neue Unterhaltungen voller nicht installierter Agenten (die Unterhaltungsseite installiert nie einen, die Wahl bringt also nichts) und eine Installationsprüfung für jeden bei jedem Öffnen der Einstellungsseite.
 - In diesem Build listet Einstellungen → Agenten nur „Meine Agenten“, weiterhin per Ziehen sortierbar. „Hinzufügen“ in der Titelleiste und die Zeile unter der Liste öffnen „Agenten hinzufügen“: nach Name oder Beschreibung suchen, nach installiert / nicht installiert filtern, die hier schon installierten zuerst finden und mehrere auf einmal hinzufügen. Ein nicht installierter wird nach dem Hinzufügen in seinen Details installiert.
 - Der Schalter in den Details eines Agenten ist „Meine Agenten“: ausschalten nimmt den Agenten aus der Liste, mit Rückgängig. Es ist die Einstellung „aktiviert“ des offiziellen Builds, daher folgen ihr die Auswahl für neue Unterhaltungen, die Delegation und alles andere.
 - Beim Öffnen der Einstellungsseite werden nur „Meine Agenten“ geprüft; jeder andere Agent, wenn du ihn öffnest.
