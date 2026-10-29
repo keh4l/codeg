@@ -41,18 +41,20 @@ export const ThoughtRow = memo(function ThoughtRow({
     settled: !step.streaming,
   })
   const status = step.streaming ? "running" : "succeeded"
+  // A thinking placeholder with nothing in it yet fades in late, so a block
+  // that ends at once never flashes a row.
+  const placeholder = step.streaming && !step.part.content.trim()
 
   return (
     <ActivityRow
       stepKey={step.key}
       status={status}
-      // A thinking placeholder with nothing in it yet fades in late, so a
-      // block that ends at once never flashes a row.
       className={
-        step.streaming && !step.part.content.trim()
+        placeholder
           ? "[animation:tool-content-fade_200ms_ease-out_500ms_both]"
           : undefined
       }
+      motionSelf={placeholder}
       marker={
         <RailIcon
           icon={THOUGHT_ICON}

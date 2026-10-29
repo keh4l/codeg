@@ -4295,6 +4295,7 @@
         "cardResultPending": "Result not returned yet"
       },
       "asyncTasks": {
+        "title": "Background tasks",
         "openOutput": "Output",
         "stop": "Stop",
         "tokens": "{count} tokens",
