@@ -31,26 +31,25 @@
 <table>
   <tr>
     <td width="50%" valign="top">🪟 <strong>每个窗口一套标签</strong><br/>同一个服务器开多个窗口时，可以关掉标签同步，让每个窗口各管各的；会话和消息照常同步。</td>
-    <td width="50%" valign="top">💭 <strong>Claude Code 显示思考过程</strong><br/>向 API 请求思考摘要，思考区域不再是空的。</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">🌐 <strong>翻译回复和消息</strong><br/>智能体的回复每写完一段就翻译成你的语言，思考、提问卡片和待办任务也能翻译，要发的消息一键翻译成英文；用阿里云百炼或腾讯云的翻译模型，一千字约一秒。</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">🧩 <strong>查看 Claude Code 子智能体的会话</strong><br/>子智能体那一行多了「查看会话」，像 Codex 一样打开它完整的会话记录；子智能体还在跑时就能看。</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">📱 <strong>手机上快速切换打开的会话</strong><br/>手机上点会话标题，就能看到所有打开的会话和各自的进度，点一下切过去；别的会话在等你处理时，标题旁会亮起提醒。</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">🎨 <strong>智能体生成图片</strong><br/>配好 OpenAI、Grok、Gemini 或中转站的地址、Key 和模型，所有支持 MCP 的智能体都能出图、改图，存到它指定的位置；图直接显示在对话里，Key 不经过智能体。</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">⏳ <strong>短超时的智能体也能等到结果</strong><br/>有的智能体一次工具调用只等 30 到 60 秒。定制版按智能体限定每次等多久，没等到就先返回、下次接着取：你回答得慢，提问也不会被当成没回答。</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">🗂️ <strong>只列你在用的智能体</strong><br/>设置里只列你添加的智能体，其余的收进「添加智能体」，可搜索、一次多选；新装的 codeg 只启用本机已装的，新会话的选择器也清爽了。</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">📋 <strong>手机上长按选中文字</strong><br/>长按回复或输入框里的文字，出来的是手机自带的选中手柄和复制菜单，不再弹出会话菜单；手指选中回复后，「复制文本、引用、提问」出现在输入框下方，不和手机的菜单挤在一起。</td>
-    <td width="50%" valign="top">🔁 <strong>在网页上重启服务器</strong><br/>「设置 → 系统」里多了「重启 codeg」：部署在服务器上的 codeg 不用登录服务器就能重启，页面会自动重新连接；在服务器上恢复备份后也会自动重启生效。</td>
   </tr>
   <tr>
-    <td colspan="2" valign="top">🔄 <strong>紧跟上游</strong><br/>上游的更新定期合并进来；没列在这里的功能，和官方版完全一样。定制版最早加的内置 Kiro CLI，0.36.0 起已并入官方版。</td>
+    <td colspan="2" valign="top">🔁 <strong>在网页上重启服务器</strong><br/>「设置 → 系统」里多了「重启 codeg」：部署在服务器上的 codeg 不用登录服务器就能重启，页面会自动重新连接；在服务器上恢复备份后也会自动重启生效。</td>
+  </tr>
+  <tr>
+    <td colspan="2" valign="top">🔄 <strong>紧跟上游</strong><br/>上游的更新定期合并进来；没列在这里的功能，和官方版完全一样。定制版最早加的内置 Kiro CLI，0.36.0 起已并入官方版。Claude Code 的思考摘要 0.41.3-1 起改用官方版的开关：「设置 → 智能体 → Claude Code」里的「显示 Claude 的思考摘要」，默认关闭。</td>
   </tr>
 </table>
 
@@ -63,22 +62,6 @@
 - 会话、消息和删除操作不受开关影响，始终同步到所有窗口。
 - 开关保存在服务端：在任意一个窗口或设备上切换，连到这个服务的所有窗口和设备会一起切换。（0.35.2-1 及以前按浏览器分别保存，浏览器端默认关闭。）
 - 上游的对应需求：[spacering-net/codeg#547](https://github.com/spacering-net/codeg/issues/547)。
-
-</details>
-
-<details>
-<summary><strong>Claude Code 显示思考过程</strong> 的细节</summary>
-<br/>
-
-- 新模型在官方版里只返回加密的思考签名，所以思考内容一直是空的。
-- 定制版向 API 请求思考摘要，和终端里打开 `showThinkingSummaries` 后的 `claude` 看到的一样。
-- 不需要的话，在 `~/.claude/settings.json`（或项目的 `.claude/settings.json`）里加上：
-
-  ```json
-  "showThinkingSummaries": false
-  ```
-
-- 以前的对话当时就没有返回思考文本，无法补回。
 
 </details>
 

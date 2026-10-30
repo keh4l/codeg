@@ -31,26 +31,25 @@
 <table>
   <tr>
     <td width="50%" valign="top">🪟 <strong>每個視窗一組分頁</strong><br/>同一台伺服器開多個視窗時，可以關掉分頁同步，讓各視窗各自管理分頁；會話和訊息照常同步。</td>
-    <td width="50%" valign="top">💭 <strong>Claude Code 顯示思考過程</strong><br/>向 API 請求思考摘要，思考區域不再是空的。</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">🌐 <strong>翻譯回覆和訊息</strong><br/>智慧體的回覆每寫完一段就翻譯成你的語言，思考、提問卡片和待辦任務也能翻譯，要送出的訊息一鍵翻譯成英文；使用阿里雲百煉或騰訊雲的翻譯模型，一千字約一秒。</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">🧩 <strong>查看 Claude Code 子智慧體的會話</strong><br/>子智慧體那一列多了「檢視會話」，像 Codex 一樣打開它完整的會話紀錄；子智慧體還在執行時就能看。</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">📱 <strong>手機上快速切換開啟的會話</strong><br/>手機上點會話標題，就能看到所有開啟的會話和各自的進度，點一下切過去；別的會話在等你處理時，標題旁會亮起提醒。</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">🎨 <strong>智慧體生成圖片</strong><br/>設定好 OpenAI、Grok、Gemini 或中轉站的位址、Key 和模型，所有支援 MCP 的智慧體都能出圖、改圖，存到它指定的位置；圖直接顯示在會話裡，Key 不經過智慧體。</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">⏳ <strong>短逾時的智慧體也能等到結果</strong><br/>有的智慧體一次工具呼叫只等 30 到 60 秒。客製版按智慧體限定每次等多久，沒等到就先返回、下次接著取：你回答得慢，提問也不會被當成沒回答。</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">🗂️ <strong>只列你在用的智慧體</strong><br/>設定裡只列你新增的智慧體，其餘的收進「新增智慧體」，可搜尋、一次多選；新裝的 codeg 只啟用本機已裝的，新對話的選擇器也清爽了。</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">📋 <strong>手機上長按選取文字</strong><br/>長按回覆或輸入框裡的文字，出來的是手機內建的選取控點和拷貝選單，不再彈出會話選單；手指選取回覆後，「複製文字、引用、提問」出現在輸入框下方，不和手機的選單擠在一起。</td>
-    <td width="50%" valign="top">🔁 <strong>在網頁上重新啟動伺服器</strong><br/>「設定 → 系統」裡多了「重新啟動 codeg」：部署在伺服器上的 codeg 不用登入伺服器就能重新啟動，頁面會自動重新連線；在伺服器上還原備份後也會自動重新啟動生效。</td>
   </tr>
   <tr>
-    <td colspan="2" valign="top">🔄 <strong>緊跟上游</strong><br/>上游的更新定期合併進來；沒列在這裡的功能，和官方版完全一樣。客製版最早加入的內建 Kiro CLI，0.36.0 起已併入官方版。</td>
+    <td colspan="2" valign="top">🔁 <strong>在網頁上重新啟動伺服器</strong><br/>「設定 → 系統」裡多了「重新啟動 codeg」：部署在伺服器上的 codeg 不用登入伺服器就能重新啟動，頁面會自動重新連線；在伺服器上還原備份後也會自動重新啟動生效。</td>
+  </tr>
+  <tr>
+    <td colspan="2" valign="top">🔄 <strong>緊跟上游</strong><br/>上游的更新定期合併進來；沒列在這裡的功能，和官方版完全一樣。客製版最早加入的內建 Kiro CLI，0.36.0 起已併入官方版。Claude Code 的思考摘要 0.41.3-1 起改用官方版的開關：「設定 → 智能體 → Claude Code」裡的「顯示 Claude 的思考摘要」，預設關閉。</td>
   </tr>
 </table>
 
@@ -63,22 +62,6 @@
 - 會話、訊息和刪除操作不受開關影響，一律同步到所有視窗。
 - 開關儲存在服務端：在任一視窗或裝置上切換，連到這個服務的所有視窗和裝置會一起切換。（0.35.2-1 及以前按瀏覽器分別儲存，瀏覽器端預設關閉。）
 - 上游的對應需求：[spacering-net/codeg#547](https://github.com/spacering-net/codeg/issues/547)。
-
-</details>
-
-<details>
-<summary><strong>Claude Code 顯示思考過程</strong> 的細節</summary>
-<br/>
-
-- 新模型在官方版裡只回傳加密的思考簽章，所以思考內容一直是空的。
-- 客製版向 API 請求思考摘要，和終端機裡開啟 `showThinkingSummaries` 後的 `claude` 看到的一樣。
-- 不需要的話，在 `~/.claude/settings.json`（或專案的 `.claude/settings.json`）裡加上：
-
-  ```json
-  "showThinkingSummaries": false
-  ```
-
-- 以前的對話當時就沒有回傳思考文字，無法補回。
 
 </details>
 

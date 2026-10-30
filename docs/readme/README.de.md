@@ -31,26 +31,25 @@
 <table>
   <tr>
     <td width="50%" valign="top">🪟 <strong>Tabs pro Fenster</strong><br/>Mit mehreren Fenstern auf einem Server lässt sich die Tab-Synchronisierung abschalten, dann behält jedes Fenster seine eigenen Tabs; Unterhaltungen und Nachrichten werden weiter synchronisiert.</td>
-    <td width="50%" valign="top">💭 <strong>Claude Code zeigt sein Thinking</strong><br/>Fordert bei der API Thinking-Zusammenfassungen an, der Thinking-Bereich bleibt also nicht mehr leer.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">🌐 <strong>Übersetzte Antworten und Nachrichten</strong><br/>Jeder Abschnitt einer Agentenantwort wird in deine Sprache übersetzt, sobald er fertig ist, auch Denkprozesse, Fragekarten und Aufgabenlisten, und eine Nachricht wird per Tastendruck ins Englische übersetzt, mit Übersetzungsmodellen von Alibaba Cloud oder Tencent Cloud in etwa einer Sekunde pro 1.000 Zeichen.</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">🧩 <strong>Sitzungen von Claude-Code-Subagenten</strong><br/>Subagent-Zeilen bekommen „Konversation anzeigen“, das wie bei Codex die vollständige Unterhaltung öffnet; einem Subagenten lässt sich bei der Arbeit zusehen.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">📱 <strong>Offene Konversationen auf dem Handy wechseln</strong><br/>Auf dem Handy zeigt ein Tipp auf den Konversationstitel alle offenen Konversationen und wie weit jede ist; ein Tipp auf eine wechselt dorthin. Der Titel meldet sich, wenn eine andere auf dich wartet.</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">🎨 <strong>Agenten erzeugen Bilder</strong><br/>Adresse, Schlüssel und Modelle von OpenAI, Grok, Gemini oder einem Relay eintragen, und jeder Agent mit MCP-Unterstützung kann Bilder erzeugen und bearbeiten und dort speichern, wo er es angibt; das Bild erscheint in der Konversation, und der Schlüssel geht nie durch den Agenten.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">⏳ <strong>Ergebnisse auch bei Agenten mit kurzem Timeout</strong><br/>Manche Agenten warten nur 30 bis 60 Sekunden auf einen Tool-Aufruf. Dieser Build begrenzt jedes Warten je Agent, antwortet rechtzeitig und holt den Rest beim nächsten Aufruf ab, sodass eine langsame Antwort auf eine Frage nicht mehr als keine Antwort zählt.</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">🗂️ <strong>Nur die Agenten, die du nutzt</strong><br/>Die Einstellungen listen nur die Agenten, die du hinzugefügt hast; der Rest wartet unter „Agenten hinzufügen“, durchsuchbar und mehrere auf einmal hinzuzufügen. Eine neue Installation aktiviert nur, was hier installiert ist, damit die Auswahl für neue Unterhaltungen kurz bleibt.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">📋 <strong>Text auf dem Handy per langem Drücken auswählen</strong><br/>Langes Drücken auf Text in einer Antwort oder im Eingabefeld zeigt die Auswahlgriffe und das Kopiermenü des Handys statt des Konversationsmenüs; wählt man eine Antwort mit dem Finger aus, erscheinen Text kopieren / Zitieren / Fragen unter dem Eingabefeld, abseits des Handymenüs.</td>
-    <td width="50%" valign="top">🔁 <strong>Server aus dem Web neu starten</strong><br/>Einstellungen → Systemeinstellungen bekommt „codeg neu starten“: codeg auf einem Server startet neu, ohne dass man sich am Server anmelden muss, und die Seite verbindet sich von selbst wieder; eine Sicherung, die auf einem Server wiederhergestellt wird, startet jetzt ebenfalls neu, um wirksam zu werden.</td>
   </tr>
   <tr>
-    <td colspan="2" valign="top">🔄 <strong>Nah am Upstream</strong><br/>Upstream wird regelmäßig hineingemergt; was hier nicht steht, funktioniert genau wie in der offiziellen Version. Das eingebaute Kiro CLI, das diese Version als Erstes hinzugefügt hat, ist seit 0.36.0 Teil der offiziellen Version.</td>
+    <td colspan="2" valign="top">🔁 <strong>Server aus dem Web neu starten</strong><br/>Einstellungen → Systemeinstellungen bekommt „codeg neu starten“: codeg auf einem Server startet neu, ohne dass man sich am Server anmelden muss, und die Seite verbindet sich von selbst wieder; eine Sicherung, die auf einem Server wiederhergestellt wird, startet jetzt ebenfalls neu, um wirksam zu werden.</td>
+  </tr>
+  <tr>
+    <td colspan="2" valign="top">🔄 <strong>Nah am Upstream</strong><br/>Upstream wird regelmäßig hineingemergt; was hier nicht steht, funktioniert genau wie in der offiziellen Version. Das eingebaute Kiro CLI, das diese Version als Erstes hinzugefügt hat, ist seit 0.36.0 Teil der offiziellen Version. Die Zusammenfassungen von Claudes Denken nutzen seit 0.41.3-1 den Schalter der offiziellen Version: „Zusammenfassungen von Claudes Denken anzeigen“ unter Einstellungen → Agenten → Claude Code, standardmäßig aus.</td>
   </tr>
 </table>
 
@@ -63,22 +62,6 @@
 - Unterhaltungen, Nachrichten und Löschungen erreichen unabhängig von der Einstellung immer alle Fenster.
 - Die Einstellung liegt auf dem Server: Wer sie in einem beliebigen Fenster oder auf einem beliebigen Gerät umschaltet, schaltet alle mit diesem Server verbundenen Fenster und Geräte mit um. (Bis 0.35.2-1 wurde sie pro Browser gespeichert und war im Browser standardmäßig aus.)
 - Upstream angefragt in [spacering-net/codeg#547](https://github.com/spacering-net/codeg/issues/547).
-
-</details>
-
-<details>
-<summary><strong>Claude Code zeigt sein Thinking</strong> – Details</summary>
-<br/>
-
-- Bei neueren Modellen bekommt die offizielle Version für jeden Thinking-Block nur eine verschlüsselte Signatur, Claudes Thinking bleibt also leer.
-- Diese Version fordert bei der API Thinking-Zusammenfassungen an – dasselbe, was das Terminal-`claude` mit eingeschaltetem `showThinkingSummaries` zeigt.
-- Zum Abschalten trägst du das in `~/.claude/settings.json` (oder in die `.claude/settings.json` eines Projekts) ein:
-
-  ```json
-  "showThinkingSummaries": false
-  ```
-
-- Für frühere Unterhaltungen wurde nie Thinking-Text geliefert, er lässt sich daher nicht nachholen.
 
 </details>
 

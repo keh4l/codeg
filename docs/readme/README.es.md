@@ -31,26 +31,25 @@
 <table>
   <tr>
     <td width="50%" valign="top">🪟 <strong>Pestañas por ventana</strong><br/>Con varias ventanas sobre un mismo servidor, desactiva la sincronización de pestañas y cada ventana conserva las suyas; conversaciones y mensajes se siguen sincronizando.</td>
-    <td width="50%" valign="top">💭 <strong>Claude Code muestra su pensamiento</strong><br/>Pide a la API resúmenes del pensamiento, así que esa sección ya no aparece vacía.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">🌐 <strong>Respuestas y mensajes traducidos</strong><br/>Cada parte de la respuesta del agente se traduce a tu idioma en cuanto termina, también el razonamiento, las tarjetas de pregunta y las listas de tareas, y un mensaje pasa al inglés con una tecla, con modelos de traducción de Alibaba Cloud o Tencent Cloud, en un segundo por cada 1.000 caracteres.</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">🧩 <strong>Sesiones de los subagentes de Claude Code</strong><br/>Las filas de subagente tienen «Ver conversación», que abre su conversación completa como ya pasa con Codex; un subagente se puede ver mientras trabaja.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">📱 <strong>Cambiar entre conversaciones abiertas en el móvil</strong><br/>En el móvil, toca el título de la conversación para ver todas las conversaciones abiertas y cómo va cada una, y toca una para cambiar a ella; el título avisa cuando otra te está esperando.</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">🎨 <strong>Los agentes generan imágenes</strong><br/>Configura la dirección, la clave y los modelos de OpenAI, Grok, Gemini o un intermediario, y cualquier agente compatible con MCP puede crear y editar imágenes y guardarlas donde indique; la imagen aparece en la conversación y la clave nunca pasa por el agente.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">⏳ <strong>Resultados para agentes con tiempos de espera cortos</strong><br/>Algunos agentes esperan solo de 30 a 60 segundos por una llamada a una herramienta. Esta versión limita cada espera según el agente, responde a tiempo y recoge el resto en la siguiente llamada, así que una respuesta lenta a una pregunta ya no cuenta como sin respuesta.</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">🗂️ <strong>Solo los agentes que usas</strong><br/>Ajustes muestra solo los agentes que añadiste; el resto queda en «Añadir agentes», con búsqueda y para añadir varios a la vez. Una instalación nueva activa solo los que están instalados aquí, así que el selector de nueva conversación queda corto.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">📋 <strong>Mantener pulsado para seleccionar texto en el móvil</strong><br/>Mantener pulsado el texto de una respuesta o del cuadro de mensaje muestra los tiradores de selección y el menú de copiar del propio móvil, en lugar del menú de la conversación; al seleccionar una respuesta con el dedo, Copiar texto / Citar / Preguntar aparecen bajo el cuadro de mensaje, lejos del menú del móvil.</td>
-    <td width="50%" valign="top">🔁 <strong>Reiniciar el servidor desde la web</strong><br/>Ajustes → Sistema incorpora «Reiniciar codeg»: codeg desplegado en un servidor se reinicia sin entrar al servidor y la página se reconecta sola; restaurar una copia de seguridad en un servidor ahora también reinicia para aplicarla.</td>
   </tr>
   <tr>
-    <td colspan="2" valign="top">🔄 <strong>Al día con el original</strong><br/>Los cambios del proyecto original se incorporan con regularidad; lo que no aparece aquí funciona igual que en la versión oficial. Kiro CLI integrado, lo primero que añadió esta versión, forma parte de la versión oficial desde la 0.36.0.</td>
+    <td colspan="2" valign="top">🔁 <strong>Reiniciar el servidor desde la web</strong><br/>Ajustes → Sistema incorpora «Reiniciar codeg»: codeg desplegado en un servidor se reinicia sin entrar al servidor y la página se reconecta sola; restaurar una copia de seguridad en un servidor ahora también reinicia para aplicarla.</td>
+  </tr>
+  <tr>
+    <td colspan="2" valign="top">🔄 <strong>Al día con el original</strong><br/>Los cambios del proyecto original se incorporan con regularidad; lo que no aparece aquí funciona igual que en la versión oficial. Kiro CLI integrado, lo primero que añadió esta versión, forma parte de la versión oficial desde la 0.36.0. Los resúmenes del razonamiento de Claude Code usan desde la 0.41.3-1 el interruptor de la versión oficial: «Mostrar resúmenes del razonamiento de Claude» en Ajustes → Agentes → Claude Code, desactivado por defecto.</td>
   </tr>
 </table>
 
@@ -63,22 +62,6 @@
 - Las conversaciones, los mensajes y las eliminaciones llegan siempre a todas las ventanas, sea cual sea el ajuste.
 - El ajuste se guarda en el servidor: al cambiarlo en cualquier ventana o dispositivo, cambian con él todas las ventanas y dispositivos conectados a ese servidor. (Hasta la 0.35.2-1 se guardaba por navegador y venía desactivado en los navegadores.)
 - Solicitado al proyecto original en [spacering-net/codeg#547](https://github.com/spacering-net/codeg/issues/547).
-
-</details>
-
-<details>
-<summary><strong>Claude Code muestra su pensamiento</strong>: detalles</summary>
-<br/>
-
-- Con los modelos recientes, la versión oficial solo recibe una firma cifrada por cada bloque de pensamiento, así que el pensamiento de Claude aparece vacío.
-- Esta versión pide a la API resúmenes del pensamiento: lo mismo que muestra `claude` en la terminal con `showThinkingSummaries` activado.
-- Para desactivarlo, añade esto a `~/.claude/settings.json` (o al `.claude/settings.json` de un proyecto):
-
-  ```json
-  "showThinkingSummaries": false
-  ```
-
-- El pensamiento de conversaciones anteriores nunca se llegó a enviar, así que no se puede recuperar.
 
 </details>
 

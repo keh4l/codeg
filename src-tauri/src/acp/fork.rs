@@ -275,9 +275,7 @@ fn build_fork_request(
 ) -> ForkSessionRequest {
     let mut req = ForkSessionRequest::new(session_id.clone(), cwd);
     let mut meta = fork_point.map(ForkPoint::to_meta).unwrap_or_default();
-    if let Some(session_meta) =
-        claude_raw_sdk_session_meta(agent_type, std::path::Path::new(cwd), claude)
-    {
+    if let Some(session_meta) = claude_raw_sdk_session_meta(agent_type, claude) {
         // Disjoint keys: the fork point lives under `jetbrains`, the session's
         // own settings under `claudeCode`.
         meta.extend(session_meta);
@@ -345,20 +343,6 @@ mod tests {
         );
     }
 
-    /// The `_meta` a Claude resume from `/work` sends, which the fork has to
-    /// match. Not a literal: its thinking-display flag follows the Claude
-    /// settings on this machine (see `claude_raw_sdk_session_meta`).
-    fn claude_session_meta_at_work(prompt_suggestions: bool) -> serde_json::Value {
-        serde_json::Value::Object(
-            claude_raw_sdk_session_meta(
-                AgentType::ClaudeCode,
-                std::path::Path::new("/work"),
-                &ClaudeSessionOptions::new(prompt_suggestions),
-            )
-            .expect("Claude has session meta"),
-        )
-    }
-
     fn server(name: &str) -> McpServer {
         McpServer::Stdio(agent_client_protocol::schema::v1::McpServerStdio::new(
             name, "/bin/mcp",
@@ -416,7 +400,10 @@ mod tests {
         assert_eq!(fork["cwd"], resume["cwd"]);
         assert_eq!(fork["mcpServers"], resume["mcpServers"]);
         assert_eq!(fork["_meta"], resume["_meta"]);
-        assert_eq!(fork["_meta"], claude_session_meta_at_work(true));
+        assert_eq!(
+            fork["_meta"],
+            serde_json::json!({"claudeCode": {"emitRawSDKMessages": true}})
+        );
         assert_eq!(fork["mcpServers"].as_array().map(Vec::len), Some(2));
 
         // No servers: none named on either request.
@@ -430,7 +417,10 @@ mod tests {
         ))
         .unwrap();
         assert!(bare.get("mcpServers").is_none());
-        assert_eq!(bare["_meta"], claude_session_meta_at_work(true));
+        assert_eq!(
+            bare["_meta"],
+            serde_json::json!({"claudeCode": {"emitRawSDKMessages": true}})
+        );
     }
 
     /// A connection that asks for no predicted prompts (an automation run, a
@@ -457,10 +447,12 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(fork["_meta"], resume["_meta"]);
-        assert_eq!(fork["_meta"], claude_session_meta_at_work(false));
         assert_eq!(
-            fork["_meta"]["claudeCode"]["options"]["promptSuggestions"],
-            false
+            fork["_meta"],
+            serde_json::json!({"claudeCode": {
+                "emitRawSDKMessages": true,
+                "options": {"promptSuggestions": false},
+            }})
         );
     }
 
@@ -483,10 +475,13 @@ mod tests {
             Some(&point),
         ))
         .unwrap();
-        let mut expected = claude_session_meta_at_work(true);
-        expected["jetbrains"] =
-            serde_json::json!({"air": {"fork": {"version": 1, "messageId": "msg_01"}}});
-        assert_eq!(wire["_meta"], expected);
+        assert_eq!(
+            wire["_meta"],
+            serde_json::json!({
+                "claudeCode": {"emitRawSDKMessages": true},
+                "jetbrains": {"air": {"fork": {"version": 1, "messageId": "msg_01"}}},
+            })
+        );
     }
 
     /// The optional halves stay absent rather than null — every adapter

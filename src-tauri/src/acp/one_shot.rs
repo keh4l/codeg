@@ -87,7 +87,6 @@ pub(crate) fn session_meta(
 ) -> Option<serde_json::Map<String, serde_json::Value>> {
     let mut meta = crate::acp::connection::claude_raw_sdk_session_meta(
         agent_type,
-        &crate::paths::codeg_text_generation_root(),
         &crate::acp::connection::ClaudeSessionOptions::new(false),
     )?;
     if let Some(serde_json::Value::Object(claude_code)) = meta.get_mut("claudeCode") {

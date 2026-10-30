@@ -31,26 +31,25 @@
 <table>
   <tr>
     <td width="50%" valign="top">🪟 <strong>Tabs per window</strong><br/>With several windows on one server, turn tab sync off and each window keeps its own tabs; conversations and messages still sync.</td>
-    <td width="50%" valign="top">💭 <strong>Claude Code shows its thinking</strong><br/>Requests thinking summaries from the API, so the thinking section is no longer empty.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">🌐 <strong>Translated replies and messages</strong><br/>Each part of an agent's reply is translated into your language as soon as it is finished, thinking, question cards and todo lists too, and a message translates to English in one keystroke, via Alibaba Cloud or Tencent Cloud translation models, at about a second per 1,000 characters.</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">🧩 <strong>Claude Code sub-agent sessions</strong><br/>Sub-agent rows get "Open conversation", which opens the sub-agent's full conversation the way it already does for Codex; a sub-agent can be watched while it runs.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">📱 <strong>Switch open conversations on a phone</strong><br/>On a phone, tap the conversation title to see every open conversation and how far each has got, then tap one to switch; the title lights up when another one is waiting for you.</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">🎨 <strong>Agents generate images</strong><br/>Set up the address, key and models of OpenAI, Grok, Gemini or a relay, and every agent that supports MCP can make and edit images, saved where it says; the image shows in the conversation, and the key never passes through the agent.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">⏳ <strong>Results for agents with short time-outs</strong><br/>Some agents wait only 30 to 60 seconds for a tool call. This build caps each wait per agent, returns in time and collects the rest on the next call, so a slow answer to a question no longer counts as no answer.</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">🗂️ <strong>Only the agents you use</strong><br/>Settings lists only the agents you added; the rest wait in “Add agents”, searchable and added several at a time. A new install enables only what is installed here, so the new-conversation picker stays short.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">📋 <strong>Long-press to select text on a phone</strong><br/>Long-pressing text in a reply or the message box brings up the phone's own selection handles and copy menu instead of the conversation menu; select a reply with a finger and Copy Text / Quote / Ask appear under the message box, clear of the phone's menu.</td>
-    <td width="50%" valign="top">🔁 <strong>Restart the server from the web</strong><br/>Settings → System gains “Restart codeg”: codeg deployed on a server restarts without logging in to the server, and the page reconnects by itself; restoring a backup on a server now restarts to apply it, too.</td>
   </tr>
   <tr>
-    <td colspan="2" valign="top">🔄 <strong>Follows upstream</strong><br/>Upstream is merged in regularly; anything not listed here works exactly as in the official build. The built-in Kiro CLI, the first thing this build added, has been part of the official build since 0.36.0.</td>
+    <td colspan="2" valign="top">🔁 <strong>Restart the server from the web</strong><br/>Settings → System gains “Restart codeg”: codeg deployed on a server restarts without logging in to the server, and the page reconnects by itself; restoring a backup on a server now restarts to apply it, too.</td>
+  </tr>
+  <tr>
+    <td colspan="2" valign="top">🔄 <strong>Follows upstream</strong><br/>Upstream is merged in regularly; anything not listed here works exactly as in the official build. The built-in Kiro CLI, the first thing this build added, has been part of the official build since 0.36.0. Claude Code thinking summaries use the official build's switch from 0.41.3-1 on: “Show Claude's thinking summaries” in Settings → Agents → Claude Code, off by default.</td>
   </tr>
 </table>
 
@@ -63,22 +62,6 @@
 - Conversations, messages and deletions always reach every window, whichever way it is set.
 - The switch is stored on the server: flip it in any window or on any device and every window and device connected to that server switches with it. (Up to 0.35.2-1 it was kept per browser and off by default in browsers.)
 - Requested upstream in [spacering-net/codeg#547](https://github.com/spacering-net/codeg/issues/547).
-
-</details>
-
-<details>
-<summary><strong>Claude Code shows its thinking</strong>: details</summary>
-<br/>
-
-- With recent models the official build gets only an encrypted signature for each thinking block, so Claude's thinking stays empty.
-- This build asks the API for thinking summaries — what the terminal `claude` shows with `showThinkingSummaries` on.
-- To turn it off, add this to `~/.claude/settings.json` (or a project's `.claude/settings.json`):
-
-  ```json
-  "showThinkingSummaries": false
-  ```
-
-- Thinking from earlier conversations was never sent, so it can't be recovered.
 
 </details>
 

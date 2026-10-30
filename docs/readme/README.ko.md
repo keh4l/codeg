@@ -31,26 +31,25 @@
 <table>
   <tr>
     <td width="50%" valign="top">🪟 <strong>창마다 자체 탭</strong><br/>같은 서버에서 여러 창을 열 때 탭 동기화를 끄면 창마다 자체 탭을 유지합니다. 대화와 메시지는 그대로 동기화됩니다.</td>
-    <td width="50%" valign="top">💭 <strong>Claude Code의 생각 과정 표시</strong><br/>API에 생각 요약을 요청하므로 생각 영역이 더 이상 비어 있지 않습니다.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">🌐 <strong>답변과 메시지 번역</strong><br/>에이전트의 답변을 한 덩어리씩 다 쓰는 대로 내 언어로(생각 과정, 질문 카드, 할 일 목록도), 보낼 메시지를 키 한 번으로 영어로 번역합니다. Alibaba Cloud 또는 Tencent Cloud 번역 모델을 쓰며 1,000자당 약 1초입니다.</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">🧩 <strong>Claude Code 하위 에이전트 세션</strong><br/>하위 에이전트 줄에 '대화 보기'가 생겨 Codex처럼 전체 대화 기록을 열 수 있습니다. 하위 에이전트가 실행 중일 때도 볼 수 있습니다.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">📱 <strong>휴대폰에서 열린 대화 빠르게 전환</strong><br/>휴대폰에서 대화 제목을 누르면 열린 대화 전부와 각 대화의 진행 상황이 보이고, 눌러서 바로 전환합니다. 다른 대화가 응답을 기다리면 제목 옆에 알려 줍니다.</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">🎨 <strong>에이전트가 이미지 생성</strong><br/>OpenAI, Grok, Gemini 또는 중계 서버의 주소·키·모델을 설정하면 MCP를 지원하는 모든 에이전트가 이미지를 만들고 편집해 지정한 곳에 저장합니다. 이미지는 대화에 바로 보이고, 키는 에이전트를 거치지 않습니다.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">⏳ <strong>타임아웃이 짧은 에이전트도 결과를 기다림</strong><br/>도구 호출을 30~60초만 기다리는 에이전트도 있습니다. 이 빌드는 에이전트별로 한 번에 기다리는 시간을 정해, 시간 안에 먼저 돌려주고 다음 호출에서 이어 받습니다. 답변이 늦어도 질문이 답변 없음으로 처리되지 않습니다.</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">🗂️ <strong>쓰는 에이전트만 목록에</strong><br/>설정에는 추가한 에이전트만 보이고 나머지는 '에이전트 추가'에 모았습니다. 검색하고 여러 개를 한 번에 추가할 수 있습니다. 새로 설치하면 이 컴퓨터에 설치된 것만 켜지므로 새 대화 선택기도 깔끔합니다.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">📋 <strong>휴대폰에서 길게 눌러 텍스트 선택</strong><br/>응답이나 입력창의 텍스트를 길게 누르면 대화 메뉴 대신 휴대폰 자체의 선택 핸들과 복사 메뉴가 나옵니다. 손가락으로 응답을 선택하면 「텍스트 복사 / 인용 / 질문」이 입력창 아래에 나와 휴대폰의 메뉴와 겹치지 않습니다.</td>
-    <td width="50%" valign="top">🔁 <strong>웹에서 서버 다시 시작</strong><br/>「설정 → 시스템」에 「codeg 다시 시작」이 추가되었습니다. 서버에 배포한 codeg를 서버에 로그인하지 않고 다시 시작할 수 있고, 페이지는 자동으로 다시 연결됩니다. 서버에서 백업을 복원한 뒤에도 자동으로 다시 시작해 적용됩니다.</td>
   </tr>
   <tr>
-    <td colspan="2" valign="top">🔄 <strong>업스트림 추종</strong><br/>업스트림 변경은 정기적으로 병합됩니다. 여기에 없는 기능은 공식 빌드와 똑같습니다. 이 빌드가 처음 추가한 Kiro CLI 내장 기능은 0.36.0부터 공식 빌드에 포함되었습니다.</td>
+    <td colspan="2" valign="top">🔁 <strong>웹에서 서버 다시 시작</strong><br/>「설정 → 시스템」에 「codeg 다시 시작」이 추가되었습니다. 서버에 배포한 codeg를 서버에 로그인하지 않고 다시 시작할 수 있고, 페이지는 자동으로 다시 연결됩니다. 서버에서 백업을 복원한 뒤에도 자동으로 다시 시작해 적용됩니다.</td>
+  </tr>
+  <tr>
+    <td colspan="2" valign="top">🔄 <strong>업스트림 추종</strong><br/>업스트림 변경은 정기적으로 병합됩니다. 여기에 없는 기능은 공식 빌드와 똑같습니다. 이 빌드가 처음 추가한 Kiro CLI 내장 기능은 0.36.0부터 공식 빌드에 포함되었습니다. Claude Code의 사고 요약은 0.41.3-1부터 공식 빌드의 스위치를 씁니다. 「설정 → 에이전트 → Claude Code」의 「Claude의 사고 요약 표시」이며 기본값은 꺼짐입니다.</td>
   </tr>
 </table>
 
@@ -63,22 +62,6 @@
 - 대화, 메시지, 삭제는 이 설정과 관계없이 항상 모든 창에 반영됩니다.
 - 이 설정은 서버에 저장됩니다. 어느 창이나 기기에서 바꾸든 그 서버에 연결된 모든 창과 기기가 함께 바뀝니다. (0.35.2-1 이하에서는 브라우저마다 따로 저장되었고 브라우저에서는 기본으로 꺼져 있었습니다.)
 - 업스트림 요청: [spacering-net/codeg#547](https://github.com/spacering-net/codeg/issues/547).
-
-</details>
-
-<details>
-<summary><strong>Claude Code의 생각 과정 표시</strong> 자세히</summary>
-<br/>
-
-- 최신 모델에서는 공식 빌드에 생각(thinking) 블록의 암호화된 서명만 오기 때문에 Claude의 생각 내용이 비어 있습니다.
-- 이 빌드는 API에 생각 요약을 요청합니다. 터미널의 `claude`에서 `showThinkingSummaries`를 켰을 때와 같은 내용입니다.
-- 원하지 않으면 `~/.claude/settings.json`(또는 프로젝트의 `.claude/settings.json`)에 다음을 추가하세요:
-
-  ```json
-  "showThinkingSummaries": false
-  ```
-
-- 이전 대화는 생각 텍스트를 받은 적이 없으므로 되살릴 수 없습니다.
 
 </details>
 

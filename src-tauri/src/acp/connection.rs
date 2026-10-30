@@ -6804,10 +6804,8 @@ impl ClaudeSessionOptions {
 
 /// The `_meta.claudeCode` object every Claude session request names
 /// (`session/new`, `load`, `resume`, `fork`): the raw SDK message stream;
-/// thinking summaries unless the Claude settings for `cwd` turn them off (see
-/// [`claude_session_meta`]); when `prompt_suggestions` is false,
-/// `options.promptSuggestions: false`; and the launch's `options.settings`, if
-/// any.
+/// when `prompt_suggestions` is false, `options.promptSuggestions: false`;
+/// and the launch's `options.settings`, if any.
 ///
 /// claude-agent-acp 0.92.0 turns the SDK's `promptSuggestions` on for every
 /// session it serves an AIR client: after each turn Claude Code sends one more
@@ -6822,48 +6820,18 @@ impl ClaudeSessionOptions {
 /// started with (see `crate::acp::fork::build_fork_request`).
 pub(crate) fn claude_raw_sdk_session_meta(
     agent_type: AgentType,
-    cwd: &Path,
     claude: &ClaudeSessionOptions,
 ) -> Option<serde_json::Map<String, serde_json::Value>> {
     if agent_type != AgentType::ClaudeCode {
         return None;
     }
-    Some(claude_session_meta(
-        claude_thinking_summaries_enabled(cwd),
-        claude,
-    ))
-}
 
-/// The `_meta` codeg sends with every Claude `session/new|load|resume|fork`.
-///
-/// `thinking_summaries` adds `--thinking-display summarized` to the CLI the
-/// adapter spawns. Recent models default the API's `thinking.display` to
-/// `"omitted"`, so without it every thinking block arrives as a bare signature
-/// and the reasoning panel stays empty. The interactive CLI opts back in through
-/// the `showThinkingSummaries` setting, but the CLI reads that setting only when
-/// it is interactive — the SDK process claude-agent-acp drives is not, and the
-/// adapter sets no display of its own. The flag rides in the SDK's `extraArgs`,
-/// which the adapter merges with its own, rather than in the SDK `thinking`
-/// option: that option also picks the thinking MODE and the adapter lets it
-/// override `MAX_THINKING_TOKENS`, while the flag changes only what is shown.
-/// All of them share the one `options` object the adapter reads into the SDK
-/// options.
-fn claude_session_meta(
-    thinking_summaries: bool,
-    claude: &ClaudeSessionOptions,
-) -> serde_json::Map<String, serde_json::Value> {
     let mut claude_code = serde_json::Map::new();
     claude_code.insert(
         "emitRawSDKMessages".to_string(),
         serde_json::Value::Bool(true),
     );
     let mut options = serde_json::Map::new();
-    if thinking_summaries {
-        options.insert(
-            "extraArgs".to_string(),
-            serde_json::json!({ "thinking-display": "summarized" }),
-        );
-    }
     if !claude.prompt_suggestions {
         options.insert(
             "promptSuggestions".to_string(),
@@ -6882,35 +6850,7 @@ fn claude_session_meta(
         "claudeCode".to_string(),
         serde_json::Value::Object(claude_code),
     );
-    meta
-}
-
-/// Whether a Claude session in `cwd` asks for thinking summaries: yes, unless
-/// the user's Claude settings explicitly set `showThinkingSummaries: false`.
-/// Reads the user, project and local files the adapter's
-/// `--setting-sources=user,project,local` layers, so a project can override the
-/// user default. The user file is resolved the way the history parser resolves
-/// it, from codeg's own `CLAUDE_CONFIG_DIR`.
-fn claude_thinking_summaries_enabled(cwd: &Path) -> bool {
-    let project = cwd.join(".claude");
-    claude_show_thinking_summaries_setting(&[
-        crate::parsers::claude::resolve_claude_config_dir().join("settings.json"),
-        project.join("settings.json"),
-        project.join("settings.local.json"),
-    ]) != Some(false)
-}
-
-/// The explicit `showThinkingSummaries` of the highest-precedence file in
-/// `paths` (later wins) that sets one. Missing or unparsable files count as
-/// not setting it.
-fn claude_show_thinking_summaries_setting(paths: &[PathBuf]) -> Option<bool> {
-    paths.iter().rev().find_map(|path| {
-        let raw = std::fs::read_to_string(path).ok()?;
-        serde_json::from_str::<serde_json::Value>(&raw)
-            .ok()?
-            .get("showThinkingSummaries")?
-            .as_bool()
-    })
+    Some(meta)
 }
 
 /// The client capabilities codeg advertises on Initialize, with per-agent
@@ -7387,7 +7327,7 @@ fn build_new_session_request(
     claude: &ClaudeSessionOptions,
 ) -> NewSessionRequest {
     let mut req = NewSessionRequest::new(cwd.to_path_buf());
-    if let Some(meta) = claude_raw_sdk_session_meta(agent_type, cwd, claude) {
+    if let Some(meta) = claude_raw_sdk_session_meta(agent_type, claude) {
         req = req.meta(meta);
     }
     if !mcp_servers.is_empty() {
@@ -7425,7 +7365,7 @@ fn build_load_session_request(
     claude: &ClaudeSessionOptions,
 ) -> LoadSessionRequest {
     let mut req = LoadSessionRequest::new(session_id, cwd.to_path_buf());
-    if let Some(meta) = claude_raw_sdk_session_meta(agent_type, cwd, claude) {
+    if let Some(meta) = claude_raw_sdk_session_meta(agent_type, claude) {
         req = req.meta(meta);
     }
     if !mcp_servers.is_empty() {
@@ -7447,7 +7387,7 @@ pub(crate) fn build_resume_session_request(
     claude: &ClaudeSessionOptions,
 ) -> ResumeSessionRequest {
     let mut req = ResumeSessionRequest::new(session_id, cwd.to_path_buf());
-    if let Some(meta) = claude_raw_sdk_session_meta(agent_type, cwd, claude) {
+    if let Some(meta) = claude_raw_sdk_session_meta(agent_type, claude) {
         req = req.meta(meta);
     }
     if !mcp_servers.is_empty() {
@@ -31743,13 +31683,9 @@ mod tests {
 
     #[test]
     fn claude_raw_sdk_meta_enabled_only_for_claude() {
-        let cwd = Path::new("/tmp/codeg");
-        let claude_meta = claude_raw_sdk_session_meta(
-            AgentType::ClaudeCode,
-            cwd,
-            &ClaudeSessionOptions::new(true),
-        )
-        .expect("Claude must have raw SDK meta");
+        let claude_meta =
+            claude_raw_sdk_session_meta(AgentType::ClaudeCode, &ClaudeSessionOptions::new(true))
+                .expect("Claude must have raw SDK meta");
         assert_eq!(
             claude_meta
                 .get("claudeCode")
@@ -31759,67 +31695,18 @@ mod tests {
         );
 
         assert!(
-            claude_raw_sdk_session_meta(AgentType::Codex, cwd, &ClaudeSessionOptions::new(true))
+            claude_raw_sdk_session_meta(AgentType::Codex, &ClaudeSessionOptions::new(true))
                 .is_none()
         );
         assert!(
-            claude_raw_sdk_session_meta(AgentType::Codex, cwd, &ClaudeSessionOptions::new(false))
+            claude_raw_sdk_session_meta(AgentType::Codex, &ClaudeSessionOptions::new(false))
                 .is_none()
         );
-        // A session that asks for predicted prompts names nothing about them:
-        // the adapter turns them on itself.
-        assert!(claude_meta["claudeCode"]
-            .get("options")
-            .and_then(|options| options.get("promptSuggestions"))
-            .is_none());
-    }
-
-    #[test]
-    fn claude_session_meta_requests_thinking_summaries_only_when_enabled() {
-        let on = claude_session_meta(true, &ClaudeSessionOptions::new(true));
+        // A session that asks for predicted prompts names nothing else: the
+        // adapter turns them on itself.
         assert_eq!(
-            on["claudeCode"]["options"]["extraArgs"]["thinking-display"],
-            "summarized"
-        );
-        assert_eq!(on["claudeCode"]["emitRawSDKMessages"], true);
-
-        let off = claude_session_meta(false, &ClaudeSessionOptions::new(true));
-        assert_eq!(
-            serde_json::Value::Object(off),
+            serde_json::Value::Object(claude_meta),
             serde_json::json!({"claudeCode": {"emitRawSDKMessages": true}})
-        );
-    }
-
-    #[test]
-    fn show_thinking_summaries_setting_takes_the_highest_precedence_explicit_value() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = |name: &str, body: &str| {
-            let path = dir.path().join(name);
-            std::fs::write(&path, body).unwrap();
-            path
-        };
-        let user_on = file("user.json", r#"{"showThinkingSummaries": true}"#);
-        let project_off = file("project.json", r#"{"showThinkingSummaries": false}"#);
-        let unset = file("unset.json", r#"{"model": "opus"}"#);
-        let malformed = file("malformed.json", "{not json");
-        let missing = dir.path().join("missing.json");
-
-        // A later file overrides an earlier one only when it sets the key.
-        assert_eq!(
-            claude_show_thinking_summaries_setting(&[
-                user_on.clone(),
-                project_off.clone(),
-                unset.clone(),
-            ]),
-            Some(false)
-        );
-        assert_eq!(
-            claude_show_thinking_summaries_setting(&[project_off, user_on, malformed.clone()]),
-            Some(true)
-        );
-        assert_eq!(
-            claude_show_thinking_summaries_setting(&[unset, malformed, missing]),
-            None
         );
     }
 
@@ -31829,34 +31716,18 @@ mod tests {
     /// turn (measured against a fake API: no prediction request at all).
     #[test]
     fn claude_session_meta_turns_prompt_suggestions_off_when_asked() {
+        let meta =
+            claude_raw_sdk_session_meta(AgentType::ClaudeCode, &ClaudeSessionOptions::new(false))
+                .expect("Claude must have raw SDK meta");
         assert_eq!(
-            serde_json::Value::Object(claude_session_meta(false, &ClaudeSessionOptions::new(false))),
+            serde_json::Value::Object(meta),
             serde_json::json!({"claudeCode": {
                 "emitRawSDKMessages": true,
                 "options": {"promptSuggestions": false},
             }})
         );
-        // Thinking summaries share the one `options` object rather than
-        // replacing it.
-        assert_eq!(
-            serde_json::Value::Object(claude_session_meta(true, &ClaudeSessionOptions::new(false))),
-            serde_json::json!({"claudeCode": {
-                "emitRawSDKMessages": true,
-                "options": {
-                    "extraArgs": {"thinking-display": "summarized"},
-                    "promptSuggestions": false,
-                },
-            }})
-        );
-        let cwd = std::path::PathBuf::from("/tmp/codeg");
-        let meta = claude_raw_sdk_session_meta(
-            AgentType::ClaudeCode,
-            &cwd,
-            &ClaudeSessionOptions::new(false),
-        )
-        .expect("Claude must have raw SDK meta");
-        assert_eq!(meta["claudeCode"]["options"]["promptSuggestions"], false);
         // Every request of the connection names the same object.
+        let cwd = std::path::PathBuf::from("/tmp/codeg");
         let new_req = build_new_session_request(
             AgentType::ClaudeCode,
             &cwd,
@@ -31877,7 +31748,6 @@ mod tests {
             Vec::new(),
             &ClaudeSessionOptions::new(false),
         );
-        assert_eq!(new_req.meta, Some(meta));
         assert_eq!(new_req.meta, load_req.meta);
         assert_eq!(new_req.meta, resume_req.meta);
     }
@@ -31893,7 +31763,7 @@ mod tests {
                 "modelPicker": {"options": [{"model": "glm-5.2"}]}
             })),
         };
-        let meta = claude_session_meta(false, &claude);
+        let meta = claude_raw_sdk_session_meta(AgentType::ClaudeCode, &claude).unwrap();
         assert_eq!(
             serde_json::Value::Object(meta),
             serde_json::json!({"claudeCode": {
@@ -31918,7 +31788,7 @@ mod tests {
             prompt_suggestions: true,
             ..claude.clone()
         };
-        let meta = claude_session_meta(false, &only_settings);
+        let meta = claude_raw_sdk_session_meta(AgentType::ClaudeCode, &only_settings).unwrap();
         assert!(meta["claudeCode"]["options"]
             .get("promptSuggestions")
             .is_none());
@@ -34631,14 +34501,7 @@ mod tests {
         );
         let meta = req.meta.expect("claude gets a meta");
         assert!(!meta.contains_key("systemPrompt"));
-        assert_eq!(
-            Some(meta),
-            claude_raw_sdk_session_meta(
-                AgentType::ClaudeCode,
-                &cwd,
-                &ClaudeSessionOptions::new(true),
-            )
-        );
+        assert!(meta["claudeCode"].get("options").is_none());
 
         // Other agents take no meta either way.
         let req = new_session_request_for(
