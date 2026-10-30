@@ -54,8 +54,8 @@ description: 把上游 spacering-net/codeg 的更新同步进 keh4l/codeg 定制
    `curl -fsSL https://static.rust-lang.org/dist/channel-rust-stable.toml | sed -n '/^\[pkg\.rustc\]/,/^version/{s/^version = "\([0-9.]*\).*/\1/p;}'`，
    用旁路工具链跑 clippy（不动默认工具链）：`rustup toolchain install <ver> --profile minimal -c clippy`，`CARGO_TARGET_DIR=/tmp/codeg-target-<ver> cargo +<ver> clippy …`，跑完删掉那个目录（约 4 GB）。
    若新 lint 报在**上游原有代码**上、上游 main 的 CI 也一样红，不在 fork 里修（避免以后冲突），告诉用户等上游修。
-6. **提交并推送**：有冲突时 `git -c user.name=keh4l -c user.email=2461454684@qq.com commit --no-edit`，然后 `git push origin keh4l`。那个同步 PR 会自动变成已合并。推送后看 `gh run list -R keh4l/codeg -w test.yml -b keh4l -L 1`。
-7. **汇报**：合进了多少个上游提交、哪些文件冲突、各自怎么解决、测试结果。**不要顺手发版**，发版用 `codeg-fork-release`，并先问用户。
+6. **提交并推送**：有冲突时 `git -c user.name=keh4l -c user.email=2461454684@qq.com commit --no-edit`，然后 `git push origin keh4l`。那个同步 PR 会自动变成已合并。**推送后不等 CI 跑完**（2026-10-30 起，用户定的）：第 5 步的本地门禁和 CI 的 Linux 部分是同样的命令，CI 只多了 macOS、Windows 上的测试，约 75 分钟，macOS runner 在美国白天还常排不上。推完就汇报，CI 当时的状态和 run 链接写进汇报（`gh run list -R keh4l/codeg -w test.yml -b keh4l -L 1`），之后它失败了再看。用户要同步完接着发版时，合并提交先不推，和 `codeg-fork-release` 的发版提交一起推，只跑一遍 CI。
+7. **汇报**：合进了多少个上游提交、哪些文件冲突、各自怎么解决、测试结果（本地门禁的结果，加上 CI 当时的状态）。**不要顺手发版**，发版用 `codeg-fork-release`，并先问用户。
 
 ## 冲突处理规则
 

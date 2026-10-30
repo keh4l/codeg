@@ -23,12 +23,13 @@ description: 为 keh4l/codeg 定制版发一个新版本（改版本号、写双
    ```bash
    git switch keh4l && git pull --ff-only && git status --short   # 必须干净
    git fetch origin --tags
-   git rev-list --count keh4l..origin/main   # >0 说明上游有新东西没合，问用户要不要先跑 codeg-fork-sync
+   git rev-list --count keh4l..origin/main   # >0 说明上游有新东西没合，问用户要不要先跑 codeg-fork-sync（同步后接着发版时合并先不推，见下）
    BASE=$(git show origin/main:src-tauri/tauri.conf.json | python3 -c 'import json,sys;print(json.load(sys.stdin)["version"])')
    git tag -l "v${BASE}-*" --sort=-v:refname | head -3      # 已有的 fork 版本
    PREV=$(git describe --tags --abbrev=0 --match 'v*-*' 2>/dev/null)   # 上一个 fork 版本
    ```
    新版本 `VER=${BASE}-<下一个数字>`（用户在参数里指定了就用用户的，但要符合上面的格式）。
+   同步完上游接着发版时，`codeg-fork-sync` 的合并提交先留在本地，和第 5 步的发版提交一起推送：每次推送 `keh4l` 都会跑一遍约 75 分钟的 CI，同一分支的新推送还会取消没跑完的旧一遍，分两次推只是多跑一遍。
 2. **整理这一版的内容**
    ```bash
    git log --oneline --no-merges ${PREV}..keh4l              # fork 自己和合进来的改动
@@ -76,7 +77,7 @@ description: 为 keh4l/codeg 定制版发一个新版本（改版本号、写双
    git -c user.name=keh4l -c user.email=2461454684@qq.com commit -F /tmp/release-notes.md   # 第一行就是 "# Release version <VER>"
    git push origin keh4l
    ```
-   看 `gh run list -R keh4l/codeg -w test.yml -b keh4l -L 1` 的结果。真正的代码问题要先修；只有"GitHub runner 换了新 Rust、clippy 在上游原有代码上报新 lint、上游 main 也一样红"这种情况可以不阻塞（Release 工作流不跑 lint/clippy），并在汇报里说明。
+   **不等 CI，推送后直接打 tag（第 6 步）**（2026-10-30 起，用户定的）。推送前本地门禁必须已经全过（Linux 服务器上 `/root/codeg-staging/run-gate.sh`，命令见 `codeg-fork-sync` 第 5 步）：CI 的 Linux 部分和它跑的是同样的命令，CI 只多了 macOS、Windows 上的测试；而各平台能不能编译，Release 工作流本身就会编一遍（它只编译打包，不跑测试、lint、clippy）。CI 和发版同时跑，等发版时顺带看 CI：`gh run list -R keh4l/codeg -w test.yml -b keh4l -L 1`。macOS 的 runner 在美国白天常常排不上（作业等 15 分钟拿不到 runner 就取消，没有任何步骤），那不算失败。
 6. **打 tag 触发发版**
    ```bash
    REL=$(git log -1 --format=%h --grep="^# Release version ${VER}$" keh4l)
@@ -90,10 +91,11 @@ description: 为 keh4l/codeg 定制版发一个新版本（改版本号、写双
    curl -fsSL https://github.com/keh4l/codeg/releases/latest/download/latest.json | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d["version"], len(d["platforms"]))'
    ```
    期望：不是草稿；`latest.json` 的版本等于 `VER`，有 12 个平台条目，其中有 `linux-x86_64-rpm`（v0.32.4-1 时是 36 个附件）。RPM 从 0.36.0-1 起叫 `codeg-<上游版本>-<N>.<arch>.rpm`（RPM 的版本和 release），不再是 `codeg-<VER>-1.<arch>.rpm`，由 `release.yml` 里单独的 RPM 步骤打包。需要更进一步时，下载最小的 `codeg-server-darwin-arm64.tar.gz` 和它的 `.sha256`/`.sig`（用 `curl -C - --retry 3`，大文件容易中断），`shasum -a 256 -c` 校验，再用一个临时测试调用 `crate::update::verify::verify_release_signature(data, sig, VER)` 验签，验完删除临时测试。0.36.0 起签名必须写明版本（trusted comment 里的 `version:<VER>`，桌面版 `requireSignedVersion`、服务端 `verify_signed_version` 都会检查），验签失败说没写版本时，看 `release.yml` 的 `tauri signer sign` 是否还带着 `--app-version`。
-8. **汇报**：版本号、Release 链接 `https://github.com/keh4l/codeg/releases/tag/v<VER>`、各平台构建结果、验证结果、需要用户注意的事。
+8. **汇报**：版本号、Release 链接 `https://github.com/keh4l/codeg/releases/tag/v<VER>`、各平台构建结果、验证结果、发版提交的 CI 结果（还没跑完就说明，并给出 run 链接）、需要用户注意的事。
 
 ## 出错时
 
 - 某几个构建失败、原因是偶发（网络、runner）：`gh run rerun <id> -R keh4l/codeg --failed`，草稿 release 会被复用。
 - 需要改代码才能修好：在 `keh4l` 上修复并推送，然后**问用户**选哪种：(a) 删掉草稿 release 和 tag 后在新提交上重打同名 tag（删 tag 属于破坏性操作），或 (b) 直接发下一个版本号 `-N+1`。
+- 发版后 CI 在 macOS 或 Windows 上报测试失败：先看是真问题还是测试本身（时序、环境）。真问题告诉用户，修好后发下一个版本 `-N+1`；已经发出去的版本不撤。只有"GitHub runner 换了新 Rust、clippy 在上游原有代码上报新 lint、上游 main 也一样红"这种，不在 fork 里修，汇报里说明。
 - 不要修改 `release.yml` 去绕过版本或默认分支检查。
