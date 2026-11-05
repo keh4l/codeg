@@ -1885,6 +1885,7 @@ mod tauri_app {
                 conversation_tags::get_conversation_branch_tag,
                 conversation_tags::update_conversation_branch_tag,
                 translation_commands::get_translation_settings,
+                translation_commands::get_translation_api_key,
                 translation_commands::save_translation_settings,
                 translation_commands::translate_texts,
                 translation_commands::test_translation_provider,

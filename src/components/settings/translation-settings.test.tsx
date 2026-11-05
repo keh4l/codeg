@@ -3,17 +3,24 @@ import userEvent from "@testing-library/user-event"
 import { NextIntlClientProvider } from "next-intl"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import type {
-  TranslationSettingsInput,
-  TranslationSettingsView,
+import {
+  getTranslationApiKey,
+  type TranslationProvider,
+  type TranslationSettingsInput,
+  type TranslationSettingsView,
 } from "@/lib/api"
 import enMessages from "@/i18n/messages/en.json"
+import { toast } from "sonner"
 
 const saved: TranslationSettingsInput[] = []
 let stored: TranslationSettingsView
+let keychain: Partial<Record<TranslationProvider, string>> = {}
 
 vi.mock("@/lib/api", () => ({
   getTranslationSettings: vi.fn(async () => stored),
+  getTranslationApiKey: vi.fn(
+    async (provider: TranslationProvider) => keychain[provider] ?? ""
+  ),
   saveTranslationSettings: vi.fn(async (input: TranslationSettingsInput) => {
     saved.push(input)
     const { dashscope_api_key, tokenhub_api_key, ...settings } = input
@@ -58,6 +65,9 @@ function renderPage() {
 
 beforeEach(() => {
   saved.length = 0
+  keychain = {}
+  vi.mocked(getTranslationApiKey).mockClear()
+  vi.mocked(toast.error).mockClear()
   stored = {
     provider: "dashscope",
     dashscope_model: "qwen-mt-flash",
@@ -94,6 +104,52 @@ describe("TranslationSettings", () => {
     expect(await screen.findByText(t.key.saved)).toBeInTheDocument()
     expect(screen.getAllByText(t.engine.configured)).toHaveLength(1)
     expect(input).not.toBeInTheDocument()
+  })
+
+  it("shows a saved key only while the eye is open, read afresh each time", async () => {
+    stored = { ...stored, has_dashscope_key: true }
+    keychain = { dashscope: "sk-dash" }
+    renderPage()
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Alibaba Cloud Bailian/ })
+    )
+    const label = t.key.label.replace("{provider}", t.providers.dashscope)
+    expect(screen.getByText(t.key.saved)).toBeInTheDocument()
+    expect(screen.queryByLabelText(label)).not.toBeInTheDocument()
+    expect(getTranslationApiKey).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByRole("button", { name: t.key.show }))
+    expect(await screen.findByLabelText(label)).toHaveValue("sk-dash")
+    expect(getTranslationApiKey).toHaveBeenCalledWith("dashscope")
+
+    await userEvent.click(screen.getByRole("button", { name: t.key.hide }))
+    expect(screen.queryByLabelText(label)).not.toBeInTheDocument()
+    expect(screen.getByText(t.key.saved)).toBeInTheDocument()
+
+    // Replaced from another window meanwhile: the next show reads it again.
+    keychain = { dashscope: "sk-new" }
+    await userEvent.click(screen.getByRole("button", { name: t.key.show }))
+    expect(await screen.findByLabelText(label)).toHaveValue("sk-new")
+    expect(saved).toHaveLength(0)
+  })
+
+  it("keeps a key masked when it cannot be read", async () => {
+    stored = { ...stored, has_dashscope_key: true }
+    vi.mocked(getTranslationApiKey).mockRejectedValueOnce(
+      new Error("keychain locked")
+    )
+    renderPage()
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Alibaba Cloud Bailian/ })
+    )
+    await userEvent.click(screen.getByRole("button", { name: t.key.show }))
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        t.key.showFailed.replace("{message}", "keychain locked")
+      )
+    )
+    expect(screen.getByText(t.key.saved)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: t.key.show })).toBeEnabled()
   })
 
   it("only lets an engine with a key become the primary", async () => {

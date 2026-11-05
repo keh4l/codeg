@@ -6702,7 +6702,8 @@ export interface TranslationSettings {
 }
 
 /** Mirror of Rust `TranslationSettingsView`: the settings plus whether each
- *  API key is stored. Keys themselves never reach the frontend. */
+ *  API key is stored. The keys themselves are not part of it; the settings
+ *  page reads one with `getTranslationApiKey` when asked to show it. */
 export interface TranslationSettingsView extends TranslationSettings {
   has_dashscope_key: boolean
   has_tokenhub_key: boolean
@@ -6738,6 +6739,13 @@ export async function saveTranslationSettings(
   settings: TranslationSettingsInput
 ): Promise<TranslationSettingsView> {
   return getTransport().call("save_translation_settings", { settings })
+}
+
+/** One engine's stored API key, `""` when none. */
+export async function getTranslationApiKey(
+  provider: TranslationProvider
+): Promise<string> {
+  return getTransport().call("get_translation_api_key", { provider })
 }
 
 /**

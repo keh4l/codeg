@@ -7766,7 +7766,8 @@
       "replace": "Replace",
       "remove": "Remove API key",
       "show": "Show API key",
-      "hide": "Hide API key"
+      "hide": "Hide API key",
+      "showFailed": "Could not read the saved key: {message}"
     },
     "test": {
       "description": "Translate a sample sentence to check the key, model and network (no cache, no fallback).",

@@ -7766,7 +7766,8 @@
       "replace": "Trocar",
       "remove": "Remover chave de API",
       "show": "Mostrar a chave de API",
-      "hide": "Ocultar a chave de API"
+      "hide": "Ocultar a chave de API",
+      "showFailed": "Não foi possível ler a chave salva: {message}"
     },
     "test": {
       "description": "Traduz uma frase de exemplo para verificar a chave, o modelo e a rede (sem cache nem reserva).",

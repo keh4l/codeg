@@ -7766,7 +7766,8 @@
       "replace": "更换",
       "remove": "删除 API Key",
       "show": "显示 API Key",
-      "hide": "隐藏 API Key"
+      "hide": "隐藏 API Key",
+      "showFailed": "读取已保存的 Key 失败：{message}"
     },
     "test": {
       "description": "用一句示例试翻译，确认 Key、模型和网络都可用（不走缓存，也不切换引擎）。",

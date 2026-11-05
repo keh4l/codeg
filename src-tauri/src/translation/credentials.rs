@@ -59,14 +59,21 @@ pub fn load() -> ApiKeys {
     keys
 }
 
-/// Whether a key is stored, keeping "the store would not open" an error so the
-/// settings view does not report a key as gone when it merely could not be read.
-pub fn is_stored(name: &str) -> Result<bool, AppCommandError> {
+/// The stored key, empty when there is none, keeping "the store would not open"
+/// an error: unlike [`load`], whose callers only use a key, these callers show
+/// what is stored.
+pub fn read(name: &str) -> Result<String, AppCommandError> {
     store::get(name)
-        .map(|value| value.is_some_and(|v| !v.is_empty()))
+        .map(Option::unwrap_or_default)
         .map_err(|e| {
             AppCommandError::io_error("Failed to read the translation API key").with_detail(e)
         })
+}
+
+/// Whether a key is stored, so the settings view does not report a key as gone
+/// when it merely could not be read.
+pub fn is_stored(name: &str) -> Result<bool, AppCommandError> {
+    read(name).map(|value| !value.is_empty())
 }
 
 /// Stores `value`, or removes the entry when it is empty, then drops the cache

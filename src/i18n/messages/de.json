@@ -7766,7 +7766,8 @@
       "replace": "Ersetzen",
       "remove": "API-Schlüssel entfernen",
       "show": "API-Schlüssel anzeigen",
-      "hide": "API-Schlüssel ausblenden"
+      "hide": "API-Schlüssel ausblenden",
+      "showFailed": "Der gespeicherte Schlüssel konnte nicht gelesen werden: {message}"
     },
     "test": {
       "description": "Übersetzt einen Beispielsatz, um Schlüssel, Modell und Netzwerk zu prüfen (ohne Cache und ohne Ersatz).",

@@ -426,6 +426,10 @@ pub fn build_router_with_proxy_auth(
             post(handlers::translation::get_translation_settings),
         )
         .route(
+            "/get_translation_api_key",
+            post(handlers::translation::get_translation_api_key),
+        )
+        .route(
             "/save_translation_settings",
             post(handlers::translation::save_translation_settings),
         )

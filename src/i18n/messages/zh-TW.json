@@ -7766,7 +7766,8 @@
       "replace": "更換",
       "remove": "刪除 API Key",
       "show": "顯示 API Key",
-      "hide": "隱藏 API Key"
+      "hide": "隱藏 API Key",
+      "showFailed": "讀取已儲存的 Key 失敗：{message}"
     },
     "test": {
       "description": "用一句範例試翻譯，確認 Key、模型和網路都可用（不經快取，也不切換引擎）。",

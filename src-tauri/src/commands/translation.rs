@@ -2,9 +2,11 @@
 //! how a call is carried out.
 //!
 //! Settings live in one `app_metadata` row; the two API keys live in the OS
-//! keyring (`translation::credentials`) and only their presence travels to the
-//! frontend. A save broadcasts the view on `translation-settings://changed`, so
-//! conversation windows pick up a change made in the settings window.
+//! keyring (`translation::credentials`) and only their presence travels with
+//! the settings; a key itself is read back one at a time, when the settings
+//! page is asked to show it. A save broadcasts the view on
+//! `translation-settings://changed`, so conversation windows pick up a change
+//! made in the settings window.
 
 use sea_orm::DatabaseConnection;
 
@@ -118,6 +120,17 @@ pub async fn get_translation_settings_core(
     db: &AppDatabase,
 ) -> Result<TranslationSettingsView, AppCommandError> {
     Ok(view(load_translation_settings(&db.conn).await))
+}
+
+/// One engine's stored key, empty when none, for the settings page's show
+/// button. Never part of the view: that is broadcast to every window.
+pub fn get_translation_api_key_core(
+    provider: TranslationProvider,
+) -> Result<String, AppCommandError> {
+    credentials::read(match provider {
+        TranslationProvider::Dashscope => DASHSCOPE_API_KEY,
+        TranslationProvider::Tokenhub => TOKENHUB_API_KEY,
+    })
 }
 
 /// Keys first, then the row: a key that failed to store aborts the save before
@@ -246,6 +259,14 @@ pub async fn get_translation_settings(
 
 #[cfg(feature = "tauri-runtime")]
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn get_translation_api_key(
+    provider: TranslationProvider,
+) -> Result<String, AppCommandError> {
+    get_translation_api_key_core(provider)
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn save_translation_settings(
     app: tauri::AppHandle,
     db: State<'_, AppDatabase>,
@@ -357,6 +378,33 @@ mod tests {
             .await
             .expect("clear");
         assert!(!cleared.has_dashscope_key);
+    }
+
+    #[tokio::test]
+    async fn a_saved_key_is_shown_on_request_and_only_then() {
+        let _guard = credentials::test_guard().await;
+        let db = fresh_in_memory_db().await;
+        assert_eq!(
+            get_translation_api_key_core(TranslationProvider::Tokenhub).expect("read"),
+            ""
+        );
+
+        let mut save = input(TranslationSettings::default());
+        save.tokenhub_api_key = Some(" sk-th ".into());
+        let saved = save_translation_settings_core(&EventEmitter::Noop, &db, save)
+            .await
+            .expect("save");
+        let view = serde_json::to_string(&saved).expect("json");
+        assert!(!view.contains("sk-th"), "the view never carries the key");
+        assert_eq!(
+            get_translation_api_key_core(TranslationProvider::Tokenhub).expect("read"),
+            "sk-th"
+        );
+        assert_eq!(
+            get_translation_api_key_core(TranslationProvider::Dashscope).expect("read"),
+            ""
+        );
+        credentials::store(TOKENHUB_API_KEY, "").expect("clear");
     }
 
     #[tokio::test]

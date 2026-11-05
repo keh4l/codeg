@@ -7766,7 +7766,8 @@
       "replace": "Remplacer",
       "remove": "Supprimer la clé d'API",
       "show": "Afficher la clé d'API",
-      "hide": "Masquer la clé d'API"
+      "hide": "Masquer la clé d'API",
+      "showFailed": "Impossible de lire la clé enregistrée : {message}"
     },
     "test": {
       "description": "Traduit une phrase d'exemple pour vérifier la clé, le modèle et le réseau (sans cache ni secours).",

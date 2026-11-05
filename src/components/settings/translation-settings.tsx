@@ -65,6 +65,7 @@ import { useShortcutSettings } from "@/hooks/use-shortcut-settings"
 import { primeTranslationSettings } from "@/hooks/use-translation-settings"
 import {
   clearTranslationCache,
+  getTranslationApiKey,
   getTranslationSettings,
   saveTranslationSettings,
   testTranslationProvider,
@@ -728,10 +729,10 @@ function EngineItem({
 }
 
 /**
- * The key, as the keychain holds it: never shown back, only whether one is
- * saved; replacing it opens the same field a first key goes into. The test
- * sits beside the label because it tests this key, and its answer stays under
- * the field until the key changes.
+ * The key, as the keychain holds it: masked, and read back only while the eye
+ * button shows it; replacing it opens the same field a first key goes into.
+ * The test sits beside the label because it tests this key, and its answer
+ * stays under the field until the key changes.
  */
 function KeyField({
   provider,
@@ -756,6 +757,8 @@ function KeyField({
   const [replacing, setReplacing] = useState(false)
   const [draft, setDraft] = useState("")
   const [visible, setVisible] = useState(false)
+  const [shownKey, setShownKey] = useState<string | null>(null)
+  const [reading, setReading] = useState(false)
   const inputId = `translation-key-${provider.id}`
   const editing = !hasKey || replacing
   const running = testing === provider.id
@@ -764,6 +767,23 @@ function KeyField({
     setDraft("")
     setReplacing(false)
     setVisible(false)
+  }
+
+  // Read on every show and dropped on hide: the page holds no key it is not
+  // showing, and never shows one another window has since replaced.
+  const toggleShownKey = async () => {
+    if (shownKey !== null) {
+      setShownKey(null)
+      return
+    }
+    setReading(true)
+    try {
+      setShownKey(await getTranslationApiKey(provider.id))
+    } catch (err) {
+      toast.error(t("key.showFailed", { message: toErrorMessage(err) }))
+    } finally {
+      setReading(false)
+    }
   }
 
   const submit = async () => {
@@ -775,7 +795,10 @@ function KeyField({
   return (
     <div className="space-y-2 p-3">
       <div className="flex items-center justify-between gap-2">
-        <Label htmlFor={editing ? inputId : undefined} className="text-sm">
+        <Label
+          htmlFor={editing || shownKey !== null ? inputId : undefined}
+          className="text-sm"
+        >
           {t("key.title")}
         </Label>
         <div className="flex items-center gap-1">
@@ -844,17 +867,44 @@ function KeyField({
         </div>
       ) : (
         <div className="flex items-center gap-2">
-          <div className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-4xl border border-input bg-input/30 px-3 text-muted-foreground">
-            <span aria-hidden="true" className="text-sm tracking-widest">
-              ••••••••
-            </span>
-            <span className="truncate text-xs">{t("key.saved")}</span>
-          </div>
+          <InputGroup className="h-8 flex-1">
+            {shownKey !== null ? (
+              <InputGroupInput
+                id={inputId}
+                readOnly
+                spellCheck={false}
+                value={shownKey}
+                aria-label={t("key.label", { provider: name })}
+                className="font-mono text-xs"
+              />
+            ) : (
+              <div className="flex min-w-0 flex-1 items-center gap-2 px-3 text-muted-foreground">
+                <span aria-hidden="true" className="text-sm tracking-widest">
+                  ••••••••
+                </span>
+                <span className="truncate text-xs">{t("key.saved")}</span>
+              </div>
+            )}
+            <InputGroupAddon align="inline-end">
+              <InputGroupButton
+                size="icon-xs"
+                disabled={reading}
+                aria-label={shownKey !== null ? t("key.hide") : t("key.show")}
+                title={shownKey !== null ? t("key.hide") : t("key.show")}
+                onClick={() => void toggleShownKey()}
+              >
+                {shownKey !== null ? <EyeOff /> : <Eye />}
+              </InputGroupButton>
+            </InputGroupAddon>
+          </InputGroup>
           <Button
             size="sm"
             variant="outline"
             disabled={saving}
-            onClick={() => setReplacing(true)}
+            onClick={() => {
+              setShownKey(null)
+              setReplacing(true)
+            }}
           >
             {t("key.replace")}
           </Button>
@@ -864,7 +914,10 @@ function KeyField({
             disabled={saving}
             aria-label={t("key.remove")}
             title={t("key.remove")}
-            onClick={() => void onSaveKey("")}
+            onClick={() => {
+              setShownKey(null)
+              void onSaveKey("")
+            }}
           >
             <Trash2 className="size-3.5" />
           </Button>

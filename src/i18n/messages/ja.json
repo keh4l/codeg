@@ -7766,7 +7766,8 @@
       "replace": "変更",
       "remove": "API キーを削除",
       "show": "API キーを表示",
-      "hide": "API キーを隠す"
+      "hide": "API キーを隠す",
+      "showFailed": "保存済みのキーを読み取れませんでした：{message}"
     },
     "test": {
       "description": "例文を翻訳して、キー・モデル・ネットワークを確認します（キャッシュも予備エンジンも使いません）。",

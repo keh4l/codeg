@@ -20,6 +20,19 @@ pub async fn get_translation_settings(
 }
 
 #[derive(Deserialize)]
+pub struct GetTranslationApiKeyParams {
+    pub provider: TranslationProvider,
+}
+
+pub async fn get_translation_api_key(
+    Json(params): Json<GetTranslationApiKeyParams>,
+) -> Result<Json<String>, AppCommandError> {
+    Ok(Json(translation_commands::get_translation_api_key_core(
+        params.provider,
+    )?))
+}
+
+#[derive(Deserialize)]
 pub struct SaveTranslationSettingsParams {
     pub settings: TranslationSettingsInput,
 }

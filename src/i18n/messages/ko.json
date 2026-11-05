@@ -7766,7 +7766,8 @@
       "replace": "변경",
       "remove": "API 키 삭제",
       "show": "API 키 표시",
-      "hide": "API 키 숨기기"
+      "hide": "API 키 숨기기",
+      "showFailed": "저장된 키를 읽지 못했습니다: {message}"
     },
     "test": {
       "description": "예문을 번역해 키, 모델, 네트워크를 확인합니다(캐시와 예비 엔진 없이).",
