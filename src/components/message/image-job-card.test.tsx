@@ -186,6 +186,7 @@ describe("an image job in a reply", () => {
     findByParentToolUseId: () => undefined,
     findByChildConversationId: () => undefined,
     findByTaskId: () => undefined,
+    bindingsForParent: () => [],
   }
   const later: AdaptedToolCallPart = {
     type: "tool-call",

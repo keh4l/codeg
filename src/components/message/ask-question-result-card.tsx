@@ -99,6 +99,7 @@ export function AskQuestionResultCard({
         multi_select: q.multiSelect,
         options: q.options,
         is_secret: q.isSecret,
+        allow_other: q.allowOther,
       })),
     }
   }, [questions])

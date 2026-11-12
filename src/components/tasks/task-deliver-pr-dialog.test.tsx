@@ -14,10 +14,13 @@ const deliverMock = vi.fn().mockResolvedValue("https://example.test/pull/4")
 const settingsMock = vi.fn()
 const remoteMock = vi.fn()
 
+const setWritebackMock = vi.fn().mockResolvedValue(undefined)
+
 vi.mock("@/lib/api", () => ({
   workTaskDeliverPr: (...args: unknown[]) => deliverMock(...args),
   workTaskSettingsEffective: (...args: unknown[]) => settingsMock(...args),
   folderForgeRemote: (...args: unknown[]) => remoteMock(...args),
+  workTaskSetWriteback: (...args: unknown[]) => setWritebackMock(...args),
 }))
 
 vi.mock("sonner", () => ({
@@ -140,9 +143,12 @@ describe("TaskDeliverPrDialog", () => {
       name: /Delete the worktree after pushing/,
     })
     await waitFor(() => expect(box).toBeChecked())
-    // A push-back names nothing: whether it finishes the task and the
-    // cleanup box are its only controls.
-    expect(screen.getAllByRole("checkbox")).toHaveLength(2)
+    // A push-back names nothing: whether it finishes the task, the cleanup
+    // box and whether the thread hears about it are its only controls.
+    expect(screen.getAllByRole("checkbox")).toHaveLength(3)
+    expect(
+      screen.getByRole("checkbox", { name: /Comment in the item's thread/ })
+    ).toBeInTheDocument()
     expect(
       screen.getByRole("checkbox", {
         name: "Mark the task as done after pushing",
@@ -153,6 +159,8 @@ describe("TaskDeliverPrDialog", () => {
     await waitFor(() =>
       expect(deliverMock).toHaveBeenCalledWith(7, null, false, true, true)
     )
+    // The thread's answer goes first, bound to the run on screen.
+    expect(setWritebackMock).toHaveBeenCalledWith(7, 1, false, {})
   })
 
   it("keeps the worktree when the box is unchecked", async () => {
@@ -217,6 +225,78 @@ describe("TaskDeliverPrDialog", () => {
     )
   })
 
+  /** A task made from several issues picks, at its first delivery, which of
+   *  them the pull request closes — every one ticked to begin with — and the
+   *  pick travels with the request. */
+  it("asks a task of several issues which of them the pull request closes", async () => {
+    settingsMock.mockResolvedValue(settings())
+    const items = [3, 5, 9].map((number) => ({
+      number,
+      url: `https://github.com/acme/widget/issues/${number}`,
+      title: `issue ${number}`,
+    }))
+    renderDialog(
+      task({
+        source_kind: "forge_issue",
+        source_meta: meta({ head_ref: null, number: 3, items }),
+      })
+    )
+    expect(
+      await screen.findByText(/Merging it closes the issues ticked below/)
+    ).toBeInTheDocument()
+    const five = screen.getByRole("checkbox", { name: /#5/ })
+    expect(five).toBeChecked()
+    expect(screen.getByRole("checkbox", { name: /#3/ })).toBeChecked()
+    await userEvent.click(five)
+    expect(five).not.toBeChecked()
+
+    await userEvent.click(screen.getByRole("button", { name: "Push and open" }))
+    await waitFor(() =>
+      expect(deliverMock).toHaveBeenCalledWith(
+        7,
+        "Fix login",
+        false,
+        true,
+        true,
+        [3, 9]
+      )
+    )
+  })
+
+  /** Once fixed, the list only shows: the backend holds every later pull
+   *  request of the task to it, so the dialog sends none. */
+  it("shows a fixed closing list without letting it change", async () => {
+    settingsMock.mockResolvedValue(settings())
+    const items = [3, 5].map((number) => ({
+      number,
+      url: `https://github.com/acme/widget/issues/${number}`,
+      title: `issue ${number}`,
+    }))
+    renderDialog(
+      task({
+        source_kind: "forge_issue",
+        source_meta: meta({ head_ref: null, number: 3, items, pr_closes: [5] }),
+      })
+    )
+    const three = await screen.findByRole("checkbox", { name: /#3/ })
+    expect(three).not.toBeChecked()
+    expect(three).toBeDisabled()
+    expect(screen.getByRole("checkbox", { name: /#5/ })).toBeChecked()
+    expect(
+      screen.getByText(/edit the pull request's description on the forge/)
+    ).toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: "Push and open" }))
+    await waitFor(() =>
+      expect(deliverMock).toHaveBeenCalledWith(
+        7,
+        "Fix login",
+        false,
+        true,
+        true
+      )
+    )
+  })
+
   it("offers no worktree choice when there is no worktree left", async () => {
     settingsMock.mockResolvedValue(settings())
     renderDialog(task({ worktree_missing: true }))
@@ -225,8 +305,9 @@ describe("TaskDeliverPrDialog", () => {
     expect(
       screen.queryByRole("checkbox", { name: /Delete the worktree/ })
     ).toBeNull()
-    // Whether the push finishes the task is still the user's to say.
-    expect(screen.getAllByRole("checkbox")).toHaveLength(1)
+    // Whether the push finishes the task (and whether its thread hears about
+    // it) is still the user's to say.
+    expect(screen.getAllByRole("checkbox")).toHaveLength(2)
 
     await userEvent.click(screen.getByRole("button", { name: "Push" }))
     await waitFor(() =>

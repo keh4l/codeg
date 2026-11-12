@@ -119,6 +119,7 @@ describe("a collected answer whose question is not in view", () => {
     findByParentToolUseId: () => undefined,
     findByChildConversationId: () => undefined,
     findByTaskId: () => undefined,
+    bindingsForParent: () => [],
   }
 
   it("draws the question record on the timeline, not a generic call", () => {

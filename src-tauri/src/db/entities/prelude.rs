@@ -30,4 +30,5 @@ pub use super::translation_original::Entity as TranslationOriginal;
 pub use super::work_task::Entity as WorkTask;
 pub use super::work_task_event::Entity as WorkTaskEvent;
 pub use super::work_task_settings::Entity as WorkTaskSettings;
+pub use super::work_task_source_key::Entity as WorkTaskSourceKey;
 pub use super::work_task_template::Entity as WorkTaskTemplate;
