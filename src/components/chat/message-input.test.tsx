@@ -3438,11 +3438,11 @@ describe("MessageInput translate on send", () => {
 describe("MessageInput predicted follow-up prompt", () => {
   afterEach(() => cleanup())
 
+  // keh4l build: the hint names the send key, which fills it too.
   const offered = (suggestion: string) =>
-    enMessages.Folder.chat.messageInput.promptSuggestion.replace(
-      "{suggestion}",
-      suggestion
-    )
+    enMessages.Folder.chat.messageInput.promptSuggestionSubmitKey
+      .replace("{suggestion}", suggestion)
+      .replace("{key}", "Enter")
 
   async function mounted(
     props: Partial<React.ComponentProps<typeof MessageInput>>
@@ -3730,5 +3730,76 @@ describe("MessageInput live content for draft tidying", () => {
     })
     expect(markedAtStart).toBe(true)
     await waitFor(() => expect(hasLiveComposerContent(draftKey)).toBe(false))
+  })
+})
+
+// keh4l build: a phone keyboard has no Tab, so the send key takes the
+// predicted follow-up prompt into the empty composer and sends it on the next
+// press — on every device, with the hint naming that key.
+describe("MessageInput send key takes the suggestion (keh4l build)", () => {
+  afterEach(() => cleanup())
+
+  const hint = (suggestion: string, key: "Tab" | "Enter") =>
+    key === "Tab"
+      ? enMessages.Folder.chat.messageInput.promptSuggestion.replace(
+          "{suggestion}",
+          suggestion
+        )
+      : enMessages.Folder.chat.messageInput.promptSuggestionSubmitKey
+          .replace("{suggestion}", suggestion)
+          .replace("{key}", "Enter")
+
+  const enter = () => {
+    const dom = composerHandle.current!.getEditor()!.view.dom as HTMLElement
+    act(() => {
+      dom.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+        })
+      )
+    })
+  }
+
+  it("fills on the first Enter and sends on the second", async () => {
+    const onSend = vi.fn()
+    const { container } = renderInput({ onSend, promptSuggestion: "Run it" })
+    await waitFor(
+      () => expect(composerHandle.current?.getEditor()).toBeTruthy(),
+      { timeout: 5000 }
+    )
+    expect(
+      container.querySelector(`[data-placeholder="${hint("Run it", "Enter")}"]`)
+    ).not.toBeNull()
+
+    enter()
+    expect(composerHandle.current!.getText()).toBe("Run it")
+    expect(onSend).not.toHaveBeenCalled()
+
+    enter()
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1))
+    expect(onSend.mock.calls[0][0].displayText).toBe("Run it")
+  })
+
+  it("keeps sending an attached image on Enter, and hints Tab instead", async () => {
+    const onSend = vi.fn()
+    const { container } = renderInput({
+      onSend,
+      promptSuggestion: "Run it",
+      injectContent: {
+        handBack: [{ type: "image", data: "aGk=", mime_type: "image/png" }],
+      },
+    })
+    expect(await screen.findByAltText("image.png")).toBeInTheDocument()
+    await waitFor(() =>
+      expect(
+        container.querySelector(`[data-placeholder="${hint("Run it", "Tab")}"]`)
+      ).not.toBeNull()
+    )
+
+    enter()
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1))
+    expect(onSend.mock.calls[0][0].displayText).not.toContain("Run it")
   })
 })

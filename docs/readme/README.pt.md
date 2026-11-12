@@ -46,7 +46,8 @@
     <td width="50%" valign="top">📋 <strong>Toque longo para selecionar texto no celular</strong><br/>Um toque longo no texto de uma resposta ou da caixa de mensagem mostra as alças de seleção e o menu de copiar do próprio celular, em vez do menu da conversa; ao selecionar uma resposta com o dedo, Copiar texto / Citar / Perguntar aparecem abaixo da caixa de mensagem, longe do menu do celular.</td>
   </tr>
   <tr>
-    <td colspan="2" valign="top">🔁 <strong>Reiniciar o servidor pela web</strong><br/>Configurações → Sistema ganha “Reiniciar o codeg”: o codeg implantado num servidor reinicia sem entrar no servidor, e a página se reconecta sozinha; restaurar um backup num servidor agora também reinicia para aplicá-lo.</td>
+    <td width="50%" valign="top">🔁 <strong>Reiniciar o servidor pela web</strong><br/>Configurações → Sistema ganha “Reiniciar o codeg”: o codeg implantado num servidor reinicia sem entrar no servidor, e a página se reconecta sozinha; restaurar um backup num servidor agora também reinicia para aplicá-lo.</td>
+    <td width="50%" valign="top">⏎ <strong>Enter usa a próxima mensagem sugerida</strong><br/>A mensagem que o agente prevê que você vai mandar em seguida aparece na caixa vazia; Enter a preenche e outro Enter a envia. Funciona no teclado do celular, que não tem a tecla Tab.</td>
   </tr>
   <tr>
     <td colspan="2" valign="top">🔄 <strong>Acompanha o original</strong><br/>O projeto original é mesclado regularmente; o que não está listado aqui funciona como na versão oficial. O Kiro CLI integrado, a primeira coisa que esta versão adicionou, faz parte da versão oficial desde a 0.36.0. Os resumos do raciocínio do Claude Code usam, desde a 0.41.3-1, o interruptor da versão oficial: “Mostrar resumos do raciocínio do Claude” em Configurações → Agentes → Claude Code, desativado por padrão.</td>
@@ -167,6 +168,18 @@
 - Reinicia do mesmo jeito que uma atualização no local: com Docker ou o supervisor (`--supervise`), o supervisor o inicia de novo após `CODEG_RESTART_DELAY_MS`; rodando sozinho, o processo reinicia no mesmo lugar (systemd e afins continuam vendo o mesmo processo). Um reinício comum não entra no período de teste da atualização nem dispara a reversão automática dela. Não é possível reiniciar enquanto uma atualização está sendo baixada ou instalada.
 - Depois de restaurar um backup num servidor, “Reiniciar agora” no painel de resultado usa o mesmo reinício, então a restauração passa a valer sozinha.
 - Só nas versões de servidor: não aparece no app de desktop nem num navegador conectado ao serviço web integrado de um desktop; como a atualização no local, ainda não em servidores Windows.
+
+</details>
+
+<details>
+<summary><strong>Enter usa a próxima mensagem sugerida</strong>: detalhes</summary>
+<br/>
+
+- Ao fim de um turno, a versão oficial mostra na caixa de mensagem vazia a previsão do agente para a sua próxima mensagem, com "(Tab para usar)". Os teclados na tela de celulares e tablets não têm tecla Tab, então lá a sugestão não pode ser usada.
+- Nesta versão, apertar a tecla de envio (Enter por padrão) com a caixa vazia primeiro preenche a sugestão, com o cursor no fim para você poder editar; apertar de novo envia. Com texto na caixa, Enter envia como sempre. Funciona igual no computador e no celular, Tab continua funcionando e a dica passa a dizer "(Enter para usar)".
+- Se você trocar Enviar mensagem para outra tecla em Configurações → Atalhos (por exemplo `⌘Enter`), a dica e o preenchimento seguem essa tecla.
+- Quando a caixa só tem imagens anexadas e nenhum texto, Enter continua enviando as imagens e a dica volta a "(Tab para usar)".
+- Um Enter enquanto um método de entrada está compondo só confirma o texto; não preenche a sugestão.
 
 </details>
 

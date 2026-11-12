@@ -46,7 +46,8 @@
     <td width="50%" valign="top">📋 <strong>Long-press to select text on a phone</strong><br/>Long-pressing text in a reply or the message box brings up the phone's own selection handles and copy menu instead of the conversation menu; select a reply with a finger and Copy Text / Quote / Ask appear under the message box, clear of the phone's menu.</td>
   </tr>
   <tr>
-    <td colspan="2" valign="top">🔁 <strong>Restart the server from the web</strong><br/>Settings → System gains “Restart codeg”: codeg deployed on a server restarts without logging in to the server, and the page reconnects by itself; restoring a backup on a server now restarts to apply it, too.</td>
+    <td width="50%" valign="top">🔁 <strong>Restart the server from the web</strong><br/>Settings → System gains “Restart codeg”: codeg deployed on a server restarts without logging in to the server, and the page reconnects by itself; restoring a backup on a server now restarts to apply it, too.</td>
+    <td width="50%" valign="top">⏎ <strong>Enter takes the suggested next message</strong><br/>The message the agent predicts you'll send next shows in the empty input box; press Enter to fill it in and Enter again to send. It works on a phone keyboard, which has no Tab key.</td>
   </tr>
   <tr>
     <td colspan="2" valign="top">🔄 <strong>Follows upstream</strong><br/>Upstream is merged in regularly; anything not listed here works exactly as in the official build. The built-in Kiro CLI, the first thing this build added, has been part of the official build since 0.36.0. Claude Code thinking summaries use the official build's switch from 0.41.3-1 on: “Show Claude's thinking summaries” in Settings → Agents → Claude Code, off by default.</td>
@@ -167,6 +168,18 @@
 - It restarts the way an in-place update does: under Docker or the supervisor (`--supervise`), the supervisor starts it again after `CODEG_RESTART_DELAY_MS`; run on its own, the process restarts in place (systemd and the like still see the same process). A plain restart doesn't enter the update's trial period and never triggers its automatic rollback. It can't restart while an update is downloading or installing.
 - After restoring a backup on a server, “Restart now” in the result panel uses the same restart, so the restore applies by itself.
 - Server builds only: not in the desktop app, nor in a browser connected to a desktop's built-in web service; like the in-place update, not on Windows servers yet.
+
+</details>
+
+<details>
+<summary><strong>Enter takes the suggested next message</strong>: details</summary>
+<br/>
+
+- After a turn ends, the official build shows the agent's prediction of your next message in the empty input box, with "(Tab to use)". On-screen keyboards on phones and tablets have no Tab key, so the suggestion can't be used there.
+- In this build, pressing the send key (Enter by default) in an empty input box first fills in the suggestion, with the cursor at the end so you can edit it; pressing it again sends. With text in the box, Enter sends as usual. It works the same on desktop and phone, Tab still works too, and the hint now reads "(Enter to use)".
+- If you change Send Message to another key under Settings → Shortcuts (for example `⌘Enter`), the hint and the fill follow that key.
+- When the box holds only attached images and no text, Enter still sends the images, and the hint goes back to "(Tab to use)".
+- Enter while an input method is composing only commits the text; it doesn't fill in the suggestion.
 
 </details>
 

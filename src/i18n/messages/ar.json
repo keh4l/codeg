@@ -3518,6 +3518,7 @@
       "messageInput": {
         "askAnything": "اسأل أي شيء...",
         "promptSuggestion": "{suggestion} (اضغط Tab للاستخدام)",
+        "promptSuggestionSubmitKey": "{suggestion} (اضغط {key} للاستخدام)",
         "removeAttachmentAria": "إزالة {name}",
         "attachFiles": "إرفاق ملفات",
         "addActions": "إضافة",

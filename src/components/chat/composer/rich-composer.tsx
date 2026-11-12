@@ -248,6 +248,14 @@ export interface RichComposerProps {
    * editor rebuild.
    */
   promptSuggestion?: string | null
+  /**
+   * keh4l build: the submit binding, pressed in the empty document, fills it
+   * with `promptSuggestion` the way Tab does, and sends only when pressed again
+   * — so a phone keyboard, which has no Tab, can take the suggestion too. The
+   * host turns it off while something else (an attached image) would make an
+   * empty-text submit meaningful.
+   */
+  submitFillsSuggestion?: boolean
 }
 
 /**
@@ -287,6 +295,7 @@ export const RichComposer = forwardRef<RichComposerHandle, RichComposerProps>(
       translateShortcut,
       onTranslate,
       promptSuggestion,
+      submitFillsSuggestion,
     },
     ref
   ) {
@@ -316,6 +325,7 @@ export const RichComposer = forwardRef<RichComposerHandle, RichComposerProps>(
     const translateShortcutRef = useRef(translateShortcut)
     const onTranslateRef = useRef(onTranslate)
     const promptSuggestionRef = useRef(promptSuggestion)
+    const submitFillsSuggestionRef = useRef(submitFillsSuggestion)
     // The live editor, captured for command access inside editorProps handlers
     // (which are created before `editor` is assigned in this closure).
     const editorInstanceRef = useRef<Editor | null>(null)
@@ -340,6 +350,7 @@ export const RichComposer = forwardRef<RichComposerHandle, RichComposerProps>(
       translateShortcutRef.current = translateShortcut
       onTranslateRef.current = onTranslate
       promptSuggestionRef.current = promptSuggestion
+      submitFillsSuggestionRef.current = submitFillsSuggestion
     })
 
     // ── Unified `@` mention panel state bridge ──
@@ -534,6 +545,19 @@ export const RichComposer = forwardRef<RichComposerHandle, RichComposerProps>(
             bindings
           )
           if (action === "submit") {
+            // keh4l build: an empty document takes the suggestion first, the
+            // same fill as Tab above; the next press sends it.
+            if (submitFillsSuggestionRef.current) {
+              const suggestion = promptSuggestionRef.current?.trim()
+              const ed = editorInstanceRef.current
+              if (suggestion && ed?.isEmpty) {
+                ed.chain()
+                  .setContent(textToSeededDoc(suggestion, known()))
+                  .focus("end")
+                  .run()
+                return true
+              }
+            }
             // Only consume the key once a handler actually runs; otherwise let
             // the editor apply its default (Enter splits the paragraph).
             if (!onSubmitRef.current) return false

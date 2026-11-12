@@ -46,7 +46,8 @@
     <td width="50%" valign="top">📋 <strong>Appui long pour sélectionner du texte sur un téléphone</strong><br/>Un appui long sur le texte d'une réponse ou de la zone de saisie fait apparaître les poignées de sélection et le menu de copie du téléphone, au lieu du menu de la conversation ; une réponse sélectionnée au doigt affiche Copier le texte / Citer / Demander sous la zone de saisie, à l'écart du menu du téléphone.</td>
   </tr>
   <tr>
-    <td colspan="2" valign="top">🔁 <strong>Redémarrer le serveur depuis le web</strong><br/>Réglages → Système gagne « Redémarrer codeg » : codeg déployé sur un serveur redémarre sans se connecter au serveur, et la page se reconnecte d'elle-même ; restaurer une sauvegarde sur un serveur redémarre désormais aussi pour l'appliquer.</td>
+    <td width="50%" valign="top">🔁 <strong>Redémarrer le serveur depuis le web</strong><br/>Réglages → Système gagne « Redémarrer codeg » : codeg déployé sur un serveur redémarre sans se connecter au serveur, et la page se reconnecte d'elle-même ; restaurer une sauvegarde sur un serveur redémarre désormais aussi pour l'appliquer.</td>
+    <td width="50%" valign="top">⏎ <strong>Entrée reprend le message suivant suggéré</strong><br/>Le message que l'agent prévoit que vous enverrez ensuite s'affiche dans la zone de saisie vide ; Entrée le remplit, une seconde Entrée l'envoie. Ça marche aussi au clavier du téléphone, qui n'a pas de touche Tab.</td>
   </tr>
   <tr>
     <td colspan="2" valign="top">🔄 <strong>Au plus près de l'original</strong><br/>Le projet d'origine est fusionné régulièrement ; ce qui n'est pas listé ici fonctionne comme dans la version officielle. Kiro CLI intégré, le premier ajout de cette version, fait partie de la version officielle depuis la 0.36.0. Les résumés de réflexion de Claude Code passent dès la 0.41.3-1 par l'interrupteur de la version officielle : « Afficher les résumés de réflexion de Claude » dans Réglages → Agents IA → Claude Code, désactivé par défaut.</td>
@@ -167,6 +168,18 @@
 - Il redémarre comme une mise à jour sur place : sous Docker ou le superviseur (`--supervise`), le superviseur le relance après `CODEG_RESTART_DELAY_MS` ; lancé seul, le processus redémarre sur place (systemd et consorts voient toujours le même processus). Un redémarrage simple n'entre pas dans la période d'essai de la mise à jour et ne déclenche jamais son retour automatique en arrière. Impossible de redémarrer pendant qu'une mise à jour se télécharge ou s'installe.
 - Après la restauration d'une sauvegarde sur un serveur, « Redémarrer maintenant » dans le panneau de résultat utilise le même redémarrage, si bien que la restauration s'applique d'elle-même.
 - Versions serveur uniquement : absent de l'application de bureau et d'un navigateur connecté au service web intégré d'une application de bureau ; comme la mise à jour sur place, pas encore sur les serveurs Windows.
+
+</details>
+
+<details>
+<summary><strong>Entrée reprend le message suivant suggéré</strong> : détails</summary>
+<br/>
+
+- À la fin d'un tour, la version officielle affiche dans la zone de saisie vide le message que l'agent prévoit que vous enverrez ensuite, avec « (Tab pour l’utiliser) ». Les claviers à l'écran des téléphones et tablettes n'ont pas de touche Tab : la suggestion y est inutilisable.
+- Dans cette version, la touche d'envoi (Entrée par défaut) dans une zone de saisie vide remplit d'abord la suggestion, le curseur à la fin pour pouvoir la modifier ; un second appui l'envoie. Si la zone contient du texte, Entrée envoie comme d'habitude. C'est pareil sur ordinateur et sur téléphone, Tab fonctionne toujours, et l'indication devient « (Enter pour l’utiliser) ».
+- Si vous attribuez Envoyer le message à une autre touche dans Réglages → Raccourcis (par exemple `⌘Enter`), l'indication et le remplissage suivent cette touche.
+- Quand la zone ne contient que des images jointes, sans texte, Entrée envoie toujours les images, et l'indication redevient « (Tab pour l’utiliser) ».
+- Une Entrée pendant la composition d'une méthode de saisie ne fait que valider le texte ; elle ne remplit pas la suggestion.
 
 </details>
 

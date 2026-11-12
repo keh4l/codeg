@@ -39,6 +39,8 @@ import {
 } from "@/components/ui/context-menu"
 import { cn, copyTextFromMenu } from "@/lib/utils"
 import { useShortcutSettings } from "@/hooks/use-shortcut-settings"
+import { useIsMac } from "@/hooks/use-is-mac"
+import { formatShortcutLabel } from "@/lib/keyboard-shortcuts"
 import { imageFilesFromClipboardApi } from "@/lib/clipboard-images"
 import { toErrorMessage } from "@/lib/app-error"
 import { isNoActiveTurnRejection } from "@/lib/turn-busy"
@@ -431,9 +433,6 @@ export function MessageInput({
     !isPrompting && !disabled && !isEditingQueueItem
       ? promptSuggestion?.trim() || null
       : null
-  const shownPlaceholder = offeredSuggestion
-    ? t("promptSuggestion", { suggestion: offeredSuggestion })
-    : resolvedPlaceholder
   const editorRef = useRef<RichComposerHandle>(null)
   const getComposerEditor = useCallback(
     () => editorRef.current?.getEditor() ?? null,
@@ -971,6 +970,23 @@ export function MessageInput({
   const imageAttachments = attach.imageAttachments
   const hasAttachments = attachments.length > 0
   const hasSendableContent = !composerEmpty || hasAttachments
+  // keh4l build: the send key fills the suggestion into the empty composer
+  // (and sends on the next press), so the hint names that key — a phone
+  // keyboard has no Tab. Not while images are attached: the send key then
+  // sends them, so only Tab fills and the hint says so.
+  const isMac = useIsMac()
+  const submitKeyLabel = shortcuts.send_message
+    ? formatShortcutLabel(shortcuts.send_message, isMac)
+    : null
+  const submitFillsSuggestion = submitKeyLabel !== null && !hasAttachments
+  const shownPlaceholder = offeredSuggestion
+    ? submitFillsSuggestion
+      ? t("promptSuggestionSubmitKey", {
+          suggestion: offeredSuggestion,
+          key: submitKeyLabel,
+        })
+      : t("promptSuggestion", { suggestion: offeredSuggestion })
+    : resolvedPlaceholder
   // The committed half of the report above: what the composer holds, and
   // whether an intake is still in flight (once it settles, what it brought is
   // already in `hasSendableContent` here). `intakeRevision` re-runs this after
@@ -2225,6 +2241,7 @@ export function MessageInput({
                 placeholder={shownPlaceholder}
                 ariaLabel={resolvedPlaceholder}
                 promptSuggestion={offeredSuggestion}
+                submitFillsSuggestion={submitFillsSuggestion}
                 autoFocus={autoFocus}
                 referenceSearch={referenceSearch}
                 mentionUiLabels={mentionUiLabels}
