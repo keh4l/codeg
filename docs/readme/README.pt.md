@@ -50,7 +50,8 @@
     <td width="50%" valign="top">⏎ <strong>Enter usa a próxima mensagem sugerida</strong><br/>A mensagem que o agente prevê que você vai mandar em seguida aparece na caixa vazia; Enter a preenche e outro Enter a envia. Funciona no teclado do celular, que não tem a tecla Tab.</td>
   </tr>
   <tr>
-    <td colspan="2" valign="top">⏯️ <strong>Subagentes continuam de onde um erro os parou</strong><br/>Quando um subagente delegado para porque a rede caiu, a cota acabou, o login expirou ou o provedor devolveu um erro, o agente principal pode fazê-lo continuar na sessão original, com o contexto e o trabalho pela metade intactos, em vez de começar do zero numa nova.</td>
+    <td width="50%" valign="top">⏯️ <strong>Subagentes continuam de onde um erro os parou</strong><br/>Quando um subagente delegado para porque a rede caiu, a cota acabou, o login expirou ou o provedor devolveu um erro, o agente principal pode fazê-lo continuar na sessão original, com o contexto e o trabalho pela metade intactos, em vez de começar do zero numa nova.</td>
+    <td width="50%" valign="top">🧑‍💼 <strong>Os agentes montam seus assistentes @</strong><br/>Diga “adicione um assistente revisor no Codex com raciocínio alto” numa conversa e o agente cria ou altera o assistente @: nome, agente, modelo e instruções permanentes como você disse, e cada opção que você não citou no padrão do agente. Clique em Editar na própria conversa para ajustar.</td>
   </tr>
   <tr>
     <td colspan="2" valign="top">🔄 <strong>Acompanha o original</strong><br/>O projeto original é mesclado regularmente; o que não está listado aqui funciona como na versão oficial. O Kiro CLI integrado, a primeira coisa que esta versão adicionou, faz parte da versão oficial desde a 0.36.0. Os resumos do raciocínio do Claude Code usam, desde a 0.41.3-1, o interruptor da versão oficial: “Mostrar resumos do raciocínio do Claude” em Configurações → Agentes → Claude Code, desativado por padrão.</td>
@@ -194,6 +195,18 @@
 - Esta versão também trata essas falhas como interrupções: o resultado da subtarefa diz que a sessão e o trabalho parcial foram mantidos e que `resume_delegation` a continua depois que a causa for resolvida. O agente principal então segue na subsessão original, com o mesmo task_id, e o cartão original do subagente na conversa volta a mostrar o progresso.
 - Como usar: quando a rede voltar, a cota for recarregada ou você fizer login de novo, peça ao agente principal para deixar o subagente continuar.
 - Uma tarefa que falhou antes de ter sessão (o agente não conseguiu iniciar, por exemplo) não tem o que continuar e precisa ser delegada de novo; também não dá para acrescentar trabalho assim a uma subtarefa que terminou normalmente: trabalho extra continua indo numa delegação nova.
+
+</details>
+
+<details>
+<summary><strong>Os agentes montam seus assistentes @</strong>: detalhes</summary>
+<br/>
+
+- Na versão oficial, os assistentes @ (predefinições de delegação que você menciona com @ numa mensagem: um agente, cada uma das opções dele e instruções permanentes) só são preenchidos campo a campo em Configurações → Colaboração → Colaboração multiagente → Assistentes; um agente não consegue ajudar.
+- Esta versão dá aos agentes duas ferramentas, `create_assistant` e `update_assistant`. Diga ao agente que assistente você quer (por exemplo, “adicione um revisor: Codex, GPT-5.5, raciocínio alto, somente leitura, para revisar diffs”) e ele cria; diga “troque o revisor para GPT-5.4” ou “acrescente uma regra às instruções do revisor” e ele altera.
+- Ao criar, o Codeg inicia esse agente por um instante para ler as opções reais dele (leva alguns segundos). As opções que você cita ficam como você disse e as demais nos padrões do próprio agente (os que o editor marca como Recomendado); ao alterar, as opções não citadas continuam como estavam. Se um modelo ou uma opção não bater, nada é salvo e o agente fica sabendo o que está disponível.
+- A conversa mostra uma linha “Criando o assistente …”; expandida, ela mostra o agente, as opções e as instruções do assistente, e Editar abre o mesmo editor das Configurações. O assistente novo aparece na hora no menu @ e já pode receber tarefas delegadas.
+- O interruptor é “Criar assistentes” em Configurações → Colaboração → Ferramentas na conversa, ativado por padrão; desligado, os agentes não veem as duas ferramentas. Um agente configurado para cuidar sozinho de arquivos e comandos não as recebe, assim como não recebe as de delegação.
 
 </details>
 

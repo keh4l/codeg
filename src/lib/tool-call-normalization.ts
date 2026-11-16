@@ -9,6 +9,10 @@ import {
   COLLECT_TOOL_NAMES,
   collectToolCanonicalName,
 } from "@/lib/image-gen/tool-names"
+import {
+  ASSISTANT_TOOL_NAMES,
+  assistantToolCanonicalName,
+} from "@/lib/assistant-tools"
 
 const EXACT_TOOL_NAME_ALIASES: Record<string, string> = {
   shell_command: "bash",
@@ -684,6 +688,10 @@ function normalizeUncached(toolName: string): string {
   // as something else.
   const collect = collectToolCanonicalName(canonical)
   if (collect) return collect
+  // And `create_assistant` / `update_assistant`, whose `{name, model, …}`
+  // input names nothing the freeform matcher should guess at.
+  const assistantTool = assistantToolCanonicalName(canonical)
+  if (assistantTool) return assistantTool
 
   const freeform = inferFromFreeformName(trimmed)
   if (freeform) return freeform
@@ -781,6 +789,7 @@ export function inferLiveToolName(params: {
     const normalizedMeta = normalizeToolName(candidate)
     if (DELEGATION_COMPANION_TOOLS.has(normalizedMeta)) return normalizedMeta
     if (COLLECT_TOOL_NAMES.has(normalizedMeta)) return normalizedMeta
+    if (ASSISTANT_TOOL_NAMES.has(normalizedMeta)) return normalizedMeta
     if (META_NAMED_TOOLS.has(normalizedMeta)) return normalizedMeta
   }
 
@@ -812,6 +821,7 @@ export function inferLiveToolName(params: {
   if (DELEGATION_COMPANION_TOOLS.has(titleCompanion)) return titleCompanion
   // The image tools' `{output_path, …}` input would read as a file write.
   if (COLLECT_TOOL_NAMES.has(titleCompanion)) return titleCompanion
+  if (ASSISTANT_TOOL_NAMES.has(titleCompanion)) return titleCompanion
 
   // claude-agent-acp ≥0.63 marks Agent/Task launches with the authoritative
   // `_meta.claudeCode.subagent: true` (its stated purpose: clients should not

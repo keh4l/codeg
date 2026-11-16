@@ -217,6 +217,9 @@ pub struct CompanionFeatures {
     /// `image_generate` / `image_get_result`: images made with the services
     /// the person configured in Codeg (see `crate::image_gen`).
     pub image: bool,
+    /// `create_assistant` / `update_assistant` (keh4l build): setting up the
+    /// person's @-mentionable assistants (see `crate::assistant_tools`).
+    pub assistants: bool,
 }
 
 impl CompanionFeatures {
@@ -243,6 +246,7 @@ impl CompanionFeatures {
                 computer_launch: false,
                 computer_clipboard: false,
                 image: false,
+                assistants: false,
             };
         };
         let mut f = Self {
@@ -260,6 +264,7 @@ impl CompanionFeatures {
             computer_launch: false,
             computer_clipboard: false,
             image: false,
+            assistants: false,
         };
         for tok in s.split(',').map(str::trim).filter(|t| !t.is_empty()) {
             match tok {
@@ -277,6 +282,7 @@ impl CompanionFeatures {
                 "computer_launch" => f.computer_launch = true,
                 "computer_clipboard" => f.computer_clipboard = true,
                 "image" => f.image = true,
+                "assistants" => f.assistants = true,
                 _ => {}
             }
         }
@@ -329,6 +335,7 @@ impl CompanionFeatures {
             // before the user answered (see `crate::acp::tool_wait_cap`).
             "get_question_answer" => self.ask,
             "image_generate" | "image_get_result" => self.image,
+            "create_assistant" | "update_assistant" => self.assistants,
             _ => false,
         }
     }
@@ -1520,7 +1527,11 @@ async fn build_tools_call_spawn_inner(
                 Box::pin(async move { client_create_work_task_round_trip(&socket, &req).await });
             register_and_spawn(inflight, id, None, round_trip, render_authoring_result).await
         }
-        "get_question_answer" | "image_generate" | "image_get_result" => {
+        "get_question_answer"
+        | "image_generate"
+        | "image_get_result"
+        | "create_assistant"
+        | "update_assistant" => {
             super::fork_tools::build_spawn(&ctx, inflight, id, &name, arguments).await
         }
         other => LineAction::Respond(err(id, -32602, format!("unknown tool: {other}"))),
@@ -4584,6 +4595,7 @@ mod tests {
             computer_launch: false,
             computer_clipboard: false,
             image: false,
+            assistants: false,
         })
     }
 
@@ -5218,6 +5230,7 @@ mod tests {
         computer_launch: false,
         computer_clipboard: false,
         image: false,
+        assistants: false,
     };
     const BOTH: CompanionFeatures = CompanionFeatures {
         delegation: true,
@@ -5234,6 +5247,7 @@ mod tests {
         computer_launch: false,
         computer_clipboard: false,
         image: false,
+        assistants: false,
     };
     const ASK_ONLY: CompanionFeatures = CompanionFeatures {
         delegation: false,
@@ -5250,6 +5264,7 @@ mod tests {
         computer_launch: false,
         computer_clipboard: false,
         image: false,
+        assistants: false,
     };
     const SESSIONS_ONLY: CompanionFeatures = CompanionFeatures {
         delegation: false,
@@ -5266,6 +5281,7 @@ mod tests {
         computer_launch: false,
         computer_clipboard: false,
         image: false,
+        assistants: false,
     };
 
     fn list_tool_names(action: LineAction) -> Vec<String> {
@@ -5758,6 +5774,7 @@ mod tests {
         computer_launch: false,
         computer_clipboard: false,
         image: false,
+        assistants: false,
     };
     const TASKBOARD_ONLY: CompanionFeatures = CompanionFeatures {
         delegation: false,
@@ -5774,6 +5791,7 @@ mod tests {
         computer_launch: false,
         computer_clipboard: false,
         image: false,
+        assistants: false,
     };
 
     /// The two authoring groups gate independently: enabling one must not
@@ -6659,6 +6677,7 @@ mod tests {
         computer_launch: false,
         computer_clipboard: false,
         image: false,
+        assistants: false,
     };
 
     /// The browser group with `browser_eval` on top, which is the only way

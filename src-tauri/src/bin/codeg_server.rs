@@ -463,6 +463,17 @@ async fn async_main(
     .await;
     // Image generation: the services agents may use, before any agent starts.
     codeg_lib::commands::image_gen::apply_persisted_image_gen_settings(&state.db.conn).await;
+    // keh4l build: `create_assistant` / `update_assistant` — the switch, and
+    // what they probe agents and save with.
+    codeg_lib::assistant_tools::apply_persisted_settings(&state.db.conn).await;
+    codeg_lib::assistant_tools::install(codeg_lib::assistant_tools::Runtime {
+        db: Arc::new(codeg_lib::db::AppDatabase {
+            conn: state.db.conn.clone(),
+        }),
+        emitter: state.emitter.clone(),
+        manager: Arc::new(state.connection_manager.clone_ref()),
+        data_dir: state.data_dir.clone(),
+    });
     // The generative-UI skill's central copy, and the move from 0.35.0's
     // `json-render`: before the server takes a request, so the move can never
     // undo a change made on the settings page.

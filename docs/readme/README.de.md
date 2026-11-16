@@ -50,7 +50,8 @@
     <td width="50%" valign="top">⏎ <strong>Enter übernimmt die vorgeschlagene nächste Nachricht</strong><br/>Die Nachricht, die der Agent als deine nächste vorhersagt, steht im leeren Eingabefeld; Enter übernimmt sie, ein weiteres Enter sendet sie. Das klappt auch auf der Handytastatur, die keine Tab-Taste hat.</td>
   </tr>
   <tr>
-    <td colspan="2" valign="top">⏯️ <strong>Subagenten machen nach einem Fehler weiter</strong><br/>Bleibt ein delegierter Subagent stehen, weil das Netz weg war, sein Kontingent aufgebraucht ist, seine Anmeldung abgelaufen ist oder der Anbieter einen Fehler gemeldet hat, kann der Hauptagent ihn in seiner ursprünglichen Sitzung weitermachen lassen – mit Kontext und halb fertiger Arbeit, statt in einer neuen Sitzung von vorn anzufangen.</td>
+    <td width="50%" valign="top">⏯️ <strong>Subagenten machen nach einem Fehler weiter</strong><br/>Bleibt ein delegierter Subagent stehen, weil das Netz weg war, sein Kontingent aufgebraucht ist, seine Anmeldung abgelaufen ist oder der Anbieter einen Fehler gemeldet hat, kann der Hauptagent ihn in seiner ursprünglichen Sitzung weitermachen lassen – mit Kontext und halb fertiger Arbeit, statt in einer neuen Sitzung von vorn anzufangen.</td>
+    <td width="50%" valign="top">🧑‍💼 <strong>Agenten richten @-Assistenten für dich ein</strong><br/>Sag in einer Unterhaltung „leg einen Review-Assistenten mit Codex und hohem Reasoning an“, und der Agent legt den @-Assistenten an oder ändert ihn: Name, Agent, Modell und dauerhafte Anweisungen wie gesagt, jede nicht genannte Option auf dem Standard des Agenten. Mit Bearbeiten direkt in der Unterhaltung passt du ihn an.</td>
   </tr>
   <tr>
     <td colspan="2" valign="top">🔄 <strong>Nah am Upstream</strong><br/>Upstream wird regelmäßig hineingemergt; was hier nicht steht, funktioniert genau wie in der offiziellen Version. Das eingebaute Kiro CLI, das diese Version als Erstes hinzugefügt hat, ist seit 0.36.0 Teil der offiziellen Version. Die Zusammenfassungen von Claudes Denken nutzen seit 0.41.3-1 den Schalter der offiziellen Version: „Zusammenfassungen von Claudes Denken anzeigen“ unter Einstellungen → Agenten → Claude Code, standardmäßig aus.</td>
@@ -194,6 +195,18 @@
 - Dieser Build behandelt solche Fehler ebenfalls als Unterbrechung: Das Ergebnis der Teilaufgabe sagt, dass Sitzung und Zwischenstand erhalten sind und `resume_delegation` sie fortsetzt, sobald die Ursache behoben ist. Der Hauptagent macht dann in der ursprünglichen Untersitzung unter derselben task_id weiter, und die ursprüngliche Subagent-Karte in der Unterhaltung zeigt wieder ihren Fortschritt.
 - So geht's: Wenn das Netz wieder da ist, das Kontingent aufgefüllt oder die Anmeldung erneuert ist, bitte den Hauptagenten, den Subagenten weitermachen zu lassen.
 - Eine Aufgabe, die schon vor ihrer Sitzung scheiterte (etwa weil der Agent nicht starten konnte), hat nichts zum Fortsetzen und muss neu delegiert werden; einer normal abgeschlossenen Teilaufgabe lässt sich so auch keine neue Arbeit anhängen – Folgearbeit läuft weiter über eine neue Delegation.
+
+</details>
+
+<details>
+<summary><strong>Agenten richten @-Assistenten für dich ein</strong> – Details</summary>
+<br/>
+
+- Im offiziellen Build lassen sich @-Assistenten (Delegations-Voreinstellungen, die man in einer Nachricht mit @ erwähnt: ein Agent, jede seiner Optionen und dauerhafte Anweisungen) nur Feld für Feld unter Einstellungen → Zusammenarbeit → Multi-Agent-Zusammenarbeit → Assistenten ausfüllen; ein Agent kann nicht helfen.
+- Dieser Build gibt Agenten zwei Tools, `create_assistant` und `update_assistant`. Sag dem Agenten, welchen Assistenten du willst (etwa „leg einen Reviewer an: Codex, GPT-5.5, hohes Reasoning, nur lesen, für Diff-Reviews“), und er legt ihn an; sag „stell den Reviewer auf GPT-5.4 um“ oder „ergänz die Anweisungen des Reviewers um eine Regel“, und er ändert ihn.
+- Beim Anlegen startet Codeg den Agenten kurz, um seine echten Optionen zu lesen (ein paar Sekunden). Genannte Optionen werden wie gesagt gesetzt, die übrigen auf die Standardwerte des Agenten (die der Editor als Empfohlen markiert); beim Ändern bleiben nicht genannte Optionen, wie sie sind. Passt ein Modell oder eine Option nicht, wird nichts gespeichert, und der Agent erfährt, was verfügbar ist.
+- In der Unterhaltung erscheint eine Zeile „Assistent … wird erstellt“; aufgeklappt zeigt sie Agent, Optionen und Anweisungen des Assistenten, und Bearbeiten öffnet denselben Editor wie in den Einstellungen. Der neue Assistent steht sofort im @-Menü und kann gleich Aufgaben bekommen.
+- Der Schalter ist „Assistenten erstellen“ unter Einstellungen → Zusammenarbeit → Tools in der Unterhaltung, standardmäßig an; aus, sehen Agenten die beiden Tools nicht. Ein Agent, der Dateien und Befehle selbst übernimmt, bekommt sie nicht – genau wie die Delegations-Tools.
 
 </details>
 

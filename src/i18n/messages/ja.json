@@ -4258,6 +4258,10 @@
         "createWorkTaskNoTitle": "作業タスクを作成中",
         "resumeDelegation": "タスク {task} を再開中",
         "resumeDelegationNoId": "委任タスクを再開中",
+        "createAssistant": "アシスタント {name} を作成中",
+        "createAssistantNoName": "アシスタントを作成中",
+        "updateAssistant": "アシスタント {name} を更新中",
+        "updateAssistantNoName": "アシスタントを更新中",
         "promptLabel": "プロンプト",
         "attachmentsLabel": "添付ファイル",
         "ackRecorded": "作業タスクに記録しました",
@@ -4268,6 +4272,13 @@
           "needs_review": "要確認",
           "blocked": "ブロック",
           "unknown": "不明"
+        },
+        "assistant": {
+          "options": "オプション",
+          "instructions": "常設の指示",
+          "edit": "編集",
+          "deleted": "{name} はその後削除されました。",
+          "switchedOff": "{agent} · 無効"
         }
       },
       "askQuestionResult": {
@@ -5673,6 +5684,11 @@
       "label": "画像を生成",
       "short": "設定したサービスで画像を生成・編集します。",
       "hint": "「設定 → 画像生成」で設定したサービスを使って、エージェントが画像を生成・編集し、ファイルとして保存できるようにします。呼び出しは Codeg が行うので、エージェントに API キーは見えません。既定はオフ。"
+    },
+    "assistants": {
+      "label": "アシスタントを作成",
+      "short": "@ で呼べるアシスタントを作成・変更します。",
+      "hint": "会話の中で、エージェントが @ アシスタントを作成・変更できるようにします。名前、エージェント、モデルなどのオプション、常設の指示を設定でき、指定しなかったオプションはそのエージェントの既定値になります。既定でオン——アシスタントは委任するまで何も実行しません。"
     }
   },
   "DesktopNotificationSettings": {

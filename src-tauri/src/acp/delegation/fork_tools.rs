@@ -14,6 +14,8 @@
 //!   the idle timer on others (Claude Code, Qoder, CodeBuddy).
 //! - **Images.** `image_generate` / `image_get_result`, served by
 //!   `crate::image_gen` in the parent.
+//! - **Assistants.** `create_assistant` / `update_assistant`, served by
+//!   `crate::assistant_tools` in the parent.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,8 +27,8 @@ use super::companion::{
     err, register_and_spawn, render_ask_result, CompanionContext, InflightCalls, LineAction,
 };
 use super::transport::{
-    client_message_round_trip, BrokerAskCollectRequest, BrokerImageGenerateRequest,
-    BrokerImageModelsRequest, BrokerImageResultRequest, BrokerMessage,
+    client_message_round_trip, BrokerAskCollectRequest, BrokerAssistantToolRequest,
+    BrokerImageGenerateRequest, BrokerImageModelsRequest, BrokerImageResultRequest, BrokerMessage,
 };
 
 /// The schemas of the tools below, appended to the embedded upstream list.
@@ -311,8 +313,59 @@ pub(super) async fn build_spawn(
                 Box::pin(async move { client_message_round_trip(&socket, &msg).await });
             register_and_spawn(inflight, id, None, round_trip, render_image_jobs).await
         }
+        "create_assistant" | "update_assistant" => {
+            if let Some(problem) = assistant_call_problem(name, &arguments) {
+                return LineAction::Respond(err(id, -32602, problem));
+            }
+            let msg = BrokerMessage::AssistantTool(BrokerAssistantToolRequest {
+                token: ctx.token.clone(),
+                tool: name.to_string(),
+                input: arguments,
+            });
+            let round_trip =
+                Box::pin(async move { client_message_round_trip(&socket, &msg).await });
+            register_and_spawn(inflight, id, None, round_trip, render_assistant_outcome).await
+        }
         other => LineAction::Respond(err(id, -32602, format!("unknown tool: {other}"))),
     }
+}
+
+/// `create_assistant` / `update_assistant`: the arguments the call cannot do
+/// without, checked here so a malformed call fails at once instead of after
+/// the parent has launched an agent to read its options.
+fn assistant_call_problem(name: &str, arguments: &Value) -> Option<&'static str> {
+    let text = |key: &str| {
+        arguments
+            .get(key)
+            .and_then(Value::as_str)
+            .is_some_and(|s| !s.trim().is_empty())
+    };
+    match name {
+        "create_assistant" if !text("name") => Some("create_assistant requires a non-empty name"),
+        "create_assistant" if !text("agent_type") => {
+            Some("create_assistant requires agent_type, the agent the assistant runs on")
+        }
+        "update_assistant"
+            if !(text("assistant") || arguments.get("assistant").is_some_and(Value::is_number)) =>
+        {
+            Some("update_assistant requires assistant: the assistant's id or name")
+        }
+        _ => None,
+    }
+}
+
+/// The parent's `{ text, is_error }` as tool content. No
+/// `structuredContent`: the text is the whole answer, and Codex would show the
+/// model only the structured part.
+pub(crate) fn render_assistant_outcome(outcome: &Value) -> Value {
+    let text = outcome
+        .get("text")
+        .and_then(Value::as_str)
+        .unwrap_or("The assistant tool returned nothing.");
+    json!({
+        "content": [{ "type": "text", "text": text }],
+        "isError": outcome.get("is_error").and_then(Value::as_bool).unwrap_or(true),
+    })
 }
 
 /// `job_ids`, trimmed and de-duplicated in order. A bare string is taken as a
@@ -534,6 +587,47 @@ mod tests {
     }
 
     #[test]
+    fn assistant_calls_are_gated_checked_and_rendered_as_text() {
+        use super::super::companion::CompanionFeatures;
+        let on = CompanionFeatures::parse(Some("assistants"));
+        let off = CompanionFeatures::parse(Some("delegation,image"));
+        for tool in ["create_assistant", "update_assistant"] {
+            assert!(on.allows_tool(tool), "{tool}");
+            assert!(!off.allows_tool(tool), "{tool}");
+        }
+
+        let problem = |tool: &str, args: Value| assistant_call_problem(tool, &args);
+        assert!(problem("create_assistant", json!({"agent_type": "codex"})).is_some());
+        assert!(problem(
+            "create_assistant",
+            json!({"name": " ", "agent_type": "codex"})
+        )
+        .is_some());
+        assert!(problem("create_assistant", json!({"name": "Reviewer"})).is_some());
+        assert!(problem(
+            "create_assistant",
+            json!({"name": "Reviewer", "agent_type": "codex"})
+        )
+        .is_none());
+        assert!(problem("update_assistant", json!({"name": "Critic"})).is_some());
+        assert!(problem("update_assistant", json!({"assistant": 7})).is_none());
+        assert!(problem("update_assistant", json!({"assistant": "Reviewer"})).is_none());
+
+        let saved = render_assistant_outcome(
+            &json!({"text": "Created assistant \"R\" (assistant_id=7).", "is_error": false, "assistant_id": 7}),
+        );
+        assert_eq!(saved["isError"], false);
+        assert_eq!(
+            saved["content"][0]["text"],
+            "Created assistant \"R\" (assistant_id=7)."
+        );
+        assert!(saved.get("structuredContent").is_none());
+        let refused =
+            render_assistant_outcome(&json!({"text": "Not created: x", "is_error": true}));
+        assert_eq!(refused["isError"], true);
+    }
+
+    #[test]
     fn the_fork_schema_parses_and_names_its_tools() {
         let tools: Value = serde_json::from_str(FORK_TOOL_SCHEMA_JSON).unwrap();
         let names: Vec<&str> = tools
@@ -544,7 +638,13 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            ["get_question_answer", "image_generate", "image_get_result"]
+            [
+                "get_question_answer",
+                "image_generate",
+                "image_get_result",
+                "create_assistant",
+                "update_assistant",
+            ]
         );
     }
 

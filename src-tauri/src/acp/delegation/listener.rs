@@ -683,6 +683,25 @@ impl DelegationListener {
                 write_frame(conn, &BrokerResponse { outcome }).await?;
                 return Ok(());
             }
+            BrokerMessage::AssistantTool(req) => {
+                // keh4l build. Not raced against peer-close like the image
+                // calls: the probe it may run launches an agent and must get
+                // to tear it down, and its own timeout bounds the wait.
+                let outcome = match self.tokens.lookup(&req.token).await {
+                    Some(entry) => {
+                        crate::assistant_tools::mcp::handle(
+                            &req.tool,
+                            req.input,
+                            &crate::assistant_tools::mcp::Caller {
+                                working_dir: entry.working_dir.clone(),
+                            },
+                        )
+                        .await
+                    }
+                    None => crate::assistant_tools::mcp::session_ended(&req.tool),
+                };
+                BrokerResponse { outcome }
+            }
             BrokerMessage::SessionInfo(req) => {
                 // Read-only resolution (DB + a bounded transcript parse). No
                 // peer-close race needed: unlike Status/Ask this never blocks on

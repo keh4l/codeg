@@ -229,6 +229,15 @@ pub struct BrokerImageResultRequest {
     pub wait_ms: Option<u64>,
 }
 
+/// One `create_assistant` / `update_assistant` call: the tool's name and its
+/// arguments as the agent sent them, checked by the parent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrokerAssistantToolRequest {
+    pub token: String,
+    pub tool: String,
+    pub input: Value,
+}
+
 /// Resolve a session the user referenced (`codeg://session/<id>`) into its
 /// metadata + stats, optionally with its recent messages. Backs the
 /// `get_session_info` MCP tool. Authenticated by the same per-launch `token`; the
@@ -534,6 +543,9 @@ pub enum BrokerMessage {
     ImageGenerate(BrokerImageGenerateRequest),
     /// `image_get_result`.
     ImageResult(BrokerImageResultRequest),
+    /// `create_assistant` / `update_assistant` (keh4l build), served by
+    /// `crate::assistant_tools`.
+    AssistantTool(BrokerAssistantToolRequest),
     /// Liveness and capability probe, carrying no `token`: the answer reveals
     /// nothing beyond "the socket is being served" and what this listener
     /// understands. Sent by codeg's own service-status check

@@ -4258,6 +4258,10 @@
         "createWorkTaskNoTitle": "Création d’une tâche",
         "resumeDelegation": "Reprise de la tâche {task}",
         "resumeDelegationNoId": "Reprise d'une tâche déléguée",
+        "createAssistant": "Création de l’assistant {name}",
+        "createAssistantNoName": "Création d’un assistant",
+        "updateAssistant": "Modification de l’assistant {name}",
+        "updateAssistantNoName": "Modification d’un assistant",
         "promptLabel": "Instruction",
         "attachmentsLabel": "Pièces jointes",
         "ackRecorded": "Enregistré dans la tâche",
@@ -4268,6 +4272,13 @@
           "needs_review": "à relire",
           "blocked": "bloquée",
           "unknown": "inconnu"
+        },
+        "assistant": {
+          "options": "Options",
+          "instructions": "Instructions permanentes",
+          "edit": "Modifier",
+          "deleted": "{name} a depuis été supprimé.",
+          "switchedOff": "{agent} · désactivé"
         }
       },
       "askQuestionResult": {
@@ -5673,6 +5684,11 @@
       "label": "Générer des images",
       "short": "Génère et modifie des images avec les services configurés.",
       "hint": "Permet aux agents de générer et modifier des images avec les services configurés dans Réglages → Génération d'images, enregistrées comme fichiers. C'est Codeg qui fait l'appel : les agents ne voient jamais la clé d'API. Désactivé par défaut."
+    },
+    "assistants": {
+      "label": "Créer des assistants",
+      "short": "Créer et modifier vos assistants @.",
+      "hint": "Permet aux agents de créer et de modifier vos assistants @ depuis une conversation : le nom, l’agent, son modèle et ses autres options, et les instructions permanentes. Les options que vous ne mentionnez pas gardent les valeurs par défaut de l’agent. Activé par défaut : un assistant n’exécute rien tant que vous ne lui déléguez pas de tâche."
     }
   },
   "DesktopNotificationSettings": {

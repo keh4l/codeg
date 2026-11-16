@@ -4258,6 +4258,10 @@
         "createWorkTaskNoTitle": "建立待辦任務",
         "resumeDelegation": "恢復任務 {task}",
         "resumeDelegationNoId": "恢復委派任務",
+        "createAssistant": "建立助手 {name}",
+        "createAssistantNoName": "建立助手",
+        "updateAssistant": "修改助手 {name}",
+        "updateAssistantNoName": "修改助手",
         "promptLabel": "指令",
         "attachmentsLabel": "附件",
         "ackRecorded": "已記錄到待辦任務",
@@ -4268,6 +4272,13 @@
           "needs_review": "待複核",
           "blocked": "受阻",
           "unknown": "未知"
+        },
+        "assistant": {
+          "options": "選項",
+          "instructions": "常駐指令",
+          "edit": "編輯",
+          "deleted": "{name} 已被刪除。",
+          "switchedOff": "{agent} · 已停用"
         }
       },
       "askQuestionResult": {
@@ -5673,6 +5684,11 @@
       "label": "生成圖片",
       "short": "用你設定的服務生成和修改圖片。",
       "hint": "讓智慧體用你在「設定 → 圖片生成」裡設定的服務生成和修改圖片，圖片儲存成檔案。介面由 codeg 呼叫，智慧體看不到 API Key。預設關閉。"
+    },
+    "assistants": {
+      "label": "建立助手",
+      "short": "新增和修改你的 @ 助手。",
+      "hint": "讓智慧體依你在對話裡說的新增和修改 @ 助手：名稱、智慧體、模型等選項和常駐指令，沒說到的選項用那個智慧體的預設值。預設開啟——助手要等你委派任務才會執行。"
     }
   },
   "DesktopNotificationSettings": {

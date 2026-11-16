@@ -4258,6 +4258,10 @@
         "createWorkTaskNoTitle": "Criando uma tarefa de trabalho",
         "resumeDelegation": "Retomando a tarefa {task}",
         "resumeDelegationNoId": "Retomando uma tarefa delegada",
+        "createAssistant": "Criando o assistente {name}",
+        "createAssistantNoName": "Criando um assistente",
+        "updateAssistant": "Atualizando o assistente {name}",
+        "updateAssistantNoName": "Atualizando um assistente",
         "promptLabel": "Instrução",
         "attachmentsLabel": "Anexos",
         "ackRecorded": "Registrado na tarefa de trabalho",
@@ -4268,6 +4272,13 @@
           "needs_review": "requer revisão",
           "blocked": "bloqueada",
           "unknown": "desconhecido"
+        },
+        "assistant": {
+          "options": "Opções",
+          "instructions": "Instruções permanentes",
+          "edit": "Editar",
+          "deleted": "{name} foi excluído depois.",
+          "switchedOff": "{agent} · desativado"
         }
       },
       "askQuestionResult": {
@@ -5673,6 +5684,11 @@
       "label": "Gerar imagens",
       "short": "Gera e edita imagens com os serviços que você configurou.",
       "hint": "Permite que os agentes gerem e editem imagens com os serviços configurados em Configurações → Geração de imagens, salvas como arquivos. Quem faz a chamada é o Codeg, então os agentes nunca veem a chave de API. Desativado por padrão."
+    },
+    "assistants": {
+      "label": "Criar assistentes",
+      "short": "Crie e altere seus assistentes @.",
+      "hint": "Permite que os agentes criem e alterem seus assistentes @ a partir de uma conversa: o nome, o agente, o modelo e as outras opções, e as instruções permanentes. As opções que você não mencionar ficam com os padrões do agente. Ativado por padrão: um assistente não executa nada até você delegar uma tarefa a ele."
     }
   },
   "DesktopNotificationSettings": {

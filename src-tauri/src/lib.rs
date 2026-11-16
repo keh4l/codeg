@@ -26,6 +26,7 @@ mod app_error;
 mod app_menu;
 pub mod app_state;
 pub mod appimage_env;
+pub mod assistant_tools;
 pub mod automation;
 pub mod backgrounds;
 /// Built-in browser. Only its wire types and its grant rules compile in server
@@ -1273,6 +1274,7 @@ mod tauri_app {
                             &db_for_init,
                         )
                         .await;
+                        crate::assistant_tools::apply_persisted_settings(&db_for_init).await;
                         // The generative-UI skill's central copy, and the move
                         // from 0.35.0's `json-render`: here, before any command
                         // runs, so the move can never undo a change made on
@@ -1293,6 +1295,19 @@ mod tauri_app {
                         computer_tools_config.clone(),
                     );
                     app.manage(computer_service.clone());
+
+                    // keh4l build: what `create_assistant` / `update_assistant`
+                    // probe agents and save with.
+                    crate::assistant_tools::install(crate::assistant_tools::Runtime {
+                        db: std::sync::Arc::new(db::AppDatabase {
+                            conn: db_conn.clone(),
+                        }),
+                        emitter: crate::web::event_bridge::EventEmitter::Tauri(
+                            app.handle().clone(),
+                        ),
+                        manager: std::sync::Arc::new(cm_state.clone_ref()),
+                        data_dir: effective_data_dir.clone(),
+                    });
 
                     let listener_broker = broker.clone();
                     let listener = crate::acp::delegation::listener::DelegationListener::new(

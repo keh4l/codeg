@@ -48,6 +48,9 @@ export const CODEG_MCP_WORKBENCH_TOOLS = [
   "create_automation",
   "create_work_task",
   "resume_delegation",
+  // keh4l build (`src/lib/assistant-tools.ts`).
+  "create_assistant",
+  "update_assistant",
 ] as const
 
 export type CodegMcpWorkbenchTool = (typeof CODEG_MCP_WORKBENCH_TOOLS)[number]
@@ -273,6 +276,27 @@ const ARG_SPECS: Record<
     // appears without it.
     fields: ["task_id"],
     detail: (args) => str(args, "task_id"),
+  },
+  // keh4l build. The row names the assistant: the new one's name, or for an
+  // update its new name, else whatever the call named it by (an id reads as
+  // `#7` until the card swaps in the live name).
+  create_assistant: {
+    fields: ["name", "agent_type"],
+    detail: (args) => str(args, "name"),
+  },
+  update_assistant: {
+    fields: ["assistant"],
+    detail: (args) => {
+      const renamed = str(args, "name")
+      if (renamed) return renamed
+      const raw = args.assistant
+      if (typeof raw === "number" && Number.isFinite(raw)) return `#${raw}`
+      if (typeof raw === "string" && raw.trim()) {
+        const link = raw.trim().match(/^codeg:\/\/assistant\/(\d+)$/)
+        return link ? `#${link[1]}` : raw.trim().replace(/^@/, "")
+      }
+      return null
+    },
   },
 }
 

@@ -4258,6 +4258,10 @@
         "createWorkTaskNoTitle": "Creating a work task",
         "resumeDelegation": "Resuming task {task}",
         "resumeDelegationNoId": "Resuming a delegated task",
+        "createAssistant": "Creating assistant {name}",
+        "createAssistantNoName": "Creating an assistant",
+        "updateAssistant": "Updating assistant {name}",
+        "updateAssistantNoName": "Updating an assistant",
         "promptLabel": "Prompt",
         "attachmentsLabel": "Attachments",
         "ackRecorded": "Recorded on the work task",
@@ -4268,6 +4272,13 @@
           "needs_review": "needs review",
           "blocked": "blocked",
           "unknown": "unknown"
+        },
+        "assistant": {
+          "options": "Options",
+          "instructions": "Standing instructions",
+          "edit": "Edit",
+          "deleted": "{name} has since been deleted.",
+          "switchedOff": "{agent} · switched off"
         }
       },
       "askQuestionResult": {
@@ -5673,6 +5684,11 @@
       "label": "Generate images",
       "short": "Generate and edit images with the services you set up.",
       "hint": "Lets agents generate and edit images with the services you set up in Settings → Image generation, saved as files. Codeg makes the call, so agents never see the API key. Off by default."
+    },
+    "assistants": {
+      "label": "Create assistants",
+      "short": "Set up and change your @ assistants.",
+      "hint": "Lets agents create and change your @ assistants from a conversation: the name, the agent, its model and other options, and the standing instructions. Options you don't mention keep the agent's defaults. On by default — an assistant runs nothing until you delegate to it."
     }
   },
   "DesktopNotificationSettings": {

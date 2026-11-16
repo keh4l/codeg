@@ -50,7 +50,8 @@
     <td width="50%" valign="top">⏎ <strong>Enter takes the suggested next message</strong><br/>The message the agent predicts you'll send next shows in the empty input box; press Enter to fill it in and Enter again to send. It works on a phone keyboard, which has no Tab key.</td>
   </tr>
   <tr>
-    <td colspan="2" valign="top">⏯️ <strong>Sub-agents pick up where an error stopped them</strong><br/>When a delegated sub-agent stops because the network dropped, its quota ran out, its sign-in expired or the provider returned an error, the main agent can have it carry on in its original session, with its context and half-done work intact, instead of starting over in a new one.</td>
+    <td width="50%" valign="top">⏯️ <strong>Sub-agents pick up where an error stopped them</strong><br/>When a delegated sub-agent stops because the network dropped, its quota ran out, its sign-in expired or the provider returned an error, the main agent can have it carry on in its original session, with its context and half-done work intact, instead of starting over in a new one.</td>
+    <td width="50%" valign="top">🧑‍💼 <strong>Agents set up @ assistants for you</strong><br/>Say “add a reviewer assistant on Codex with high effort” in a conversation and the agent creates or changes the @ assistant: name, agent, model and standing instructions as you said, every option you didn't mention at the agent's default. Click Edit right in the conversation to adjust it.</td>
   </tr>
   <tr>
     <td colspan="2" valign="top">🔄 <strong>Follows upstream</strong><br/>Upstream is merged in regularly; anything not listed here works exactly as in the official build. The built-in Kiro CLI, the first thing this build added, has been part of the official build since 0.36.0. Claude Code thinking summaries use the official build's switch from 0.41.3-1 on: “Show Claude's thinking summaries” in Settings → Agents → Claude Code, off by default.</td>
@@ -194,6 +195,18 @@
 - This build treats those failures as interruptions too: the sub-task's result says its session and partial work are kept and that `resume_delegation` continues it once the cause is fixed. The main agent then carries on in the original sub-session under the same task_id, and the sub-agent's original card in the conversation follows its progress again.
 - To use it: once the network is back, the quota is topped up or you've signed in again, ask the main agent to let the sub-agent continue.
 - A task that failed before it had a session (the agent couldn't start, say) has nothing to continue and needs a new delegation; a sub-task that finished normally can't be given new work this way either — follow-up work still goes in a new delegation.
+
+</details>
+
+<details>
+<summary><strong>Agents set up @ assistants for you</strong>: details</summary>
+<br/>
+
+- In the official build, @ assistants (delegation presets you can @ in a message: an agent, every one of its options, and standing instructions) can only be filled in field by field under Settings → Collaboration → Multi-Agent Collaboration → Assistants; an agent can't help.
+- This build gives agents two tools, `create_assistant` and `update_assistant`. Tell the agent what assistant you want (say, “add a reviewer on Codex, GPT-5.5, high effort, read-only, for reviewing diffs”) and it creates it; say “switch the reviewer to GPT-5.4” or “add a rule to the reviewer's instructions” and it changes it.
+- When creating one, Codeg starts that agent briefly to read its real options (a few seconds). Options you name are set as you said, the rest take the agent's own defaults (the ones the editor marks Recommended); when changing one, options you don't name stay as they are. If a model or option doesn't match, nothing is saved and the agent is told what is available.
+- The conversation shows a “Creating assistant …” row; expand it to see the assistant's agent, options and instructions, and click Edit to open the same editor as in Settings. The new assistant is in the @ menu right away and can be delegated to at once.
+- The switch is “Create assistants” under Settings → Collaboration → In-conversation tools, on by default; turned off, agents don't see the two tools. An agent switched to “handles files and commands itself” doesn't get them, just as it doesn't get the delegation tools.
 
 </details>
 

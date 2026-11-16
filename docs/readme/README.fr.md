@@ -50,7 +50,8 @@
     <td width="50%" valign="top">⏎ <strong>Entrée reprend le message suivant suggéré</strong><br/>Le message que l'agent prévoit que vous enverrez ensuite s'affiche dans la zone de saisie vide ; Entrée le remplit, une seconde Entrée l'envoie. Ça marche aussi au clavier du téléphone, qui n'a pas de touche Tab.</td>
   </tr>
   <tr>
-    <td colspan="2" valign="top">⏯️ <strong>Les sous-agents reprennent là où une erreur les a arrêtés</strong><br/>Quand un sous-agent délégué s'arrête parce que le réseau a coupé, que son quota est épuisé, que sa connexion a expiré ou que le fournisseur a renvoyé une erreur, l'agent principal peut le faire continuer dans sa session d'origine, avec son contexte et le travail à moitié fait, au lieu de tout recommencer dans une nouvelle.</td>
+    <td width="50%" valign="top">⏯️ <strong>Les sous-agents reprennent là où une erreur les a arrêtés</strong><br/>Quand un sous-agent délégué s'arrête parce que le réseau a coupé, que son quota est épuisé, que sa connexion a expiré ou que le fournisseur a renvoyé une erreur, l'agent principal peut le faire continuer dans sa session d'origine, avec son contexte et le travail à moitié fait, au lieu de tout recommencer dans une nouvelle.</td>
+    <td width="50%" valign="top">🧑‍💼 <strong>Les agents préparent vos assistants @</strong><br/>Dites « ajoute un assistant relecteur sur Codex avec un raisonnement élevé » dans une conversation et l’agent crée ou modifie l’assistant @ : nom, agent, modèle et instructions permanentes comme vous l’avez dit, chaque option non mentionnée à la valeur par défaut de l’agent. Cliquez sur Modifier dans la conversation pour l’ajuster.</td>
   </tr>
   <tr>
     <td colspan="2" valign="top">🔄 <strong>Au plus près de l'original</strong><br/>Le projet d'origine est fusionné régulièrement ; ce qui n'est pas listé ici fonctionne comme dans la version officielle. Kiro CLI intégré, le premier ajout de cette version, fait partie de la version officielle depuis la 0.36.0. Les résumés de réflexion de Claude Code passent dès la 0.41.3-1 par l'interrupteur de la version officielle : « Afficher les résumés de réflexion de Claude » dans Réglages → Agents IA → Claude Code, désactivé par défaut.</td>
@@ -194,6 +195,18 @@
 - Cette version traite aussi ces échecs comme des interruptions : le résultat de la sous-tâche indique que sa session et le travail partiel sont conservés et que `resume_delegation` la poursuit une fois la cause réglée. L'agent principal continue alors dans la sous-session d'origine, avec le même task_id, et la carte d'origine du sous-agent dans la conversation affiche de nouveau sa progression.
 - Pour s'en servir : une fois le réseau revenu, le quota rechargé ou la connexion renouvelée, demandez à l'agent principal de laisser le sous-agent continuer.
 - Une tâche qui a échoué avant d'avoir une session (l'agent n'a pas pu démarrer, par exemple) n'a rien à poursuivre et doit être déléguée à nouveau ; on ne peut pas non plus ajouter ainsi du travail à une sous-tâche terminée normalement : le travail supplémentaire passe toujours par une nouvelle délégation.
+
+</details>
+
+<details>
+<summary><strong>Les agents préparent vos assistants @</strong> : détails</summary>
+<br/>
+
+- Dans la version officielle, les assistants @ (préréglages de délégation qu’on mentionne avec @ dans un message : un agent, chacune de ses options et des instructions permanentes) ne se remplissent que champ par champ dans Réglages → Collaboration → Collaboration multi-agent → Assistants ; un agent ne peut pas aider.
+- Cette version donne aux agents deux outils, `create_assistant` et `update_assistant`. Dites à l’agent quel assistant vous voulez (par exemple « ajoute un relecteur : Codex, GPT-5.5, raisonnement élevé, lecture seule, pour relire les diffs ») et il le crée ; dites « passe le relecteur à GPT-5.4 » ou « ajoute une règle aux instructions du relecteur » et il le modifie.
+- À la création, Codeg lance brièvement l’agent pour lire ses vraies options (quelques secondes). Les options que vous nommez sont réglées comme vous l’avez dit, les autres prennent les valeurs par défaut de l’agent (celles que l’éditeur marque Recommandé) ; à la modification, les options non nommées restent telles quelles. Si un modèle ou une option ne correspond pas, rien n’est enregistré et l’agent apprend ce qui est disponible.
+- La conversation affiche une ligne « Création de l’assistant … » ; dépliée, elle montre l’agent, les options et les instructions de l’assistant, et Modifier ouvre le même éditeur que dans les Réglages. Le nouvel assistant apparaît tout de suite dans le menu @ et peut recevoir des tâches aussitôt.
+- L’interrupteur est « Créer des assistants » dans Réglages → Collaboration → Outils dans la conversation, activé par défaut ; désactivé, les agents ne voient pas les deux outils. Un agent réglé pour gérer lui-même fichiers et commandes ne les reçoit pas, pas plus que les outils de délégation.
 
 </details>
 

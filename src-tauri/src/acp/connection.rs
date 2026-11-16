@@ -8171,6 +8171,9 @@ struct CompanionFeatureFlags {
     /// `image_generate` / `image_get_result`: switched on, with a usable
     /// image service (see `crate::image_gen`).
     image: bool,
+    /// `create_assistant` / `update_assistant` (keh4l build): switched on,
+    /// and withheld where delegation is (see where it is set).
+    assistants: bool,
 }
 
 /// The `--features` value for a companion launch, or `None` when no group is
@@ -8225,6 +8228,9 @@ fn companion_features_arg(flags: CompanionFeatureFlags) -> Option<String> {
     }
     if flags.image {
         features.push("image");
+    }
+    if flags.assistants {
+        features.push("assistants");
     }
     if features.is_empty() {
         return None;
@@ -8358,6 +8364,11 @@ where
         computer_clipboard: injection.computer.is_served()
             && injection.computer.is_clipboard_enabled().await,
         image: crate::image_gen::is_ready(),
+        // An assistant is a stored delegation: whoever later @-mentions it
+        // runs that agent under codeg's own policy, with these options and
+        // instructions. So an agent that hosts its own tools, kept from
+        // delegating, is kept from writing one too.
+        assistants: crate::assistant_tools::is_enabled() && host_tools.hosts_channels(),
     };
     // `None` (no feature enabled) short-circuits BEFORE the binary lookup, the
     // token registration and the server append: there is no companion to launch,
@@ -46131,6 +46142,8 @@ mod tests {
         let injection = test_delegation_injection(
             Arc::new(TestAllAgentsAvailable) as Arc<dyn AgentAvailabilityLookup>
         );
+        // keh4l build: the assistant tools are on by default, process-wide.
+        let _assistant_tools_off = crate::assistant_tools::off_on_this_thread();
 
         let mut servers: Vec<McpServer> = Vec::new();
         let result = inject_codeg_mcp(
@@ -46394,14 +46407,20 @@ mod tests {
                 computer_launch: true,
                 computer_clipboard: true,
                 image: false,
+                assistants: true,
             }),
             Some(
                 "delegation,feedback,ask,sessions,tasks,result,automations,taskboard,browser,\
-                 browser_eval,computer,computer_launch,computer_clipboard"
+                 browser_eval,computer,computer_launch,computer_clipboard,assistants"
                     .to_string()
             )
         );
         assert_eq!(only(|f| f.computer_clipboard = true), None);
+        // keh4l build: the assistant tools alone still get a companion.
+        assert_eq!(
+            only(|f| f.assistants = true),
+            Some("assistants".to_string())
+        );
         // Computer use alone still gets a companion.
         assert_eq!(only(|f| f.computer = true), Some("computer".to_string()));
         // Its launch switch never travels on its own.

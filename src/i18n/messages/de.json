@@ -4258,6 +4258,10 @@
         "createWorkTaskNoTitle": "Arbeitsaufgabe wird erstellt",
         "resumeDelegation": "Aufgabe {task} wird fortgesetzt",
         "resumeDelegationNoId": "Delegierte Aufgabe wird fortgesetzt",
+        "createAssistant": "Assistent {name} wird erstellt",
+        "createAssistantNoName": "Assistent wird erstellt",
+        "updateAssistant": "Assistent {name} wird geändert",
+        "updateAssistantNoName": "Assistent wird geändert",
         "promptLabel": "Anweisung",
         "attachmentsLabel": "Anhänge",
         "ackRecorded": "In der Arbeitsaufgabe erfasst",
@@ -4268,6 +4272,13 @@
           "needs_review": "Prüfung nötig",
           "blocked": "blockiert",
           "unknown": "unbekannt"
+        },
+        "assistant": {
+          "options": "Optionen",
+          "instructions": "Dauerhafte Anweisungen",
+          "edit": "Bearbeiten",
+          "deleted": "{name} wurde inzwischen gelöscht.",
+          "switchedOff": "{agent} · deaktiviert"
         }
       },
       "askQuestionResult": {
@@ -5673,6 +5684,11 @@
       "label": "Bilder erzeugen",
       "short": "Erzeugt und bearbeitet Bilder mit den eingerichteten Diensten.",
       "hint": "Lässt Agenten mit den Diensten aus Einstellungen → Bildgenerierung Bilder erzeugen und bearbeiten und als Dateien speichern. Den Aufruf macht Codeg, Agenten sehen den API-Schlüssel also nie. Standardmäßig aus."
+    },
+    "assistants": {
+      "label": "Assistenten erstellen",
+      "short": "Deine @-Assistenten anlegen und ändern.",
+      "hint": "Lässt Agenten deine @-Assistenten aus einer Unterhaltung heraus anlegen und ändern: Name, Agent, Modell und weitere Optionen sowie die dauerhaften Anweisungen. Optionen, die du nicht nennst, behalten die Standardwerte des Agenten. Standardmäßig an – ein Assistent führt nichts aus, bis du ihm eine Aufgabe delegierst."
     }
   },
   "DesktopNotificationSettings": {

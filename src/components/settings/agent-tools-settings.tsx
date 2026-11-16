@@ -79,6 +79,12 @@ import {
   type ImageGenSettingsView,
 } from "@/lib/image-gen/api"
 import { ConfigureImageServicesLink } from "@/components/settings/image-generation-settings"
+import {
+  ASSISTANT_TOOLS_SETTINGS_CHANGED_EVENT,
+  getAssistantToolsSettings,
+  setAssistantToolsEnabled,
+  type AssistantToolsSettings,
+} from "@/lib/assistant-tools-api"
 
 /** One field per switch, flattened across the five backend groups. */
 interface AgentToolValues {
@@ -91,6 +97,8 @@ interface AgentToolValues {
   automations: boolean
   workTasks: boolean
   image: boolean
+  /** keh4l build: `create_assistant` / `update_assistant`. */
+  assistants: boolean
 }
 
 /**
@@ -109,6 +117,9 @@ const DEFAULTS: AgentToolValues = {
   automations: false,
   workTasks: false,
   image: false,
+  // On by default, unlike the two writers above: an assistant runs nothing
+  // until someone delegates to it.
+  assistants: true,
 }
 
 /** The rows, in the order they read: what an agent may say to you, what it may
@@ -130,6 +141,7 @@ const TOOL_ROWS = [
   { key: "automations", slug: "automations", id: "agent-tools-automations" },
   { key: "workTasks", slug: "taskboard", id: "agent-tools-work-tasks" },
   { key: "image", slug: "image", id: "agent-tools-image" },
+  { key: "assistants", slug: "assistants", id: "agent-tools-assistants" },
 ] as const satisfies ReadonlyArray<{
   key: keyof AgentToolValues
   slug: string
@@ -165,7 +177,13 @@ export function AgentToolsSettingsSection() {
    * while they were in flight, yields that record's fields to the broadcast —
    * that read is older than it. A broadcast about one record says nothing
    * about another's read. */
-  const remoteGenRef = useRef({ chat: 0, browser: 0, computer: 0, image: 0 })
+  const remoteGenRef = useRef({
+    chat: 0,
+    browser: 0,
+    computer: 0,
+    image: 0,
+    assistants: 0,
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -179,6 +197,7 @@ export function AgentToolsSettingsSection() {
         computer,
         chat,
         image,
+        assistants,
       ] = await Promise.allSettled([
         getFeedbackSettings(),
         getQuestionSettings(),
@@ -187,6 +206,7 @@ export function AgentToolsSettingsSection() {
         getComputerToolsSettings(),
         getChatAuthoringSettings(),
         getImageGenSettings(),
+        getAssistantToolsSettings(),
       ])
       if (cancelled) return
 
@@ -216,6 +236,9 @@ export function AgentToolsSettingsSection() {
       } else failures.push(toErrorMessage(chat.reason))
       if (image.status === "fulfilled") next.image = image.value.enabled
       else failures.push(toErrorMessage(image.reason))
+      if (assistants.status === "fulfilled")
+        next.assistants = assistants.value.enabled
+      else failures.push(toErrorMessage(assistants.reason))
 
       const moved = remoteGenRef.current
       // `prev` already holds the broadcast's value for the fields a broadcast
@@ -232,6 +255,9 @@ export function AgentToolsSettingsSection() {
           : {}),
         ...(moved.computer !== gen.computer ? { computer: prev.computer } : {}),
         ...(moved.image !== gen.image ? { image: prev.image } : {}),
+        ...(moved.assistants !== gen.assistants
+          ? { assistants: prev.assistants }
+          : {}),
       })
       setValues(keepBroadcast)
       setBaseline(keepBroadcast)
@@ -401,6 +427,35 @@ export function AgentToolsSettingsSection() {
     }
   }, [])
 
+  /** And for the assistant tools' switch, which the popover writes too. */
+  useEffect(() => {
+    let disposed = false
+    let unsubscribe: (() => void) | undefined
+    void subscribe<AssistantToolsSettings>(
+      ASSISTANT_TOOLS_SETTINGS_CHANGED_EVENT,
+      (remote) => {
+        remoteGenRef.current.assistants += 1
+        const current = valuesRef.current
+        const base = baselineRef.current
+        setValues((prev) =>
+          current.assistants === base.assistants
+            ? { ...prev, assistants: remote.enabled }
+            : prev
+        )
+        setBaseline((prev) => ({ ...prev, assistants: remote.enabled }))
+      }
+    )
+      .then((fn) => {
+        if (disposed) fn()
+        else unsubscribe = fn
+      })
+      .catch(() => {})
+    return () => {
+      disposed = true
+      unsubscribe?.()
+    }
+  }, [])
+
   const dirty =
     values.feedback !== baseline.feedback ||
     values.question !== baseline.question ||
@@ -410,7 +465,8 @@ export function AgentToolsSettingsSection() {
     values.computer !== baseline.computer ||
     values.automations !== baseline.automations ||
     values.workTasks !== baseline.workTasks ||
-    values.image !== baseline.image
+    values.image !== baseline.image ||
+    values.assistants !== baseline.assistants
 
   const save = useCallback(async () => {
     setSaving(true)
@@ -488,6 +544,13 @@ export function AgentToolsSettingsSection() {
         const image = values.image
         writes.push(
           setCodegMcpToolGroup("image", image).then(() => ({ image }))
+        )
+      }
+      if (values.assistants !== baseline.assistants) {
+        writes.push(
+          setAssistantToolsEnabled(values.assistants).then((applied) => ({
+            assistants: applied.enabled,
+          }))
         )
       }
 
