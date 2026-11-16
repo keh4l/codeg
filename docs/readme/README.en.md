@@ -47,7 +47,7 @@
   </tr>
   <tr>
     <td width="50%" valign="top">🔁 <strong>Restart the server from the web</strong><br/>Settings → System gains “Restart codeg”: codeg deployed on a server restarts without logging in to the server, and the page reconnects by itself; restoring a backup on a server now restarts to apply it, too.</td>
-    <td width="50%" valign="top">⏎ <strong>Enter takes the suggested next message</strong><br/>The message the agent predicts you'll send next shows in the empty input box; press Enter to fill it in and Enter again to send. It works on a phone keyboard, which has no Tab key.</td>
+    <td width="50%" valign="top">⏎ <strong>Enter takes the suggested next message</strong><br/>The message the agent predicts you'll send next shows in the empty input box; on a computer, press Enter to fill it in and Enter again to send. A phone keyboard has no Tab key, so there its line-break key fills it in.</td>
   </tr>
   <tr>
     <td width="50%" valign="top">⏯️ <strong>Sub-agents pick up where an error stopped them</strong><br/>When a delegated sub-agent stops because the network dropped, its quota ran out, its sign-in expired or the provider returned an error, the main agent can have it carry on in its original session, with its context and half-done work intact, instead of starting over in a new one.</td>
@@ -180,7 +180,8 @@
 <br/>
 
 - After a turn ends, the official build shows the agent's prediction of your next message in the empty input box, with "(Tab to use)". On-screen keyboards on phones and tablets have no Tab key, so the suggestion can't be used there.
-- In this build, pressing the send key (Enter by default) in an empty input box first fills in the suggestion, with the cursor at the end so you can edit it; pressing it again sends. With text in the box, Enter sends as usual. It works the same on desktop and phone, Tab still works too, and the hint now reads "(Enter to use)".
+- In this build, pressing the send key (Enter by default) in an empty input box first fills in the suggestion, with the cursor at the end so you can edit it; pressing it again sends. With text in the box, Enter sends as usual. Tab still works too, and the hint now reads "(Enter to use)".
+- On the on-screen keyboard of a phone or tablet that key is the line-break key, which there only starts a new line and never sends. So in an empty box it fills in the suggestion, and the hint reads "(Return to use)"; after that, or with text in the box, it starts a new line as usual, and you send with the send button.
 - If you change Send Message to another key under Settings → Shortcuts (for example `⌘Enter`), the hint and the fill follow that key.
 - When the box holds only attached images and no text, Enter still sends the images, and the hint goes back to "(Tab to use)".
 - Enter while an input method is composing only commits the text; it doesn't fill in the suggestion.

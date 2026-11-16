@@ -85,7 +85,10 @@ import {
   type SessionSettingTarget,
 } from "@/lib/session-settings"
 import { useAgentSkills } from "@/hooks/use-agent-skills"
-import { isPrimaryPointerCoarse } from "@/hooks/use-is-coarse-pointer"
+import {
+  isPrimaryPointerCoarse,
+  useIsCoarsePointer,
+} from "@/hooks/use-is-coarse-pointer"
 import { useMouseOnlyContextMenu } from "@/hooks/use-mouse-only-context-menu"
 import { useAgentVocabulary } from "@/hooks/use-agent-vocabulary"
 import {
@@ -979,12 +982,17 @@ export function MessageInput({
     ? formatShortcutLabel(shortcuts.send_message, isMac)
     : null
   const submitFillsSuggestion = submitKeyLabel !== null && !hasAttachments
+  // keh4l build: a touch screen's keyboard has no key called Enter, and there
+  // its line-break key is what fills (see composer/line-break-fill.ts).
+  const isCoarsePointer = useIsCoarsePointer()
   const shownPlaceholder = offeredSuggestion
     ? submitFillsSuggestion
-      ? t("promptSuggestionSubmitKey", {
-          suggestion: offeredSuggestion,
-          key: submitKeyLabel,
-        })
+      ? isCoarsePointer
+        ? t("promptSuggestionNewlineKey", { suggestion: offeredSuggestion })
+        : t("promptSuggestionSubmitKey", {
+            suggestion: offeredSuggestion,
+            key: submitKeyLabel,
+          })
       : t("promptSuggestion", { suggestion: offeredSuggestion })
     : resolvedPlaceholder
   // The committed half of the report above: what the composer holds, and

@@ -3523,6 +3523,7 @@
         "askAnything": "Ask anything...",
         "promptSuggestion": "{suggestion} (Tab to use)",
         "promptSuggestionSubmitKey": "{suggestion} ({key} to use)",
+        "promptSuggestionNewlineKey": "{suggestion} (Return to use)",
         "removeAttachmentAria": "Remove {name}",
         "attachFiles": "Attach files",
         "attachLocalUpload": "Upload local file",

@@ -47,7 +47,7 @@
   </tr>
   <tr>
     <td width="50%" valign="top">🔁 <strong>Server aus dem Web neu starten</strong><br/>Einstellungen → Systemeinstellungen bekommt „codeg neu starten“: codeg auf einem Server startet neu, ohne dass man sich am Server anmelden muss, und die Seite verbindet sich von selbst wieder; eine Sicherung, die auf einem Server wiederhergestellt wird, startet jetzt ebenfalls neu, um wirksam zu werden.</td>
-    <td width="50%" valign="top">⏎ <strong>Enter übernimmt die vorgeschlagene nächste Nachricht</strong><br/>Die Nachricht, die der Agent als deine nächste vorhersagt, steht im leeren Eingabefeld; Enter übernimmt sie, ein weiteres Enter sendet sie. Das klappt auch auf der Handytastatur, die keine Tab-Taste hat.</td>
+    <td width="50%" valign="top">⏎ <strong>Enter übernimmt die vorgeschlagene nächste Nachricht</strong><br/>Die Nachricht, die der Agent als deine nächste vorhersagt, steht im leeren Eingabefeld; am Computer übernimmt Enter sie, ein weiteres Enter sendet sie. Auf der Handytastatur, die keine Tab-Taste hat, übernimmt sie die Zeilenumbruch-Taste.</td>
   </tr>
   <tr>
     <td width="50%" valign="top">⏯️ <strong>Subagenten machen nach einem Fehler weiter</strong><br/>Bleibt ein delegierter Subagent stehen, weil das Netz weg war, sein Kontingent aufgebraucht ist, seine Anmeldung abgelaufen ist oder der Anbieter einen Fehler gemeldet hat, kann der Hauptagent ihn in seiner ursprünglichen Sitzung weitermachen lassen – mit Kontext und halb fertiger Arbeit, statt in einer neuen Sitzung von vorn anzufangen.</td>
@@ -180,7 +180,8 @@
 <br/>
 
 - Nach einer Runde zeigt die offizielle Version die vom Agenten vorhergesagte nächste Nachricht im leeren Eingabefeld, mit „(Tab zum Übernehmen)“. Bildschirmtastaturen auf Handys und Tablets haben keine Tab-Taste, dort lässt sich der Vorschlag nicht nutzen.
-- In dieser Version übernimmt die Sendetaste (standardmäßig Enter) im leeren Eingabefeld zuerst den Vorschlag, mit dem Cursor am Ende, sodass du ihn noch ändern kannst; ein zweiter Druck sendet. Steht schon Text im Feld, sendet Enter wie gewohnt. Das gilt auf dem Computer wie auf dem Handy, Tab funktioniert weiterhin, und der Hinweis lautet nun „(Enter zum Übernehmen)“.
+- In dieser Version übernimmt die Sendetaste (standardmäßig Enter) im leeren Eingabefeld zuerst den Vorschlag, mit dem Cursor am Ende, sodass du ihn noch ändern kannst; ein zweiter Druck sendet. Steht schon Text im Feld, sendet Enter wie gewohnt. Tab funktioniert weiterhin, und der Hinweis lautet nun „(Enter zum Übernehmen)“.
+- Auf der Bildschirmtastatur von Handy oder Tablet ist diese Taste die Zeilenumbruch-Taste, die dort nur eine neue Zeile beginnt und nie sendet. Im leeren Feld übernimmt sie deshalb den Vorschlag, und der Hinweis lautet „(Zeilenumbruch-Taste zum Übernehmen)“; danach oder mit Text im Feld beginnt sie wie gewohnt eine neue Zeile, gesendet wird mit dem Senden-Button.
 - Legst du „Nachricht senden“ unter Einstellungen → Kurzbefehle auf eine andere Taste (etwa `⌘Enter`), folgen Hinweis und Übernahme dieser Taste.
 - Enthält das Feld nur angehängte Bilder und keinen Text, sendet Enter wie bisher die Bilder, und der Hinweis lautet wieder „(Tab zum Übernehmen)“.
 - Ein Enter während einer laufenden Eingabemethoden-Komposition bestätigt nur den Text und übernimmt den Vorschlag nicht.

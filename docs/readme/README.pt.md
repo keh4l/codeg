@@ -47,7 +47,7 @@
   </tr>
   <tr>
     <td width="50%" valign="top">🔁 <strong>Reiniciar o servidor pela web</strong><br/>Configurações → Sistema ganha “Reiniciar o codeg”: o codeg implantado num servidor reinicia sem entrar no servidor, e a página se reconecta sozinha; restaurar um backup num servidor agora também reinicia para aplicá-lo.</td>
-    <td width="50%" valign="top">⏎ <strong>Enter usa a próxima mensagem sugerida</strong><br/>A mensagem que o agente prevê que você vai mandar em seguida aparece na caixa vazia; Enter a preenche e outro Enter a envia. Funciona no teclado do celular, que não tem a tecla Tab.</td>
+    <td width="50%" valign="top">⏎ <strong>Enter usa a próxima mensagem sugerida</strong><br/>A mensagem que o agente prevê que você vai mandar em seguida aparece na caixa vazia; no computador, Enter a preenche e outro Enter a envia. No teclado do celular, que não tem a tecla Tab, a tecla de nova linha a preenche.</td>
   </tr>
   <tr>
     <td width="50%" valign="top">⏯️ <strong>Subagentes continuam de onde um erro os parou</strong><br/>Quando um subagente delegado para porque a rede caiu, a cota acabou, o login expirou ou o provedor devolveu um erro, o agente principal pode fazê-lo continuar na sessão original, com o contexto e o trabalho pela metade intactos, em vez de começar do zero numa nova.</td>
@@ -180,7 +180,8 @@
 <br/>
 
 - Ao fim de um turno, a versão oficial mostra na caixa de mensagem vazia a previsão do agente para a sua próxima mensagem, com "(Tab para usar)". Os teclados na tela de celulares e tablets não têm tecla Tab, então lá a sugestão não pode ser usada.
-- Nesta versão, apertar a tecla de envio (Enter por padrão) com a caixa vazia primeiro preenche a sugestão, com o cursor no fim para você poder editar; apertar de novo envia. Com texto na caixa, Enter envia como sempre. Funciona igual no computador e no celular, Tab continua funcionando e a dica passa a dizer "(Enter para usar)".
+- Nesta versão, apertar a tecla de envio (Enter por padrão) com a caixa vazia primeiro preenche a sugestão, com o cursor no fim para você poder editar; apertar de novo envia. Com texto na caixa, Enter envia como sempre. Tab continua funcionando e a dica passa a dizer "(Enter para usar)".
+- No teclado na tela de um celular ou tablet essa tecla é a de nova linha, que ali só começa uma linha nova e nunca envia. Por isso, com a caixa vazia ela preenche a sugestão e a dica diz "(tecla de nova linha para usar)"; depois disso, ou com texto na caixa, ela pula de linha como sempre, e o envio é pelo botão de enviar.
 - Se você trocar Enviar mensagem para outra tecla em Configurações → Atalhos (por exemplo `⌘Enter`), a dica e o preenchimento seguem essa tecla.
 - Quando a caixa só tem imagens anexadas e nenhum texto, Enter continua enviando as imagens e a dica volta a "(Tab para usar)".
 - Um Enter enquanto um método de entrada está compondo só confirma o texto; não preenche a sugestão.

@@ -3523,6 +3523,7 @@
         "askAnything": "اسأل أي شيء...",
         "promptSuggestion": "{suggestion} (اضغط Tab للاستخدام)",
         "promptSuggestionSubmitKey": "{suggestion} (اضغط {key} للاستخدام)",
+        "promptSuggestionNewlineKey": "{suggestion} (اضغط مفتاح السطر الجديد للاستخدام)",
         "removeAttachmentAria": "إزالة {name}",
         "attachFiles": "إرفاق ملفات",
         "addActions": "إضافة",

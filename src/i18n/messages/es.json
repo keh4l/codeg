@@ -3523,6 +3523,7 @@
         "askAnything": "Pregunta lo que sea...",
         "promptSuggestion": "{suggestion} (Tab para usarla)",
         "promptSuggestionSubmitKey": "{suggestion} ({key} para usarla)",
+        "promptSuggestionNewlineKey": "{suggestion} (tecla de salto de línea para usarla)",
         "removeAttachmentAria": "Quitar {name}",
         "attachFiles": "Adjuntar archivos",
         "addActions": "Añadir",

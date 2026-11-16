@@ -47,7 +47,7 @@
   </tr>
   <tr>
     <td width="50%" valign="top">🔁 <strong>Redémarrer le serveur depuis le web</strong><br/>Réglages → Système gagne « Redémarrer codeg » : codeg déployé sur un serveur redémarre sans se connecter au serveur, et la page se reconnecte d'elle-même ; restaurer une sauvegarde sur un serveur redémarre désormais aussi pour l'appliquer.</td>
-    <td width="50%" valign="top">⏎ <strong>Entrée reprend le message suivant suggéré</strong><br/>Le message que l'agent prévoit que vous enverrez ensuite s'affiche dans la zone de saisie vide ; Entrée le remplit, une seconde Entrée l'envoie. Ça marche aussi au clavier du téléphone, qui n'a pas de touche Tab.</td>
+    <td width="50%" valign="top">⏎ <strong>Entrée reprend le message suivant suggéré</strong><br/>Le message que l'agent prévoit que vous enverrez ensuite s'affiche dans la zone de saisie vide ; sur ordinateur, Entrée le remplit, une seconde Entrée l'envoie. Au clavier du téléphone, qui n'a pas de touche Tab, la touche retour à la ligne le remplit.</td>
   </tr>
   <tr>
     <td width="50%" valign="top">⏯️ <strong>Les sous-agents reprennent là où une erreur les a arrêtés</strong><br/>Quand un sous-agent délégué s'arrête parce que le réseau a coupé, que son quota est épuisé, que sa connexion a expiré ou que le fournisseur a renvoyé une erreur, l'agent principal peut le faire continuer dans sa session d'origine, avec son contexte et le travail à moitié fait, au lieu de tout recommencer dans une nouvelle.</td>
@@ -180,7 +180,8 @@
 <br/>
 
 - À la fin d'un tour, la version officielle affiche dans la zone de saisie vide le message que l'agent prévoit que vous enverrez ensuite, avec « (Tab pour l’utiliser) ». Les claviers à l'écran des téléphones et tablettes n'ont pas de touche Tab : la suggestion y est inutilisable.
-- Dans cette version, la touche d'envoi (Entrée par défaut) dans une zone de saisie vide remplit d'abord la suggestion, le curseur à la fin pour pouvoir la modifier ; un second appui l'envoie. Si la zone contient du texte, Entrée envoie comme d'habitude. C'est pareil sur ordinateur et sur téléphone, Tab fonctionne toujours, et l'indication devient « (Enter pour l’utiliser) ».
+- Dans cette version, la touche d'envoi (Entrée par défaut) dans une zone de saisie vide remplit d'abord la suggestion, le curseur à la fin pour pouvoir la modifier ; un second appui l'envoie. Si la zone contient du texte, Entrée envoie comme d'habitude. Tab fonctionne toujours, et l'indication devient « (Enter pour l’utiliser) ».
+- Sur le clavier à l'écran d'un téléphone ou d'une tablette, cette touche est le retour à la ligne, qui là ne fait que commencer une nouvelle ligne et n'envoie jamais. Dans une zone vide, elle remplit donc la suggestion, et l'indication devient « (touche retour à la ligne pour l’utiliser) » ; ensuite, ou si la zone contient du texte, elle va à la ligne comme d'habitude, et l'envoi se fait avec le bouton d'envoi.
 - Si vous attribuez Envoyer le message à une autre touche dans Réglages → Raccourcis (par exemple `⌘Enter`), l'indication et le remplissage suivent cette touche.
 - Quand la zone ne contient que des images jointes, sans texte, Entrée envoie toujours les images, et l'indication redevient « (Tab pour l’utiliser) ».
 - Une Entrée pendant la composition d'une méthode de saisie ne fait que valider le texte ; elle ne remplit pas la suggestion.

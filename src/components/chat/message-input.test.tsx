@@ -3802,4 +3802,54 @@ describe("MessageInput send key takes the suggestion (keh4l build)", () => {
     await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1))
     expect(onSend.mock.calls[0][0].displayText).not.toContain("Run it")
   })
+
+  // A touch screen's keyboard has no key called Enter, and its line-break key
+  // reaches the composer as a line break, not as the send key.
+  it("on a touch screen, names the line-break key and fills on a line break", async () => {
+    const desktop = window.matchMedia
+    vi.spyOn(window, "matchMedia").mockImplementation((query) =>
+      query === "(pointer: coarse)"
+        ? ({
+            media: query,
+            matches: true,
+            addEventListener: () => {},
+            removeEventListener: () => {},
+          } as unknown as MediaQueryList)
+        : desktop(query)
+    )
+    try {
+      const onSend = vi.fn()
+      const { container } = renderInput({ onSend, promptSuggestion: "Run it" })
+      await waitFor(
+        () => expect(composerHandle.current?.getEditor()).toBeTruthy(),
+        { timeout: 5000 }
+      )
+      const touchHint =
+        enMessages.Folder.chat.messageInput.promptSuggestionNewlineKey.replace(
+          "{suggestion}",
+          "Run it"
+        )
+      await waitFor(() =>
+        expect(
+          container.querySelector(`[data-placeholder="${touchHint}"]`)
+        ).not.toBeNull()
+      )
+
+      const view = composerHandle.current!.getEditor()!.view
+      act(() => {
+        view.dom.dispatchEvent(
+          new InputEvent("beforeinput", {
+            inputType: "insertParagraph",
+            bubbles: true,
+            cancelable: true,
+          })
+        )
+        view.dispatch(view.state.tr.split(1))
+      })
+      expect(composerHandle.current!.getText()).toBe("Run it")
+      expect(onSend).not.toHaveBeenCalled()
+    } finally {
+      vi.mocked(window.matchMedia).mockRestore()
+    }
+  })
 })

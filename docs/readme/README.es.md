@@ -47,7 +47,7 @@
   </tr>
   <tr>
     <td width="50%" valign="top">🔁 <strong>Reiniciar el servidor desde la web</strong><br/>Ajustes → Sistema incorpora «Reiniciar codeg»: codeg desplegado en un servidor se reinicia sin entrar al servidor y la página se reconecta sola; restaurar una copia de seguridad en un servidor ahora también reinicia para aplicarla.</td>
-    <td width="50%" valign="top">⏎ <strong>Enter usa el siguiente mensaje sugerido</strong><br/>El mensaje que el agente predice que enviarás a continuación aparece en el cuadro vacío; Enter lo escribe y otro Enter lo envía. Funciona con el teclado del móvil, que no tiene tecla Tab.</td>
+    <td width="50%" valign="top">⏎ <strong>Enter usa el siguiente mensaje sugerido</strong><br/>El mensaje que el agente predice que enviarás a continuación aparece en el cuadro vacío; en el ordenador, Enter lo escribe y otro Enter lo envía. En el teclado del móvil, que no tiene tecla Tab, lo escribe la tecla de salto de línea.</td>
   </tr>
   <tr>
     <td width="50%" valign="top">⏯️ <strong>Los subagentes siguen donde un error los paró</strong><br/>Cuando un subagente delegado se detiene porque se cayó la red, se agotó su cuota, caducó su inicio de sesión o el proveedor devolvió un error, el agente principal puede hacer que continúe en su sesión original, con el contexto y el trabajo a medias intactos, en lugar de empezar de cero en una nueva.</td>
@@ -180,7 +180,8 @@
 <br/>
 
 - Al terminar un turno, la versión oficial muestra en el cuadro de mensaje vacío la predicción del agente de tu siguiente mensaje, con «(Tab para usarla)». Los teclados en pantalla de móviles y tabletas no tienen tecla Tab, así que ahí la sugerencia no se puede usar.
-- En esta versión, pulsar la tecla de envío (Enter por defecto) con el cuadro vacío primero escribe la sugerencia, con el cursor al final para que puedas editarla; pulsarla otra vez la envía. Con texto en el cuadro, Enter envía como siempre. Funciona igual en el ordenador y en el móvil, Tab sigue funcionando y la pista pasa a decir «(Enter para usarla)».
+- En esta versión, pulsar la tecla de envío (Enter por defecto) con el cuadro vacío primero escribe la sugerencia, con el cursor al final para que puedas editarla; pulsarla otra vez la envía. Con texto en el cuadro, Enter envía como siempre. Tab sigue funcionando y la pista pasa a decir «(Enter para usarla)».
+- En el teclado en pantalla de un móvil o tableta esa tecla es la de salto de línea, que ahí solo empieza una línea nueva y nunca envía. Por eso, con el cuadro vacío escribe la sugerencia y la pista dice «(tecla de salto de línea para usarla)»; después, o con texto en el cuadro, salta de línea como siempre y se envía con el botón de enviar.
 - Si cambias Enviar mensaje a otra tecla en Ajustes → Atajos (por ejemplo `⌘Enter`), la pista y el relleno usan esa tecla.
 - Si el cuadro solo tiene imágenes adjuntas y nada de texto, Enter sigue enviando las imágenes y la pista vuelve a «(Tab para usarla)».
 - Un Enter mientras un método de entrada está componiendo solo confirma el texto; no escribe la sugerencia.

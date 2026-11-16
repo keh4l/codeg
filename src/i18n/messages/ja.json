@@ -3523,6 +3523,7 @@
         "askAnything": "何でも質問してください...",
         "promptSuggestion": "{suggestion}（Tab で入力）",
         "promptSuggestionSubmitKey": "{suggestion}（{key} で入力）",
+        "promptSuggestionNewlineKey": "{suggestion}（改行キーで入力）",
         "removeAttachmentAria": "{name} を削除",
         "attachFiles": "ファイルを添付",
         "addActions": "追加",

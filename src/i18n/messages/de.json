@@ -3523,6 +3523,7 @@
         "askAnything": "Fragen Sie alles...",
         "promptSuggestion": "{suggestion} (Tab zum Übernehmen)",
         "promptSuggestionSubmitKey": "{suggestion} ({key} zum Übernehmen)",
+        "promptSuggestionNewlineKey": "{suggestion} (Zeilenumbruch-Taste zum Übernehmen)",
         "removeAttachmentAria": "{name} entfernen",
         "attachFiles": "Dateien anhängen",
         "addActions": "Hinzufügen",
