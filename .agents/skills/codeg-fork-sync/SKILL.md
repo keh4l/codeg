@@ -1,11 +1,11 @@
 ---
 name: codeg-fork-sync
-description: 把上游 spacering-net/codeg 的更新同步进 keh4l/codeg 定制版（keh4l 分支），保留 fork 自己的定制并处理合并冲突。用户说"同步上游 / sync upstream / 合并上游更新 / 处理同步 PR 冲突"时使用。
+description: 把上游 spacering-net/codeg 的更新同步进 keh4l/codeg 定制版（keh4l 分支），保留 fork 自己的定制并处理合并冲突。用户说"同步上游 / sync upstream / 合并上游更新"时使用。
 ---
 
 # 同步上游到定制版
 
-调用参数（可能为空，可能是同步 PR 的链接或编号）：$ARGUMENTS
+调用参数（可能为空，可能是这次要注意的事）：$ARGUMENTS
 
 ## 仓库约定（先确认，不符就停下问用户）
 
@@ -13,7 +13,7 @@ description: 把上游 spacering-net/codeg 的更新同步进 keh4l/codeg 定制
 - `main`：只跟上游，**不在上面提交**；`keh4l`：定制版，fork 的默认分支，发版从这里打 tag；功能分支另开。
 - 提交身份一律 `keh4l <2461454684@qq.com>`，用 `git -c user.name=keh4l -c user.email=2461454684@qq.com …` 传入，**不改 git config**。
 - 只用 merge，**不 rebase、不 force push** `keh4l`（tag 都在它的历史上）。
-- 自动化：`.github/workflows/sync-upstream.yml` 每天 UTC 01:17 把 `main` 快进到上游，`keh4l` 落后时开一个 `main → keh4l` 的 PR（标题 "Sync upstream into keh4l"）。
+- 同步全靠手动：第 1 步的 `gh repo sync` 把 `main` 快进到上游，再合进 `keh4l`。原来每天快进 `main`、开 `main → keh4l` PR 的 `sync-upstream.yml` 已于 2026-11-16 删掉（11-06 起 GitHub 就不再跑它的定时任务），不要再加回来。
 
 ## 步骤
 
@@ -24,7 +24,6 @@ description: 把上游 spacering-net/codeg 的更新同步进 keh4l/codeg 定制
    git fetch origin && git fetch upstream
    git switch keh4l && git pull --ff-only
    git rev-list --count keh4l..origin/main   # 0 = 已是最新，结束
-   gh pr list -R keh4l/codeg --base keh4l --head main --state open
    ```
 2. **先记下定制清单**（合并时要护住的东西）：`git diff --stat origin/main...keh4l`。再读一遍这次上游的提交说明（`git log --format=%B keh4l..origin/main`）：上游做了和 fork 重叠的功能（下表里写着「上游自己做了…改用上游的方案」的那些）时不会有文本冲突，先和用户确认怎么处理。
 3. **合并**
@@ -54,7 +53,7 @@ description: 把上游 spacering-net/codeg 的更新同步进 keh4l/codeg 定制
    `curl -fsSL https://static.rust-lang.org/dist/channel-rust-stable.toml | sed -n '/^\[pkg\.rustc\]/,/^version/{s/^version = "\([0-9.]*\).*/\1/p;}'`，
    用旁路工具链跑 clippy（不动默认工具链）：`rustup toolchain install <ver> --profile minimal -c clippy`，`CARGO_TARGET_DIR=/tmp/codeg-target-<ver> cargo +<ver> clippy …`，跑完删掉那个目录（约 4 GB）。
    若新 lint 报在**上游原有代码**上、上游 main 的 CI 也一样红，不在 fork 里修（避免以后冲突），告诉用户等上游修。
-6. **提交并推送**：有冲突时 `git -c user.name=keh4l -c user.email=2461454684@qq.com commit --no-edit`，然后 `git push origin keh4l`。那个同步 PR 会自动变成已合并。**推送后不等 CI 跑完**（2026-10-30 起，用户定的）：第 5 步的本地门禁和 CI 的 Linux 部分是同样的命令，CI 只多了 macOS、Windows 上的测试，约 75 分钟，macOS runner 在美国白天还常排不上。推完就汇报，CI 当时的状态和 run 链接写进汇报（`gh run list -R keh4l/codeg -w test.yml -b keh4l -L 1`），之后它失败了再看。用户要同步完接着发版时，合并提交先不推，和 `codeg-fork-release` 的发版提交一起推，只跑一遍 CI。
+6. **提交并推送**：有冲突时 `git -c user.name=keh4l -c user.email=2461454684@qq.com commit --no-edit`，然后 `git push origin keh4l`。**推送后不等 CI 跑完**（2026-10-30 起，用户定的）：第 5 步的本地门禁和 CI 的 Linux 部分是同样的命令，CI 只多了 macOS、Windows 上的测试，约 75 分钟，macOS runner 在美国白天还常排不上。推完就汇报，CI 当时的状态和 run 链接写进汇报（`gh run list -R keh4l/codeg -w test.yml -b keh4l -L 1`），之后它失败了再看。用户要同步完接着发版时，合并提交先不推，和 `codeg-fork-release` 的发版提交一起推，只跑一遍 CI。
 7. **汇报**：合进了多少个上游提交、哪些文件冲突、各自怎么解决、测试结果（本地门禁的结果，加上 CI 当时的状态）。**不要顺手发版**，发版用 `codeg-fork-release`，并先问用户。
 
 ## 冲突处理规则
@@ -63,7 +62,7 @@ description: 把上游 spacering-net/codeg 的更新同步进 keh4l/codeg 定制
 |---|---|
 | `package.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`（`name = "codeg"` 条目）、`src-tauri/tauri.conf.json` 的 `version` | 上游每次发版都会冲突。**取上游的版本号**（如 `0.33.0`），fork 发版时再改成 `0.33.0-1`。 |
 | fork 配置：`tauri.conf.json` 的 `plugins.updater.pubkey` / `endpoints`，`src-tauri/src/update/verify.rs` 的 `TAURI_PUBKEY_B64`，`src-tauri/src/update/version.rs` 的两个 URL，`status-bar-update.tsx`(+test)、`system-network-settings.tsx` 里的 `keh4l/codeg` 链接，`install.sh` / `install.ps1` 的 `REPO`，`codeg-cli` 找不到 codeg-server 时给的安装命令（`src-tauri/src/cli/standalone.rs`，0.38.0 起，指向 `keh4l/codeg/keh4l/install.sh`，和 fork README 的安装命令一致），任务开 PR 时正文里「Prepared by codeg」的链接和 0.43.0 起回写评论末尾「Generated with Codeg」落款的链接（都是 `src-tauri/src/forge/deliver.rs` 的 `CODEG_HOME`，0.41.0 起；同文件上游测试 `a_reply_leads_and_the_footer_closes` 把落款整句写死了，fork 里那行断言改成 `keh4l/codeg`） | **永远保留 fork 的**。上游若改了周边内容，把上游改动接进来但保留这些值。合并后检查：`grep -rn -e xintaofei -e spacering-net src-tauri/tauri.conf.json src-tauri/src/update src-tauri/src/cli src-tauri/src/forge install.sh install.ps1 src/components/layout/status-bar-update.tsx src/components/layout/status-bar-update.test.tsx src/components/settings/system-network-settings.tsx` 应无结果。上游新加的代码可能又写进上游地址，合并后再查一遍上游这次新增的行：`git diff <上次合进来的上游提交> origin/main -- . ':!README.md' ':!docs' \| grep '^+' \| grep -e spacering-net -e xintaofei`（和合并前的 keh4l 比会把 fork 已改过的地址也列出来），代码里的（给用户看的链接、安装命令）改成 fork 的并补进这一行；`docs/` 下的上游专题文档（如 `docs/cli.md`）不改，fork README 不链接它们。 |
-| `.github/workflows/release.yml`（可选 Apple 签名 + ad-hoc、Docker 由变量 `CODEG_PUBLISH_DOCKER` 控制、Linux 的 RPM 单独打包）、`test.yml`（push 也跑 `keh4l`）、`sync-upstream.yml` | 接上游的改动，**保留 fork 的这几处改动**。改完用 actionlint 检查（命令见表格下方）。RPM 单独打包的原因：RPM 版本不能含 `-`，Tauri 2.12 的打包器把 `0.36.0-1` 原样交给 rpm crate 会直接失败（上游版本号没有 `-`，不受影响）。所以两个 Linux 的 tauri-action 不打 rpm，`Bundle, sign and upload the RPM (Linux)` 用 `tauri bundle --bundles rpm --no-sign` 从已经编好的二进制按 RPM 版本 `0.36.0`、release `1` 打包，再用 `--app-version 0.36.0-1` 签名，`publish-release` 把 x64 RPM 补进 `latest.json`。`src-tauri/src/update/verify.rs` 的 `the_release_workflow_signs_server_archives_for_their_version` 因此只按 `"dist/` 路径数服务器包的两处签名，同时要求每一行 `signer sign`（含 RPM）都带 `--app-version`；上游改这个测试时保留这两点，别改回数全部签名行。上游改了 Linux 的打包步骤时守住这三处；上游或 Tauri 自己会转换 RPM 版本后，删掉这套。可选 Apple 签名让 fork 把 `Pin computer-use trust anchors (macOS)`、`Stage sidecars for Tauri bundle`、`Verify sidecars landed` 三步挪到了 `Resolve Apple Developer ID identity` 之后（`CODEG_MACOS_SIGNED` 要先定下来），上游改这几步时冲突块是上游在原位置的整段：删掉原位置那段（取 `HEAD` 的空），把上游的改动（如 0.38.0 往 sidecar 列表加 `codeg-cli`）手工搬进 fork 挪过去的那份；`Verify computer-use signing and symbols (macOS)` 里 ad-hoc 分支检查「ad-hoc、无 Team ID」的列表也要跟着上游加新的 sidecar。0.41.0 起上游在 `build-server` 里也用 Developer ID 签 macOS 的 `codeg-server`/`codeg-mcp`/`codeg-cli`（三步：`Import Apple Developer ID certificate (macOS)`、`Resolve Apple Developer ID identity (macOS)`、`Sign the server's executables with the Developer ID (macOS)`），缺证书时直接失败；fork 没有 Apple secrets，所以 import 那步开头和 `build-tauri` 一样，没有 `APPLE_CERTIFICATE` 就写 `CODEG_MACOS_SIGNED=false` 并退出，后两步在脚本开头 `CODEG_MACOS_SIGNED` 不是 `true` 就退出（不改 `if:`：`update/install.rs` 的 `the_release_signs_the_macos_server_with_its_developer_id_before_archiving_it` 断言签名那步的 `if:` 和上游一字不差）。没签名时服务器和 0.40.0 以前一样：arm64 是链接器的 ad-hoc 签名，x86_64 没签名。 |
+| `.github/workflows/release.yml`（可选 Apple 签名 + ad-hoc、Docker 由变量 `CODEG_PUBLISH_DOCKER` 控制、Linux 的 RPM 单独打包）、`test.yml`（push 也跑 `keh4l`） | 接上游的改动，**保留 fork 的这几处改动**。改完用 actionlint 检查（命令见表格下方）。RPM 单独打包的原因：RPM 版本不能含 `-`，Tauri 2.12 的打包器把 `0.36.0-1` 原样交给 rpm crate 会直接失败（上游版本号没有 `-`，不受影响）。所以两个 Linux 的 tauri-action 不打 rpm，`Bundle, sign and upload the RPM (Linux)` 用 `tauri bundle --bundles rpm --no-sign` 从已经编好的二进制按 RPM 版本 `0.36.0`、release `1` 打包，再用 `--app-version 0.36.0-1` 签名，`publish-release` 把 x64 RPM 补进 `latest.json`。`src-tauri/src/update/verify.rs` 的 `the_release_workflow_signs_server_archives_for_their_version` 因此只按 `"dist/` 路径数服务器包的两处签名，同时要求每一行 `signer sign`（含 RPM）都带 `--app-version`；上游改这个测试时保留这两点，别改回数全部签名行。上游改了 Linux 的打包步骤时守住这三处；上游或 Tauri 自己会转换 RPM 版本后，删掉这套。可选 Apple 签名让 fork 把 `Pin computer-use trust anchors (macOS)`、`Stage sidecars for Tauri bundle`、`Verify sidecars landed` 三步挪到了 `Resolve Apple Developer ID identity` 之后（`CODEG_MACOS_SIGNED` 要先定下来），上游改这几步时冲突块是上游在原位置的整段：删掉原位置那段（取 `HEAD` 的空），把上游的改动（如 0.38.0 往 sidecar 列表加 `codeg-cli`）手工搬进 fork 挪过去的那份；`Verify computer-use signing and symbols (macOS)` 里 ad-hoc 分支检查「ad-hoc、无 Team ID」的列表也要跟着上游加新的 sidecar。0.41.0 起上游在 `build-server` 里也用 Developer ID 签 macOS 的 `codeg-server`/`codeg-mcp`/`codeg-cli`（三步：`Import Apple Developer ID certificate (macOS)`、`Resolve Apple Developer ID identity (macOS)`、`Sign the server's executables with the Developer ID (macOS)`），缺证书时直接失败；fork 没有 Apple secrets，所以 import 那步开头和 `build-tauri` 一样，没有 `APPLE_CERTIFICATE` 就写 `CODEG_MACOS_SIGNED=false` 并退出，后两步在脚本开头 `CODEG_MACOS_SIGNED` 不是 `true` 就退出（不改 `if:`：`update/install.rs` 的 `the_release_signs_the_macos_server_with_its_developer_id_before_archiving_it` 断言签名那步的 `if:` 和上游一字不差）。没签名时服务器和 0.40.0 以前一样：arm64 是链接器的 ad-hoc 签名，x86_64 没签名。 |
 | `README.md`、`docs/readme/README.*.md`（10 种语言） | **归定制版自己管，冲突一律取 fork 的**（`git checkout --ours`）。它们是精简的定制版说明，功能介绍链接到上游 README，所以上游的 README 改动不搬进来。定制版的 `README.md` 是**简体中文**，英文在 fork 独有的 `docs/readme/README.en.md`，fork 删掉了 `docs/readme/README.zh-CN.md`：上游改了这个文件时会出现 modify/delete 冲突，`git rm` 保持删除。只有定制版本身变了（加了功能、安装方式变了）才改，10 种语言一起改，结构（功能卡片、展开细节、「发布方式」表、安装小节）保持一致。 |
 | `AGENTS.md`、`CLAUDE.md` | 接上游的改动，保留末尾的「定制版（keh4l/codeg）」一节。 |
 | Kiro 相关（`parsers/kiro.rs`、`kiro-config-panel.tsx`、`connection.rs` 里的 kiro 段、`acp/types.rs` 的 `KiroReasoning` 等） | 0.36.0 起已在上游（PR spacering-net/codeg#851 合并），**以上游为准**，冲突取 `--theirs`；共享文件里非 Kiro 的 fork 定制仍要保留。fork 不再有自己的 Kiro 改动：合并后 `git diff origin/main -- <file>` 里不该出现 Kiro 段，有就是 auto-merge 留下的旧版本，删掉。Kiro 以后的修复走上游 PR（`codeg-upstream-pr`）。 |
