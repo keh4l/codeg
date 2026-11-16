@@ -50,6 +50,9 @@
     <td width="50%" valign="top">⏎ <strong>Entrée reprend le message suivant suggéré</strong><br/>Le message que l'agent prévoit que vous enverrez ensuite s'affiche dans la zone de saisie vide ; Entrée le remplit, une seconde Entrée l'envoie. Ça marche aussi au clavier du téléphone, qui n'a pas de touche Tab.</td>
   </tr>
   <tr>
+    <td colspan="2" valign="top">⏯️ <strong>Les sous-agents reprennent là où une erreur les a arrêtés</strong><br/>Quand un sous-agent délégué s'arrête parce que le réseau a coupé, que son quota est épuisé, que sa connexion a expiré ou que le fournisseur a renvoyé une erreur, l'agent principal peut le faire continuer dans sa session d'origine, avec son contexte et le travail à moitié fait, au lieu de tout recommencer dans une nouvelle.</td>
+  </tr>
+  <tr>
     <td colspan="2" valign="top">🔄 <strong>Au plus près de l'original</strong><br/>Le projet d'origine est fusionné régulièrement ; ce qui n'est pas listé ici fonctionne comme dans la version officielle. Kiro CLI intégré, le premier ajout de cette version, fait partie de la version officielle depuis la 0.36.0. Les résumés de réflexion de Claude Code passent dès la 0.41.3-1 par l'interrupteur de la version officielle : « Afficher les résumés de réflexion de Claude » dans Réglages → Agents IA → Claude Code, désactivé par défaut.</td>
   </tr>
 </table>
@@ -180,6 +183,17 @@
 - Si vous attribuez Envoyer le message à une autre touche dans Réglages → Raccourcis (par exemple `⌘Enter`), l'indication et le remplissage suivent cette touche.
 - Quand la zone ne contient que des images jointes, sans texte, Entrée envoie toujours les images, et l'indication redevient « (Tab pour l’utiliser) ».
 - Une Entrée pendant la composition d'une méthode de saisie ne fait que valider le texte ; elle ne remplit pas la suggestion.
+
+</details>
+
+<details>
+<summary><strong>Les sous-agents reprennent là où une erreur les a arrêtés</strong> : détails</summary>
+<br/>
+
+- Quand vous mentionnez un agent avec @ dans un message, l'agent principal lui confie le travail avec `delegate_to_agent`, et il le fait dans sa propre sous-session. Dans la version officielle, `resume_delegation` ne récupère que les sous-tâches annulées ou interrompues par un plantage ; si le tour du sous-agent se termine par une erreur (réseau coupé, quota ou limite de débit atteint, connexion expirée, requête refusée par le fournisseur, budget de tokens épuisé…), il est marqué « échoué », et l'agent principal ne peut qu'ouvrir une nouvelle sous-session et repartir de zéro, en perdant le contexte du travail à moitié fait.
+- Cette version traite aussi ces échecs comme des interruptions : le résultat de la sous-tâche indique que sa session et le travail partiel sont conservés et que `resume_delegation` la poursuit une fois la cause réglée. L'agent principal continue alors dans la sous-session d'origine, avec le même task_id, et la carte d'origine du sous-agent dans la conversation affiche de nouveau sa progression.
+- Pour s'en servir : une fois le réseau revenu, le quota rechargé ou la connexion renouvelée, demandez à l'agent principal de laisser le sous-agent continuer.
+- Une tâche qui a échoué avant d'avoir une session (l'agent n'a pas pu démarrer, par exemple) n'a rien à poursuivre et doit être déléguée à nouveau ; on ne peut pas non plus ajouter ainsi du travail à une sous-tâche terminée normalement : le travail supplémentaire passe toujours par une nouvelle délégation.
 
 </details>
 

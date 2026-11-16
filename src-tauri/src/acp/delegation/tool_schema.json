@@ -89,7 +89,7 @@
   },
   {
     "name": "resume_delegation",
-    "description": "Resume a delegated task that was INTERRUPTED — canceled, or cut off when a session/app terminated unexpectedly — so its sub-agent picks the ORIGINAL task back up in its own session with all prior context and work intact, under the SAME task_id (keep collecting it with get_delegation_status, or stop it again with cancel_delegation). STRICT SCOPE: this tool ONLY revives interrupted work; it takes no task text and must NOT be used to iterate on, extend, retry, or redo a task. A task that is still running, or that already finished on its own (completed or failed), is refused with error_code \"not_resumable\" and its actual status — for follow-up or retry work, start a fresh delegate_to_agent call instead. The optional `reason` is context about WHY the run is being resumed (e.g. \"the app was killed mid-run\"), passed to the sub-agent as interruption context — never new instructions.",
+    "description": "Resume a delegated task that was INTERRUPTED — canceled, cut off when a session/app terminated unexpectedly, or failed because its run broke off with an error (network dropped, quota or rate limit exhausted, sign-in expired, a provider error) — so its sub-agent picks the ORIGINAL task back up in its own session with all prior context and work intact, under the SAME task_id (keep collecting it with get_delegation_status, or stop it again with cancel_delegation). Prefer this over a fresh delegate_to_agent whenever such a task should still be finished: a new delegation starts cold and loses the half-done work's context. For a failure, resume once the cause is fixed — a failed task that can be resumed says so in its message. STRICT SCOPE: this tool ONLY revives interrupted work; it takes no task text and must NOT be used to iterate on, extend, or redo a task. A task that is still running, that already completed, or that failed before its sub-agent session existed is refused with error_code \"not_resumable\" and its actual status — for follow-up work, start a fresh delegate_to_agent call instead. The optional `reason` is context about WHY the run is being resumed (e.g. \"the network dropped mid-run and is back\"), passed to the sub-agent as interruption context — never new instructions.",
     "inputSchema": {
       "type": "object",
       "required": [
@@ -98,7 +98,7 @@
       "properties": {
         "task_id": {
           "type": "string",
-          "description": "The task_id of the interrupted task — the id delegate_to_agent originally returned (also reported by get_delegation_status as canceled). The resumed run keeps this exact id."
+          "description": "The task_id of the interrupted task — the id delegate_to_agent originally returned (reported by get_delegation_status as canceled, or as failed with a message saying it can be resumed). The resumed run keeps this exact id."
         },
         "reason": {
           "type": "string",

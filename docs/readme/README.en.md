@@ -50,6 +50,9 @@
     <td width="50%" valign="top">⏎ <strong>Enter takes the suggested next message</strong><br/>The message the agent predicts you'll send next shows in the empty input box; press Enter to fill it in and Enter again to send. It works on a phone keyboard, which has no Tab key.</td>
   </tr>
   <tr>
+    <td colspan="2" valign="top">⏯️ <strong>Sub-agents pick up where an error stopped them</strong><br/>When a delegated sub-agent stops because the network dropped, its quota ran out, its sign-in expired or the provider returned an error, the main agent can have it carry on in its original session, with its context and half-done work intact, instead of starting over in a new one.</td>
+  </tr>
+  <tr>
     <td colspan="2" valign="top">🔄 <strong>Follows upstream</strong><br/>Upstream is merged in regularly; anything not listed here works exactly as in the official build. The built-in Kiro CLI, the first thing this build added, has been part of the official build since 0.36.0. Claude Code thinking summaries use the official build's switch from 0.41.3-1 on: “Show Claude's thinking summaries” in Settings → Agents → Claude Code, off by default.</td>
   </tr>
 </table>
@@ -180,6 +183,17 @@
 - If you change Send Message to another key under Settings → Shortcuts (for example `⌘Enter`), the hint and the fill follow that key.
 - When the box holds only attached images and no text, Enter still sends the images, and the hint goes back to "(Tab to use)".
 - Enter while an input method is composing only commits the text; it doesn't fill in the suggestion.
+
+</details>
+
+<details>
+<summary><strong>Sub-agents pick up where an error stopped them</strong>: details</summary>
+<br/>
+
+- When you @ an agent in a message, the main agent hands it the work with `delegate_to_agent`, and it works in its own sub-session. In the official build, `resume_delegation` only brings back sub-tasks that were canceled or cut off by a crash; a sub-agent whose turn ended in an error (network dropped, quota or rate limit hit, sign-in expired, the provider rejected the request, token budget used up…) is marked “failed”, and the main agent can only open a new sub-session and start over, losing the context of the half-done work.
+- This build treats those failures as interruptions too: the sub-task's result says its session and partial work are kept and that `resume_delegation` continues it once the cause is fixed. The main agent then carries on in the original sub-session under the same task_id, and the sub-agent's original card in the conversation follows its progress again.
+- To use it: once the network is back, the quota is topped up or you've signed in again, ask the main agent to let the sub-agent continue.
+- A task that failed before it had a session (the agent couldn't start, say) has nothing to continue and needs a new delegation; a sub-task that finished normally can't be given new work this way either — follow-up work still goes in a new delegation.
 
 </details>
 

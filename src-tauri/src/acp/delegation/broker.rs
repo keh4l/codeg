@@ -755,7 +755,15 @@ fn terminal_fields(
             } else {
                 TaskStatus::Failed
             };
-            (status, None, Some(code.clone()), Some(message.clone()))
+            let message = if failure_is_resumable(code) {
+                format!(
+                    "{}. {RESUMABLE_FAILURE_HINT}",
+                    message.trim_end().trim_end_matches('.')
+                )
+            } else {
+                message.clone()
+            };
+            (status, None, Some(code.clone()), Some(message))
         }
     }
 }
@@ -952,6 +960,45 @@ const RESUME_REASON_CAP: usize = 2 * 1024;
 /// completed" (status) from "and that is why it was not resumed" (code).
 pub const NOT_RESUMABLE_CODE: &str = "not_resumable";
 
+/// Whether a FAILED task's `error_code` names a run that broke off part-way —
+/// one `resume_delegation` may continue, exactly like a canceled one.
+///
+/// These are the codes a child's own TURN ends with (`DelegationError::Child*`)
+/// plus `subagent_error`: by then the child session exists and holds the
+/// task's whole context, and the usual causes are outside the task — a dropped
+/// network, an exhausted quota or rate limit, an expired sign-in, a provider
+/// error that agents report as a refusal or a rejected prompt, a token budget.
+/// Once the cause is fixed, continuing that session is the ORIGINAL task, not
+/// a new iteration; re-delegating would throw the half-done work's context
+/// away. The lifecycle already records these rows `cancelled`
+/// (`lifecycle::turn_complete_status`), so the DB-side gate resumes them once
+/// the in-memory record is gone — this keeps the in-memory gate in step.
+///
+/// The setup codes (`spawn_failed`, `depth_limit`, `invalid_*`) are not
+/// listed: those fail before there is a session to continue.
+pub(crate) fn failure_is_resumable(error_code: &str) -> bool {
+    matches!(
+        error_code,
+        "subagent_error"
+            | "child_refusal"
+            | "child_max_tokens"
+            | "child_max_turn_requests"
+            | "child_empty"
+            | "child_auth_required"
+            | "child_rejected"
+            | "child_unknown"
+    )
+}
+
+/// Appended to the `message` of a failure [`failure_is_resumable`] accepts, so
+/// the parent LLM learns — from the report itself, on hosts that keep only
+/// the content text too — that the sub-agent can pick the task back up.
+/// Without it the model reads a bare failure and re-delegates from scratch.
+const RESUMABLE_FAILURE_HINT: &str = "The sub-agent's session and any partial work are kept: \
+     once the cause is fixed (network, quota or rate limit, sign-in…), call \
+     resume_delegation with this task's task_id to let it continue where it \
+     stopped, rather than starting the task over with a new delegate_to_agent.";
+
 /// Build the fixed continuation prompt a resumed child receives. Deliberately
 /// NOT caller-controlled beyond the bounded `reason`: `resume_delegation`
 /// continues the ORIGINAL task and must not be usable as a second
@@ -959,9 +1006,11 @@ pub const NOT_RESUMABLE_CODE: &str = "not_resumable";
 pub fn build_resume_prompt(reason: Option<&str>) -> String {
     let mut prompt = String::from(
         "This delegated task was interrupted before completion and is now being \
-         resumed. Re-read the original task from the earlier messages in this \
-         session, assess what has already been done (partial work may exist on \
-         disk), continue from where it stopped, and finish the ORIGINAL task. \
+         resumed. Its earlier run stopped part-way — it was canceled, cut off, or \
+         broke off with an error such as a lost network connection or an \
+         exhausted quota. Re-read the original task from the earlier messages in \
+         this session, assess what has already been done (partial work may exist \
+         on disk), continue from where it stopped, and finish the ORIGINAL task. \
          Do not take on any new work beyond that original scope.",
     );
     if let Some(reason) = reason.map(str::trim).filter(|r| !r.is_empty()) {
@@ -4018,18 +4067,23 @@ impl DelegationBroker {
     ///   * `Canceled` — explicit `cancel_delegation`, parent teardown, a child
     ///     process dying without `TurnComplete`, or app shutdown; the child row
     ///     records `cancelled`.
+    ///   * `Failed` with a code [`failure_is_resumable`] accepts — the child's
+    ///     run broke off with an error (dropped network, exhausted quota,
+    ///     expired sign-in, a provider rejection…). Its session holds the
+    ///     half-done work's context just like a canceled one; the row records
+    ///     `cancelled` too.
     ///   * A stale `in_progress` child row with NO live connection — the
     ///     leftover of a hard crash that never ran any cancel path.
     ///
     /// Everything else is refused with `error_code: "not_resumable"` and the
     /// task's actual status: a running task keeps running (poll it), and a
-    /// `Completed` / `Failed` task ended by its own doing — resuming it would
-    /// be a new iteration on the original task, which this tool deliberately
-    /// does not do (that is `delegate_to_agent`'s job). The same contract is
-    /// why there is no task-text parameter: the child continues the ORIGINAL
-    /// task in its own resumed session (`session/load` via the row's
-    /// `external_id`), nudged by a fixed continuation prompt that may carry
-    /// only the bounded `reason` as interruption context.
+    /// `Completed` task ended by its own doing — resuming it would be a new
+    /// iteration on the original task, which this tool deliberately does not
+    /// do (that is `delegate_to_agent`'s job). The same contract is why there
+    /// is no task-text parameter: the child continues the ORIGINAL task in its
+    /// own resumed session (`session/load` via the row's `external_id`), nudged
+    /// by a fixed continuation prompt that may carry only the bounded `reason`
+    /// as interruption context.
     ///
     /// The resumed run KEEPS the task id: the child row already persists it as
     /// `delegation_call_id`, so the lifecycle's TurnComplete routing
@@ -4126,15 +4180,26 @@ impl DelegationBroker {
                     MemGate::Refuse(Box::new(unknown_report(&req.task_id)))
                 } else {
                     // Copy the report fields out so the `completed` borrow ends
-                    // before the Canceled arm's mutable `resuming` claim.
+                    // before the resumable arm's mutable `resuming` claim.
                     let (status, child_conversation_id, agent_type, assistant) = (
                         c.status,
                         c.child_conversation_id,
                         c.agent_type,
                         c.assistant.clone(),
                     );
+                    // A run that broke off with an error (network, quota, a
+                    // provider rejection…) left its session behind just like a
+                    // cancel did — continuing it is the same task, not a new
+                    // iteration. See `failure_is_resumable`.
+                    let resumable = match status {
+                        TaskStatus::Canceled => true,
+                        TaskStatus::Failed => {
+                            c.error_code.as_deref().is_some_and(failure_is_resumable)
+                        }
+                        _ => false,
+                    };
                     match status {
-                        TaskStatus::Canceled => {
+                        _ if resumable => {
                             // Caller-owned — safe to name the contention.
                             if inner.resuming.insert(req.task_id.clone()) {
                                 MemGate::Proceed { claimed: true }
@@ -4162,10 +4227,10 @@ impl DelegationBroker {
                             status,
                             Some(child_conversation_id),
                             Some(agent_type),
-                            "the task ended in failure rather than being \
-                             interrupted — resume only applies to a canceled or \
-                             interrupted task. Start a new delegate_to_agent call \
-                             to retry it.",
+                            "the task failed before its sub-agent had a session to \
+                             continue in — resume only applies to a run that was \
+                             canceled, interrupted, or broke off with an error. \
+                             Start a new delegate_to_agent call to retry it.",
                         ).with_assistant(assistant.as_ref()))),
                     }
                 }
@@ -10192,10 +10257,13 @@ mod tests {
         assert_eq!(status.text.as_deref(), Some("done"));
     }
 
-    /// A failure the child produced itself (refusal etc.) is NOT an
-    /// interruption — refused with the task's actual Failed status.
+    /// A run that broke off with an error (a provider rejection — how agents
+    /// report a dropped network or an exhausted quota) is resumable while its
+    /// failed record is still cached: the report tells the parent so, and the
+    /// resume continues the SAME session under the SAME id instead of being
+    /// refused into a cold re-delegation.
     #[tokio::test]
-    async fn resume_refuses_failed_task() {
+    async fn resume_continues_a_run_that_broke_off_with_an_error() {
         let (mock, _lookup, broker) = resume_harness(Some(resume_ctx(TaskStatus::Canceled))).await;
         mock.queue_spawn(Ok("child-conn-1".into())).await;
         mock.queue_send(Ok(42)).await;
@@ -10204,14 +10272,144 @@ mod tests {
         broker
             .complete_call(
                 &task_id,
-                DelegationOutcome::from_err(DelegationError::ChildRefusal, Some(42)),
+                DelegationOutcome::from_err(DelegationError::ChildRejected, Some(42)),
             )
             .await;
+
+        // The failure report points the parent at resume_delegation.
+        let failed = broker
+            .get_task_status("parent-conn", Some(1), &task_id, StatusWait::Immediate)
+            .await;
+        assert_eq!(failed.status, TaskStatus::Failed);
+        assert_eq!(failed.error_code.as_deref(), Some("child_rejected"));
+        let message = failed.message.unwrap();
+        assert!(message.starts_with("subagent's agent rejected the prompt. "));
+        assert!(message.contains("resume_delegation"));
+
+        mock.queue_resume_spawn(Ok(ResumedSpawn::fresh("child-conn-2"))).await;
+        mock.queue_resume_send(Ok(())).await;
+        let mut req = resume_request(&task_id);
+        req.reason = Some("quota topped up".into());
+        let ack = broker.resume_delegation(req).await;
+        assert_eq!(ack.status, TaskStatus::Running);
+        assert_eq!(ack.error_code, None);
+        assert_eq!(ack.task_id.as_deref(), Some(task_id.as_str()));
+        let spawns = mock.resume_spawn_args.lock().await;
+        assert_eq!(spawns.len(), 1);
+        assert_eq!(spawns[0].external_session_id, "ext-session-1");
+        drop(spawns);
+        assert!(mock.resume_send_args.lock().await[0]
+            .prompt
+            .contains("quota topped up"));
+        // The failed record made way for the running task.
+        assert_eq!(broker.completed_count().await, 0);
+        assert_eq!(broker.pending_count().await, 1);
+    }
+
+    /// A failure with no session behind it to continue (a setup code) stays
+    /// refused, with the task's actual Failed status — and its report carries
+    /// no resume hint.
+    #[tokio::test]
+    async fn resume_refuses_failure_without_a_session_to_continue() {
+        let (mock, _lookup, broker) = resume_harness(Some(resume_ctx(TaskStatus::Canceled))).await;
+        mock.queue_spawn(Ok("child-conn-1".into())).await;
+        mock.queue_send(Ok(42)).await;
+        let ack = broker.start_delegation(request(1, "pt-orig")).await;
+        let task_id = ack.task_id.unwrap();
+        broker
+            .complete_call(
+                &task_id,
+                DelegationOutcome::from_err(
+                    DelegationError::SpawnFailed("no binary".into()),
+                    Some(42),
+                ),
+            )
+            .await;
+        let failed = broker
+            .get_task_status("parent-conn", Some(1), &task_id, StatusWait::Immediate)
+            .await;
+        assert!(!failed.message.unwrap().contains("resume_delegation"));
 
         let report = broker.resume_delegation(resume_request(&task_id)).await;
         assert_eq!(report.status, TaskStatus::Failed);
         assert_eq!(report.error_code.as_deref(), Some(NOT_RESUMABLE_CODE));
+        assert!(report.message.unwrap().starts_with("Not resumed:"));
         assert!(mock.resume_spawn_args.lock().await.is_empty());
+    }
+
+    #[test]
+    fn resumable_failures_are_the_ones_a_child_run_ends_with() {
+        for code in [
+            "subagent_error",
+            "child_refusal",
+            "child_max_tokens",
+            "child_max_turn_requests",
+            "child_empty",
+            "child_auth_required",
+            "child_rejected",
+            "child_unknown",
+        ] {
+            assert!(failure_is_resumable(code), "{code}");
+        }
+        for code in [
+            "spawn_failed",
+            "depth_limit",
+            "invalid_agent_type",
+            "invalid_working_dir",
+            "canceled",
+            "",
+        ] {
+            assert!(!failure_is_resumable(code), "{code}");
+        }
+        // Every error a child's RUN can end with is resumable, every setup /
+        // cancel error is not. The match has no wildcard on purpose: a new
+        // `DelegationError` variant fails to compile here until it is
+        // classified (and added to the list below).
+        fn ends_a_child_run(err: &DelegationError) -> bool {
+            match err {
+                DelegationError::SubagentRuntimeError(_)
+                | DelegationError::ChildRefusal
+                | DelegationError::ChildMaxTokens
+                | DelegationError::ChildMaxTurnRequests
+                | DelegationError::ChildEmpty
+                | DelegationError::ChildAuthRequired
+                | DelegationError::ChildRejected
+                | DelegationError::ChildUnknown(_) => true,
+                DelegationError::DepthLimitExceeded { .. }
+                | DelegationError::InvalidAgentType
+                | DelegationError::InvalidWorkingDir(_)
+                | DelegationError::SpawnFailed(_)
+                | DelegationError::Canceled { .. }
+                | DelegationError::ParentSessionGone => false,
+            }
+        }
+        for err in [
+            DelegationError::SubagentRuntimeError("x".into()),
+            DelegationError::ChildRefusal,
+            DelegationError::ChildMaxTokens,
+            DelegationError::ChildMaxTurnRequests,
+            DelegationError::ChildEmpty,
+            DelegationError::ChildAuthRequired,
+            DelegationError::ChildRejected,
+            DelegationError::ChildUnknown("weird".into()),
+            DelegationError::DepthLimitExceeded {
+                current_depth: 3,
+                limit: 3,
+            },
+            DelegationError::InvalidAgentType,
+            DelegationError::InvalidWorkingDir("/nope".into()),
+            DelegationError::SpawnFailed("x".into()),
+            DelegationError::Canceled {
+                reason: "x".into(),
+            },
+            DelegationError::ParentSessionGone,
+        ] {
+            let expected = ends_a_child_run(&err);
+            let DelegationOutcome::Err { code, .. } = DelegationOutcome::from_err(err, None) else {
+                unreachable!()
+            };
+            assert_eq!(failure_is_resumable(&code), expected, "{code}");
+        }
     }
 
     /// DB says the child row is still `in_progress`: with NO live connection it

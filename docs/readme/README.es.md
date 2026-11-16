@@ -50,6 +50,9 @@
     <td width="50%" valign="top">⏎ <strong>Enter usa el siguiente mensaje sugerido</strong><br/>El mensaje que el agente predice que enviarás a continuación aparece en el cuadro vacío; Enter lo escribe y otro Enter lo envía. Funciona con el teclado del móvil, que no tiene tecla Tab.</td>
   </tr>
   <tr>
+    <td colspan="2" valign="top">⏯️ <strong>Los subagentes siguen donde un error los paró</strong><br/>Cuando un subagente delegado se detiene porque se cayó la red, se agotó su cuota, caducó su inicio de sesión o el proveedor devolvió un error, el agente principal puede hacer que continúe en su sesión original, con el contexto y el trabajo a medias intactos, en lugar de empezar de cero en una nueva.</td>
+  </tr>
+  <tr>
     <td colspan="2" valign="top">🔄 <strong>Al día con el original</strong><br/>Los cambios del proyecto original se incorporan con regularidad; lo que no aparece aquí funciona igual que en la versión oficial. Kiro CLI integrado, lo primero que añadió esta versión, forma parte de la versión oficial desde la 0.36.0. Los resúmenes del razonamiento de Claude Code usan desde la 0.41.3-1 el interruptor de la versión oficial: «Mostrar resúmenes del razonamiento de Claude» en Ajustes → Agentes → Claude Code, desactivado por defecto.</td>
   </tr>
 </table>
@@ -180,6 +183,17 @@
 - Si cambias Enviar mensaje a otra tecla en Ajustes → Atajos (por ejemplo `⌘Enter`), la pista y el relleno usan esa tecla.
 - Si el cuadro solo tiene imágenes adjuntas y nada de texto, Enter sigue enviando las imágenes y la pista vuelve a «(Tab para usarla)».
 - Un Enter mientras un método de entrada está componiendo solo confirma el texto; no escribe la sugerencia.
+
+</details>
+
+<details>
+<summary><strong>Los subagentes siguen donde un error los paró</strong>: detalles</summary>
+<br/>
+
+- Cuando mencionas un agente con @ en un mensaje, el agente principal le pasa el trabajo con `delegate_to_agent` y este lo hace en su propia subsesión. En la versión oficial, `resume_delegation` solo recupera subtareas canceladas o cortadas por un cierre inesperado; si el turno del subagente termina con un error (red caída, cuota o límite de uso alcanzado, sesión caducada, el proveedor rechazó la solicitud, presupuesto de tokens agotado…), queda como «fallida» y el agente principal solo puede abrir otra subsesión y empezar de cero, perdiendo el contexto del trabajo a medias.
+- Esta versión trata también esos fallos como interrupciones: el resultado de la subtarea indica que su sesión y el trabajo parcial se conservan y que `resume_delegation` la continúa una vez resuelta la causa. El agente principal sigue entonces en la subsesión original con el mismo task_id, y la tarjeta original del subagente en la conversación vuelve a mostrar su progreso.
+- Cómo usarlo: cuando vuelva la red, recargues la cuota o vuelvas a iniciar sesión, pide al agente principal que deje continuar al subagente.
+- Una tarea que falló antes de tener sesión (por ejemplo, porque el agente no pudo arrancar) no tiene nada que continuar y hay que delegarla de nuevo; a una subtarea que terminó con normalidad tampoco se le puede añadir trabajo así: el trabajo adicional sigue yendo en una delegación nueva.
 
 </details>
 

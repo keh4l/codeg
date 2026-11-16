@@ -50,6 +50,9 @@
     <td width="50%" valign="top">⏎ <strong>Enter übernimmt die vorgeschlagene nächste Nachricht</strong><br/>Die Nachricht, die der Agent als deine nächste vorhersagt, steht im leeren Eingabefeld; Enter übernimmt sie, ein weiteres Enter sendet sie. Das klappt auch auf der Handytastatur, die keine Tab-Taste hat.</td>
   </tr>
   <tr>
+    <td colspan="2" valign="top">⏯️ <strong>Subagenten machen nach einem Fehler weiter</strong><br/>Bleibt ein delegierter Subagent stehen, weil das Netz weg war, sein Kontingent aufgebraucht ist, seine Anmeldung abgelaufen ist oder der Anbieter einen Fehler gemeldet hat, kann der Hauptagent ihn in seiner ursprünglichen Sitzung weitermachen lassen – mit Kontext und halb fertiger Arbeit, statt in einer neuen Sitzung von vorn anzufangen.</td>
+  </tr>
+  <tr>
     <td colspan="2" valign="top">🔄 <strong>Nah am Upstream</strong><br/>Upstream wird regelmäßig hineingemergt; was hier nicht steht, funktioniert genau wie in der offiziellen Version. Das eingebaute Kiro CLI, das diese Version als Erstes hinzugefügt hat, ist seit 0.36.0 Teil der offiziellen Version. Die Zusammenfassungen von Claudes Denken nutzen seit 0.41.3-1 den Schalter der offiziellen Version: „Zusammenfassungen von Claudes Denken anzeigen“ unter Einstellungen → Agenten → Claude Code, standardmäßig aus.</td>
   </tr>
 </table>
@@ -180,6 +183,17 @@
 - Legst du „Nachricht senden“ unter Einstellungen → Kurzbefehle auf eine andere Taste (etwa `⌘Enter`), folgen Hinweis und Übernahme dieser Taste.
 - Enthält das Feld nur angehängte Bilder und keinen Text, sendet Enter wie bisher die Bilder, und der Hinweis lautet wieder „(Tab zum Übernehmen)“.
 - Ein Enter während einer laufenden Eingabemethoden-Komposition bestätigt nur den Text und übernimmt den Vorschlag nicht.
+
+</details>
+
+<details>
+<summary><strong>Subagenten machen nach einem Fehler weiter</strong> – Details</summary>
+<br/>
+
+- Wenn du in einer Nachricht einen Agenten mit @ erwähnst, übergibt ihm der Hauptagent die Arbeit mit `delegate_to_agent`, und er erledigt sie in seiner eigenen Untersitzung. Im offiziellen Build holt `resume_delegation` nur Teilaufgaben zurück, die abgebrochen oder durch einen Absturz unterbrochen wurden; endet der Durchgang des Subagenten mit einem Fehler (Netz weg, Kontingent oder Ratenlimit erreicht, Anmeldung abgelaufen, Anfrage vom Anbieter abgelehnt, Token-Budget aufgebraucht …), gilt er als „fehlgeschlagen“, und der Hauptagent kann nur eine neue Untersitzung öffnen und von vorn beginnen – der Kontext der halb fertigen Arbeit ist weg.
+- Dieser Build behandelt solche Fehler ebenfalls als Unterbrechung: Das Ergebnis der Teilaufgabe sagt, dass Sitzung und Zwischenstand erhalten sind und `resume_delegation` sie fortsetzt, sobald die Ursache behoben ist. Der Hauptagent macht dann in der ursprünglichen Untersitzung unter derselben task_id weiter, und die ursprüngliche Subagent-Karte in der Unterhaltung zeigt wieder ihren Fortschritt.
+- So geht's: Wenn das Netz wieder da ist, das Kontingent aufgefüllt oder die Anmeldung erneuert ist, bitte den Hauptagenten, den Subagenten weitermachen zu lassen.
+- Eine Aufgabe, die schon vor ihrer Sitzung scheiterte (etwa weil der Agent nicht starten konnte), hat nichts zum Fortsetzen und muss neu delegiert werden; einer normal abgeschlossenen Teilaufgabe lässt sich so auch keine neue Arbeit anhängen – Folgearbeit läuft weiter über eine neue Delegation.
 
 </details>
 

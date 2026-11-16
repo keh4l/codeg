@@ -31,7 +31,8 @@
 //! `close_session` tools without protocol breakage.
 //!
 //! One deliberate exception to one-shot: `resume_delegation` revives a task
-//! that was INTERRUPTED (canceled, or stranded by a crash) by re-spawning its
+//! that was INTERRUPTED (canceled, stranded by a crash, or broken off by an
+//! error such as a dropped network or an exhausted quota) by re-spawning its
 //! child connection with the recorded agent session id and re-arming the same
 //! `delegation_call_id` routing — strictly a continuation of the original
 //! task, never a second iteration on it (the tool takes no task text).
