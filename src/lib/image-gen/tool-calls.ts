@@ -395,3 +395,35 @@ export function foldCollectCalls<T extends FoldablePart>(
   }
   return out
 }
+
+const collectCallsByParts = new WeakMap<readonly object[], boolean>()
+
+/**
+ * Whether one turn's parts hold a collect call `foldCollectCalls` may fold
+ * into a card of an earlier turn: an `image_get_result` card of its own, or a
+ * `get_question_answer` whose question was not in its turn. A reply split
+ * across turns is merged whole when one does (the fold reads across turns);
+ * otherwise its merge starts from the turns that did not change.
+ *
+ * Cached per parts array, which a turn keeps while it does not change.
+ */
+export function holdsCollectCalls(parts: readonly FoldablePart[]): boolean {
+  const cached = collectCallsByParts.get(parts)
+  if (cached !== undefined) return cached
+  const holds = parts.some((part) => {
+    if (part.type === "image-job") {
+      const job = part as unknown as AdaptedImageJobPart
+      return normalizeToolName(job.call.toolName) === IMAGE_GET_RESULT_TOOL
+    }
+    const call = asToolCall(part)
+    if (!call) return false
+    const name = normalizeToolName(call.toolName)
+    return (
+      name === GET_QUESTION_ANSWER_TOOL ||
+      name === IMAGE_GET_RESULT_TOOL ||
+      name === IMAGE_GENERATE_TOOL
+    )
+  })
+  collectCallsByParts.set(parts, holds)
+  return holds
+}

@@ -2122,11 +2122,25 @@ export interface WorkTask {
    *  is working, but on shrinking the session rather than on the task. The one
    *  thing that explains a card sitting in 准备中 / 合并中 for minutes. */
   compacting?: boolean
+  /** This generation's turn has ended but the agent still has background work
+   *  going (a background shell, a monitor, the turn Claude Code starts on its
+   *  own to read their results, a delegation), so the engine holds the run
+   *  open instead of settling it — settling would end that work (mirrors Rust
+   *  WorkTaskBackgroundWait). Absent when not waiting. */
+  background_wait?: WorkTaskBackgroundWait | null
   created_at: string
   updated_at: string
   started_at: string | null
   settled_at: string | null
   finished_at: string | null
+}
+
+/** What a run held open past its turn's end is waiting for. */
+export interface WorkTaskBackgroundWait {
+  /** When the turn ended and the wait began. */
+  since: string
+  /** The work still running then, one short description each (a snapshot). */
+  tasks: string[]
 }
 
 /** Provenance snapshot of a forge-triggered task (mirrors Rust ForgeSourceMeta). */
@@ -2537,6 +2551,12 @@ export interface ForgeChangedFileList {
   has_next: boolean
 }
 
+/** Cached image resource; account credentials and bytes stay off JSON/IPC. */
+export interface ForgeImage {
+  mime_type: string
+  url: string
+}
+
 /** A folder's `origin` remote parsed into forge coordinates. */
 export interface ForgeRemote {
   server_host: string
@@ -2900,6 +2920,14 @@ export interface WorkTaskChangedFile {
   file: string
   additions: number
   deletions: number
+}
+
+/** A file a task worktree holds uncommitted — what a delivery commits first
+ *  when the user agrees to. `status`: `A` added or untracked, `M` modified,
+ *  `D` deleted, `R` renamed or copied. */
+export interface WorkTaskUncommittedFile {
+  file: string
+  status: "A" | "M" | "D" | "R"
 }
 
 // --- Token usage dashboard (mirror of src-tauri/src/models/token_usage.rs) ---
@@ -4491,7 +4519,7 @@ export interface AgentSkillContent {
 }
 
 /**
- * Built-in expert skills, sourced from obra/superpowers v7.0.1 and bundled into
+ * Built-in expert skills, sourced from obra/superpowers v7.0.2 and bundled into
  * the codeg binary. Experts live in a central store at `~/.codeg/skills/`
  * and are linked into agent skill directories on demand.
  */

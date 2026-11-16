@@ -11299,8 +11299,12 @@ fn agent_env_keys(agent_type: AgentType) -> (&'static str, &'static str, &'stati
         // `llm-deepseek` adapter through the launch-environment snapshot —
         // which, when the host installs none (deepseek-acp does not), falls
         // back to `process.env`, so codeg's launch env reaches it. It resolves
-        // per request (`config.baseURL ?? env ?? https://api.deepseek.com`),
-        // NOT at load. `DEEPSEEK_ACP_PROVIDER` is a different thing entirely —
+        // per request (`config.baseURL ?? env ?? <default>`), NOT at load. The
+        // default and the protocol moved in deepseek-acp 0.10.0: through 0.9.0
+        // OpenAI Chat Completions at `https://api.deepseek.com`, since then
+        // DeepSeek's Anthropic-compatible Messages API (`<base>/v1/messages`)
+        // at `https://api.deepseek.com/anthropic`, so a bound endpoint must
+        // serve the latter. `DEEPSEEK_ACP_PROVIDER` is a different thing entirely —
         // the provider ROUTE id (`deepseek-official`), a registry key rather
         // than a URL — so it must not ride the base-url slot, or binding a
         // model provider would write an endpoint into the route selector and
@@ -11332,8 +11336,9 @@ fn agent_env_keys(agent_type: AgentType) -> (&'static str, &'static str, &'stati
         // `auth.type = "gemini-api-key"` reads (the server says so in its own
         // `auth_required` message). `AGY_ACP_DEFAULT_MODEL` is real — it is
         // the env the server's `get_default_model_id` consults before falling
-        // back to `gemini-3.8-flash-high` (`gemini-4-argon-high` for an Agent
-        // Platform session since 1.4.1). There is NO endpoint override, so
+        // back to `gemini-3.8-flash-high` (for an Agent Platform session
+        // `gemini-4-argon-high` from 1.4.1, `gemini-4-carbon-medium` from
+        // 1.5.0). There is NO endpoint override, so
         // the base-url slot stays an inert `AGY_BASE_URL` placeholder for the
         // same reason `CURSOR_MODEL`/`QODER_BASE_URL` above are: it keeps the
         // generic cascade off the `OPENAI_*` keys.

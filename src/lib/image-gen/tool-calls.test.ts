@@ -8,6 +8,7 @@ import {
 
 import {
   foldCollectCalls,
+  holdsCollectCalls,
   isGoneQuestionOutput,
   isImageJobTool,
   mergeImageJobResults,
@@ -305,5 +306,40 @@ describe("foldCollectCalls", () => {
       question_id: "q-2",
     })
     expect(foldCollectCalls([wait, gone, answer])).toEqual([answer])
+  })
+})
+
+describe("holdsCollectCalls", () => {
+  const text = { type: "text", text: "Working on it" }
+
+  it("is true for a turn whose collect may join an earlier turn's card", () => {
+    // What a turn holds after its own fold: a stray image_get_result card,
+    // or an answer whose question was asked in an earlier turn.
+    expect(
+      holdsCollectCalls(
+        foldCollectCalls([call("image_get_result", mcp(SAVED))])
+      )
+    ).toBe(true)
+    expect(
+      holdsCollectCalls([
+        text,
+        call("mcp__codeg-mcp__get_question_answer", mcp("User answered: A")),
+      ])
+    ).toBe(true)
+  })
+
+  it("is false for a turn with nothing to fold across turns", () => {
+    expect(holdsCollectCalls([text])).toBe(false)
+    // A card that a later turn may join is not itself a reason to merge whole.
+    expect(
+      holdsCollectCalls(
+        foldCollectCalls([call("image_generate", mcp(RUNNING))])
+      )
+    ).toBe(false)
+    expect(
+      holdsCollectCalls([
+        call("mcp__codeg-mcp__ask_user_question", mcp(PENDING)),
+      ])
+    ).toBe(false)
   })
 })

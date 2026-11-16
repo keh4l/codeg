@@ -934,6 +934,10 @@ pub fn build_router_with_proxy_auth(
             post(handlers::config_sync::config_sync_apply_rollback),
         )
         .route(
+            "/config_sync_mirror_appearance",
+            post(handlers::config_sync::config_sync_mirror_appearance),
+        )
+        .route(
             "/download_workspace_file",
             post(handlers::workspace_files::download_workspace_file),
         )
@@ -1924,6 +1928,7 @@ pub fn build_router_with_proxy_auth(
             "/forge_issue_detail",
             post(handlers::forge::forge_issue_detail),
         )
+        .route("/forge_read_image", post(handlers::forge::forge_read_image))
         .route(
             "/forge_tab_count",
             post(handlers::forge::forge_tab_count),
@@ -2018,6 +2023,10 @@ pub fn build_router_with_proxy_auth(
             post(handlers::work_task::work_task_merge_unqueue),
         )
         .route(
+            "/work_task_stop_background_wait",
+            post(handlers::work_task::work_task_stop_background_wait),
+        )
+        .route(
             "/work_task_complete",
             post(handlers::work_task::work_task_complete),
         )
@@ -2041,6 +2050,10 @@ pub fn build_router_with_proxy_auth(
         .route(
             "/work_task_changed_files",
             post(handlers::work_task::work_task_changed_files),
+        )
+        .route(
+            "/work_task_uncommitted_files",
+            post(handlers::work_task::work_task_uncommitted_files),
         )
         .route(
             "/work_task_settings_get",
@@ -2189,6 +2202,12 @@ pub fn build_router_with_proxy_auth(
     // The login page needs to read the user's preferred language before
     // authenticating so it can render in their chosen locale.
     let public_api = Router::new()
+        // Image URLs carry short-lived, per-resource capabilities issued by
+        // forge_read_image. <img> cannot attach a Bearer header.
+        .route(
+            "/forge_image/{key}",
+            get(crate::forge::image_cache::serve_image),
+        )
         .route(
             "/get_system_language_settings",
             post(handlers::system_settings::get_system_language_settings),
