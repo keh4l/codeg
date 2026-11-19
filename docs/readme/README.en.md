@@ -51,7 +51,7 @@
   </tr>
   <tr>
     <td width="50%" valign="top">🧑‍💼 <strong>Agents set up @ assistants for you</strong><br/>Say “add a reviewer assistant on Codex with high effort” in a conversation and the agent creates or changes the @ assistant: name, agent, model and standing instructions as you said, every option you didn't mention at the agent's default. Click Edit right in the conversation to adjust it.</td>
-    <td width="50%" valign="top"></td>
+    <td width="50%" valign="top">🧭 <strong>Grouped Settings</strong><br/>The Settings nav sits under five headings; busy pages gather related options on one card, every page has a title, and on a phone a dropdown no longer squeezes its description into a sliver.</td>
   </tr>
   <tr>
     <td colspan="2" valign="top">🔄 <strong>Follows upstream</strong><br/>Upstream is merged in regularly; anything not listed here works exactly as in the official build. The built-in Kiro CLI, the first thing this build added, has been part of the official build since 0.36.0. Claude Code thinking summaries use the official build's switch from 0.41.3-1 on: “Show Claude's thinking summaries” in Settings → Agents → Claude Code, off by default. From 0.46.0-1 the suggested next message is filled in the official way: Tab on a computer, the lightbulb button beside Send on a phone.</td>
@@ -195,6 +195,16 @@
 - When creating one, Codeg starts that agent briefly to read its real options (a few seconds). Options you name are set as you said, the rest take the agent's own defaults (the ones the editor marks Recommended); when changing one, options you don't name stay as they are. If a model or option doesn't match, nothing is saved and the agent is told what is available.
 - The conversation shows a “Creating assistant …” row; expand it to see the assistant's agent, options and instructions, and click Edit to open the same editor as in Settings. The new assistant is in the @ menu right away and can be delegated to at once.
 - The switch is “Create assistants” under Settings → Collaboration → In-conversation tools, on by default; turned off, agents don't see the two tools. An agent switched to “handles files and commands itself” doesn't get them, just as it doesn't get the delegation tools.
+
+</details>
+
+<details>
+<summary><strong>Grouped Settings</strong>: details</summary>
+<br/>
+
+- The nav is grouped under five headings (Basics, Agents, Content, Control, Connections & upkeep); the pages and their order are the same as in the official build.
+- Appearance, General, System, Version Control and Translation put related settings on one card under a group name, and a setting with a single switch or dropdown is one row: name and description on the left, control on the right. Appearance goes from twelve cards to three groups; on Version Control, “Add account” moves to each section's heading.
+- Every page opens with a title and a one-line description; the proxy switch is a toggle like everywhere else; on a phone, a dropdown or button that doesn't fit moves below its description; in a wide browser window, form pages are capped in width and centered.
 
 </details>
 

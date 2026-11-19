@@ -368,6 +368,9 @@
     }
   },
   "VersionControlSettings": {
+    "groups": {
+      "accounts": "Konten"
+    },
     "loading": "Laden...",
     "sectionTitle": "Versionskontrolle",
     "sectionDescription": "Git-Programm konfigurieren und GitHub-Konten verwalten.",
@@ -9893,6 +9896,10 @@
     }
   },
   "TranslationSettings": {
+    "groups": {
+      "whatToTranslate": "Was übersetzt wird",
+      "glossaryAndCache": "Glossar & Cache"
+    },
     "title": "Übersetzung",
     "description": "Übersetzt deine Nachrichten vor dem Senden und die Antworten der Agenten in deine Sprache. Die Übersetzung ist eine eigene Ebene: Der Agent selbst schreibt unverändert.",
     "loading": "Wird geladen…",

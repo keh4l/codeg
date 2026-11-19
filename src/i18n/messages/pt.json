@@ -368,6 +368,9 @@
     }
   },
   "VersionControlSettings": {
+    "groups": {
+      "accounts": "Contas"
+    },
     "loading": "Carregando...",
     "sectionTitle": "Controle de versão",
     "sectionDescription": "Configure o executável Git e gerencie contas do GitHub.",
@@ -9893,6 +9896,10 @@
     }
   },
   "TranslationSettings": {
+    "groups": {
+      "whatToTranslate": "O que traduzir",
+      "glossaryAndCache": "Glossário e cache"
+    },
     "title": "Tradução",
     "description": "Traduz suas mensagens antes do envio e as respostas dos agentes para o seu idioma. A tradução é uma camada separada: o agente não muda o jeito de escrever.",
     "loading": "Carregando…",

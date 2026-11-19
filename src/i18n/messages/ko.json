@@ -368,6 +368,9 @@
     }
   },
   "VersionControlSettings": {
+    "groups": {
+      "accounts": "계정"
+    },
     "loading": "로딩 중...",
     "sectionTitle": "버전 관리",
     "sectionDescription": "Git 실행 파일을 설정하고 GitHub 계정을 관리합니다.",
@@ -9893,6 +9896,10 @@
     }
   },
   "TranslationSettings": {
+    "groups": {
+      "whatToTranslate": "번역 대상",
+      "glossaryAndCache": "용어집 및 캐시"
+    },
     "title": "번역",
     "description": "보내기 전에 내 메시지를 번역하고, 에이전트의 답변을 내 언어로 번역합니다. 번역은 별도의 계층이라 에이전트 자체의 작성 방식은 바뀌지 않습니다.",
     "loading": "불러오는 중…",

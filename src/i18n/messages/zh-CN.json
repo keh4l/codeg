@@ -368,6 +368,9 @@
     }
   },
   "VersionControlSettings": {
+    "groups": {
+      "accounts": "账号"
+    },
     "loading": "加载中...",
     "sectionTitle": "版本控制",
     "sectionDescription": "配置 Git 可执行文件并管理 GitHub 账号。",
@@ -9893,6 +9896,10 @@
     }
   },
   "TranslationSettings": {
+    "groups": {
+      "whatToTranslate": "翻译什么",
+      "glossaryAndCache": "术语表与缓存"
+    },
     "title": "翻译",
     "description": "发送前把你写的消息翻译成目标语言，把智能体的回复翻译成你的语言。翻译是独立的一层，不会改变智能体自己的写法。",
     "loading": "加载中…",

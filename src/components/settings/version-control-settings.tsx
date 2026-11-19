@@ -9,6 +9,7 @@ import {
   Github,
   Globe,
   Loader2,
+  Plus,
   Trash2,
   Gitlab,
   XCircle,
@@ -55,7 +56,9 @@ import { AddForgeAccountDialog } from "./add-forge-account-dialog"
 import { AddGitAccountDialog } from "./add-git-account-dialog"
 import {
   SETTINGS_FORM_WIDTH,
+  SettingsGroup,
   SettingsPageHeader,
+  SettingsSection,
 } from "@/components/shared/settings-section"
 import { cn } from "@/lib/utils"
 
@@ -462,12 +465,11 @@ export function VersionControlSettings() {
         />
 
         {/* ---- Git Configuration ---- */}
-        <section className="rounded-xl border bg-card p-4 space-y-4">
-          <div className="flex items-center gap-2">
-            <GitBranch className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold">{t("gitTitle")}</h2>
-          </div>
-
+        <SettingsSection
+          icon={GitBranch}
+          title={t("gitTitle")}
+          className="space-y-4"
+        >
           <div className="rounded-md border bg-muted/20 px-3 py-3 text-xs space-y-2">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -544,198 +546,203 @@ export function VersionControlSettings() {
               </p>
             </div>
           )}
-        </section>
+        </SettingsSection>
 
-        {/* ---- GitHub Accounts ---- */}
-        <section className="rounded-xl border bg-card p-4 space-y-4">
-          <div className="flex items-center gap-2">
-            <Github className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold">{t("githubTitle")}</h2>
-          </div>
-          <p className="text-xs text-muted-foreground leading-5">
-            {t("githubDescription")}
-          </p>
+        <SettingsGroup label={t("groups.accounts")}>
+          {/* ---- GitHub Accounts ---- */}
+          <SettingsSection
+            icon={Github}
+            title={t("githubTitle")}
+            description={t("githubDescription")}
+            className="space-y-4"
+            control={
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setAddGitHubOpen(true)}
+              >
+                <Plus className="h-3.5 w-3.5" />
+                {t("addAccount")}
+              </Button>
+            }
+          >
+            {githubAccounts.length === 0 ? (
+              <div className="rounded-md border border-dashed bg-muted/10 px-4 py-6 text-center text-xs text-muted-foreground">
+                {t("noAccounts")}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {githubAccounts.map((account) => (
+                  <AccountRow
+                    key={account.id}
+                    account={account}
+                    testingId={testingAccountId}
+                    onTest={handleTestConnection}
+                    onRotate={setRotateTarget}
+                    onSetDefault={handleSetDefault}
+                    onRemove={setRemoveTarget}
+                    t={t}
+                  />
+                ))}
+              </div>
+            )}
+          </SettingsSection>
 
-          {githubAccounts.length === 0 ? (
-            <div className="rounded-md border border-dashed bg-muted/10 px-4 py-6 text-center text-xs text-muted-foreground">
-              {t("noAccounts")}
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {githubAccounts.map((account) => (
-                <AccountRow
-                  key={account.id}
-                  account={account}
-                  testingId={testingAccountId}
-                  onTest={handleTestConnection}
-                  onRotate={setRotateTarget}
-                  onSetDefault={handleSetDefault}
-                  onRemove={setRemoveTarget}
-                  t={t}
-                />
-              ))}
-            </div>
-          )}
+          {/* ---- GitLab Accounts ---- */}
+          <SettingsSection
+            icon={Gitlab}
+            title={t("gitlabTitle")}
+            description={t("gitlabDescription")}
+            className="space-y-4"
+            control={
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setAddGitLabOpen(true)}
+              >
+                <Plus className="h-3.5 w-3.5" />
+                {t("addAccount")}
+              </Button>
+            }
+          >
+            {gitlabAccounts.length === 0 ? (
+              <div className="rounded-md border border-dashed bg-muted/10 px-4 py-6 text-center text-xs text-muted-foreground">
+                {t("gitlabNoAccounts")}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {gitlabAccounts.map((account) => (
+                  <AccountRow
+                    key={account.id}
+                    account={account}
+                    testingId={testingAccountId}
+                    onTest={handleTestConnection}
+                    onRotate={setRotateTarget}
+                    onSetDefault={handleSetDefault}
+                    onRemove={setRemoveTarget}
+                    t={t}
+                  />
+                ))}
+              </div>
+            )}
+          </SettingsSection>
 
-          <div className="flex justify-end">
-            <Button size="sm" onClick={() => setAddGitHubOpen(true)}>
-              {t("addAccount")}
-            </Button>
-          </div>
-        </section>
+          {/* ---- Gitea Accounts ---- */}
+          <SettingsSection
+            icon={GitFork}
+            title={t("giteaTitle")}
+            description={t("giteaDescription")}
+            className="space-y-4"
+            control={
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setAddGiteaOpen(true)}
+              >
+                <Plus className="h-3.5 w-3.5" />
+                {t("addAccount")}
+              </Button>
+            }
+          >
+            {giteaAccounts.length === 0 ? (
+              <div className="rounded-md border border-dashed bg-muted/10 px-4 py-6 text-center text-xs text-muted-foreground">
+                {t("giteaNoAccounts")}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {giteaAccounts.map((account) => (
+                  <AccountRow
+                    key={account.id}
+                    account={account}
+                    testingId={testingAccountId}
+                    onTest={handleTestConnection}
+                    onRotate={setRotateTarget}
+                    onSetDefault={handleSetDefault}
+                    onRemove={setRemoveTarget}
+                    t={t}
+                  />
+                ))}
+              </div>
+            )}
+          </SettingsSection>
 
-        {/* ---- GitLab Accounts ---- */}
-        <section className="rounded-xl border bg-card p-4 space-y-4">
-          <div className="flex items-center gap-2">
-            <Gitlab className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold">{t("gitlabTitle")}</h2>
-          </div>
-          <p className="text-xs text-muted-foreground leading-5">
-            {t("gitlabDescription")}
-          </p>
+          {/* ---- CNB Accounts ---- */}
+          <SettingsSection
+            icon={Cloud}
+            title={t("cnbTitle")}
+            description={t("cnbDescription")}
+            className="space-y-4"
+            control={
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setAddCnbOpen(true)}
+              >
+                <Plus className="h-3.5 w-3.5" />
+                {t("addAccount")}
+              </Button>
+            }
+          >
+            {cnbAccounts.length === 0 ? (
+              <div className="rounded-md border border-dashed bg-muted/10 px-4 py-6 text-center text-xs text-muted-foreground">
+                {t("cnbNoAccounts")}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {cnbAccounts.map((account) => (
+                  <AccountRow
+                    key={account.id}
+                    account={account}
+                    testingId={testingAccountId}
+                    onTest={handleTestConnection}
+                    onRotate={setRotateTarget}
+                    onSetDefault={handleSetDefault}
+                    onRemove={setRemoveTarget}
+                    t={t}
+                  />
+                ))}
+              </div>
+            )}
+          </SettingsSection>
 
-          {gitlabAccounts.length === 0 ? (
-            <div className="rounded-md border border-dashed bg-muted/10 px-4 py-6 text-center text-xs text-muted-foreground">
-              {t("gitlabNoAccounts")}
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {gitlabAccounts.map((account) => (
-                <AccountRow
-                  key={account.id}
-                  account={account}
-                  testingId={testingAccountId}
-                  onTest={handleTestConnection}
-                  onRotate={setRotateTarget}
-                  onSetDefault={handleSetDefault}
-                  onRemove={setRemoveTarget}
-                  t={t}
-                />
-              ))}
-            </div>
-          )}
-
-          <div className="flex justify-end">
-            <Button size="sm" onClick={() => setAddGitLabOpen(true)}>
-              {t("addAccount")}
-            </Button>
-          </div>
-        </section>
-
-        {/* ---- Gitea Accounts ---- */}
-        <section className="rounded-xl border bg-card p-4 space-y-4">
-          <div className="flex items-center gap-2">
-            <GitFork className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold">{t("giteaTitle")}</h2>
-          </div>
-          <p className="text-xs text-muted-foreground leading-5">
-            {t("giteaDescription")}
-          </p>
-
-          {giteaAccounts.length === 0 ? (
-            <div className="rounded-md border border-dashed bg-muted/10 px-4 py-6 text-center text-xs text-muted-foreground">
-              {t("giteaNoAccounts")}
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {giteaAccounts.map((account) => (
-                <AccountRow
-                  key={account.id}
-                  account={account}
-                  testingId={testingAccountId}
-                  onTest={handleTestConnection}
-                  onRotate={setRotateTarget}
-                  onSetDefault={handleSetDefault}
-                  onRemove={setRemoveTarget}
-                  t={t}
-                />
-              ))}
-            </div>
-          )}
-
-          <div className="flex justify-end">
-            <Button size="sm" onClick={() => setAddGiteaOpen(true)}>
-              {t("addAccount")}
-            </Button>
-          </div>
-        </section>
-
-        {/* ---- CNB Accounts ---- */}
-        <section className="rounded-xl border bg-card p-4 space-y-4">
-          <div className="flex items-center gap-2">
-            <Cloud className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold">{t("cnbTitle")}</h2>
-          </div>
-          <p className="text-xs text-muted-foreground leading-5">
-            {t("cnbDescription")}
-          </p>
-
-          {cnbAccounts.length === 0 ? (
-            <div className="rounded-md border border-dashed bg-muted/10 px-4 py-6 text-center text-xs text-muted-foreground">
-              {t("cnbNoAccounts")}
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {cnbAccounts.map((account) => (
-                <AccountRow
-                  key={account.id}
-                  account={account}
-                  testingId={testingAccountId}
-                  onTest={handleTestConnection}
-                  onRotate={setRotateTarget}
-                  onSetDefault={handleSetDefault}
-                  onRemove={setRemoveTarget}
-                  t={t}
-                />
-              ))}
-            </div>
-          )}
-
-          <div className="flex justify-end">
-            <Button size="sm" onClick={() => setAddCnbOpen(true)}>
-              {t("addAccount")}
-            </Button>
-          </div>
-        </section>
-
-        {/* ---- Git Accounts (non-forge) ---- */}
-        <section className="rounded-xl border bg-card p-4 space-y-4">
-          <div className="flex items-center gap-2">
-            <Globe className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold">
-              {t("gitAccount.sectionTitle")}
-            </h2>
-          </div>
-          <p className="text-xs text-muted-foreground leading-5">
-            {t("gitAccount.sectionDescription")}
-          </p>
-
-          {gitAccounts.length === 0 ? (
-            <div className="rounded-md border border-dashed bg-muted/10 px-4 py-6 text-center text-xs text-muted-foreground">
-              {t("gitAccount.noAccounts")}
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {gitAccounts.map((account) => (
-                <AccountRow
-                  key={account.id}
-                  account={account}
-                  testingId={testingAccountId}
-                  onTest={handleTestConnection}
-                  onSetDefault={handleSetDefault}
-                  onRemove={setRemoveTarget}
-                  t={t}
-                />
-              ))}
-            </div>
-          )}
-
-          <div className="flex justify-end">
-            <Button size="sm" onClick={() => setAddGitOpen(true)}>
-              {t("gitAccount.addAccount")}
-            </Button>
-          </div>
-        </section>
+          {/* ---- Git Accounts (non-forge) ---- */}
+          <SettingsSection
+            icon={Globe}
+            title={t("gitAccount.sectionTitle")}
+            description={t("gitAccount.sectionDescription")}
+            className="space-y-4"
+            control={
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setAddGitOpen(true)}
+              >
+                <Plus className="h-3.5 w-3.5" />
+                {t("gitAccount.addAccount")}
+              </Button>
+            }
+          >
+            {gitAccounts.length === 0 ? (
+              <div className="rounded-md border border-dashed bg-muted/10 px-4 py-6 text-center text-xs text-muted-foreground">
+                {t("gitAccount.noAccounts")}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {gitAccounts.map((account) => (
+                  <AccountRow
+                    key={account.id}
+                    account={account}
+                    testingId={testingAccountId}
+                    onTest={handleTestConnection}
+                    onSetDefault={handleSetDefault}
+                    onRemove={setRemoveTarget}
+                    t={t}
+                  />
+                ))}
+              </div>
+            )}
+          </SettingsSection>
+        </SettingsGroup>
       </div>
 
       {/* Dialogs */}

@@ -51,7 +51,7 @@
   </tr>
   <tr>
     <td width="50%" valign="top">🧑‍💼 <strong>Agenten richten @-Assistenten für dich ein</strong><br/>Sag in einer Unterhaltung „leg einen Review-Assistenten mit Codex und hohem Reasoning an“, und der Agent legt den @-Assistenten an oder ändert ihn: Name, Agent, Modell und dauerhafte Anweisungen wie gesagt, jede nicht genannte Option auf dem Standard des Agenten. Mit Bearbeiten direkt in der Unterhaltung passt du ihn an.</td>
-    <td width="50%" valign="top"></td>
+    <td width="50%" valign="top">🧭 <strong>Gruppierte Einstellungen</strong><br/>Die Navigation der Einstellungen steht unter fünf Überschriften; volle Seiten fassen zusammengehörige Optionen auf einer Karte zusammen, jede Seite hat einen Titel, und auf dem Handy drückt ein Auswahlfeld seine Beschreibung nicht mehr zu einem Streifen zusammen.</td>
   </tr>
   <tr>
     <td colspan="2" valign="top">🔄 <strong>Nah am Upstream</strong><br/>Upstream wird regelmäßig hineingemergt; was hier nicht steht, funktioniert genau wie in der offiziellen Version. Das eingebaute Kiro CLI, das diese Version als Erstes hinzugefügt hat, ist seit 0.36.0 Teil der offiziellen Version. Die Zusammenfassungen von Claudes Denken nutzen seit 0.41.3-1 den Schalter der offiziellen Version: „Zusammenfassungen von Claudes Denken anzeigen“ unter Einstellungen → Agenten → Claude Code, standardmäßig aus. Seit 0.46.0-1 wird die vorgeschlagene nächste Nachricht wie in der offiziellen Version übernommen: am Computer mit Tab, am Handy mit der Glühbirnen-Schaltfläche neben „Senden“.</td>
@@ -195,6 +195,16 @@
 - Beim Anlegen startet Codeg den Agenten kurz, um seine echten Optionen zu lesen (ein paar Sekunden). Genannte Optionen werden wie gesagt gesetzt, die übrigen auf die Standardwerte des Agenten (die der Editor als Empfohlen markiert); beim Ändern bleiben nicht genannte Optionen, wie sie sind. Passt ein Modell oder eine Option nicht, wird nichts gespeichert, und der Agent erfährt, was verfügbar ist.
 - In der Unterhaltung erscheint eine Zeile „Assistent … wird erstellt“; aufgeklappt zeigt sie Agent, Optionen und Anweisungen des Assistenten, und Bearbeiten öffnet denselben Editor wie in den Einstellungen. Der neue Assistent steht sofort im @-Menü und kann gleich Aufgaben bekommen.
 - Der Schalter ist „Assistenten erstellen“ unter Einstellungen → Zusammenarbeit → Tools in der Unterhaltung, standardmäßig an; aus, sehen Agenten die beiden Tools nicht. Ein Agent, der Dateien und Befehle selbst übernimmt, bekommt sie nicht – genau wie die Delegations-Tools.
+
+</details>
+
+<details>
+<summary><strong>Gruppierte Einstellungen</strong> – Details</summary>
+<br/>
+
+- Die Navigation ist unter fünf Überschriften gruppiert (Grundlagen, Agenten, Inhalte, Steuerung, Verbindungen & Wartung); Seiten und Reihenfolge entsprechen der offiziellen Version.
+- Darstellung, Allgemein, Systemeinstellungen, Versionskontrolle und Übersetzung fassen zusammengehörige Einstellungen auf einer Karte mit Gruppennamen darüber zusammen; eine Einstellung mit nur einem Schalter oder Auswahlfeld ist eine Zeile: Name und Beschreibung links, Bedienelement rechts. Darstellung wird von zwölf Karten zu drei Gruppen; in der Versionskontrolle wandert „Konto hinzufügen“ in die Kopfzeile des jeweiligen Abschnitts.
+- Jede Seite beginnt mit Titel und einzeiliger Beschreibung; der Proxy-Schalter ist ein Schalter wie überall; auf dem Handy rutscht ein Auswahlfeld oder Button, der nicht passt, unter die Beschreibung; in breiten Browserfenstern werden Formularseiten in der Breite begrenzt und zentriert.
 
 </details>
 

@@ -51,7 +51,7 @@
   </tr>
   <tr>
     <td width="50%" valign="top">🧑‍💼 <strong>Les agents préparent vos assistants @</strong><br/>Dites « ajoute un assistant relecteur sur Codex avec un raisonnement élevé » dans une conversation et l’agent crée ou modifie l’assistant @ : nom, agent, modèle et instructions permanentes comme vous l’avez dit, chaque option non mentionnée à la valeur par défaut de l’agent. Cliquez sur Modifier dans la conversation pour l’ajuster.</td>
-    <td width="50%" valign="top"></td>
+    <td width="50%" valign="top">🧭 <strong>Réglages regroupés</strong><br/>La navigation des Réglages est rangée sous cinq titres ; les pages chargées réunissent les options liées sur une seule carte, chaque page a un titre et, sur téléphone, un menu déroulant n'écrase plus sa description.</td>
   </tr>
   <tr>
     <td colspan="2" valign="top">🔄 <strong>Au plus près de l'original</strong><br/>Le projet d'origine est fusionné régulièrement ; ce qui n'est pas listé ici fonctionne comme dans la version officielle. Kiro CLI intégré, le premier ajout de cette version, fait partie de la version officielle depuis la 0.36.0. Les résumés de réflexion de Claude Code passent dès la 0.41.3-1 par l'interrupteur de la version officielle : « Afficher les résumés de réflexion de Claude » dans Réglages → Agents IA → Claude Code, désactivé par défaut. Depuis la 0.46.0-1, le message suivant suggéré se remplit comme dans la version officielle : Tab sur ordinateur, bouton ampoule à côté d’Envoyer sur téléphone.</td>
@@ -195,6 +195,16 @@
 - À la création, Codeg lance brièvement l’agent pour lire ses vraies options (quelques secondes). Les options que vous nommez sont réglées comme vous l’avez dit, les autres prennent les valeurs par défaut de l’agent (celles que l’éditeur marque Recommandé) ; à la modification, les options non nommées restent telles quelles. Si un modèle ou une option ne correspond pas, rien n’est enregistré et l’agent apprend ce qui est disponible.
 - La conversation affiche une ligne « Création de l’assistant … » ; dépliée, elle montre l’agent, les options et les instructions de l’assistant, et Modifier ouvre le même éditeur que dans les Réglages. Le nouvel assistant apparaît tout de suite dans le menu @ et peut recevoir des tâches aussitôt.
 - L’interrupteur est « Créer des assistants » dans Réglages → Collaboration → Outils dans la conversation, activé par défaut ; désactivé, les agents ne voient pas les deux outils. Un agent réglé pour gérer lui-même fichiers et commandes ne les reçoit pas, pas plus que les outils de délégation.
+
+</details>
+
+<details>
+<summary><strong>Réglages regroupés</strong> : détails</summary>
+<br/>
+
+- La navigation est regroupée sous cinq titres (Essentiel, Agents, Contenu, Contrôle, Connexions et maintenance) ; les pages et leur ordre sont ceux de la version officielle.
+- Apparence, Général, Système, Contrôle de version et Traduction réunissent les réglages liés sur une carte surmontée du nom du groupe, et un réglage à un seul interrupteur ou menu tient sur une ligne : nom et description à gauche, contrôle à droite. Apparence passe de douze cartes à trois groupes ; dans Contrôle de version, « Ajouter un compte » passe dans l'en-tête de chaque section.
+- Chaque page commence par un titre et une description d'une ligne ; l'interrupteur du proxy est comme les autres ; sur téléphone, un menu ou bouton qui ne tient pas passe sous sa description ; dans une large fenêtre de navigateur, les pages de formulaire sont limitées en largeur et centrées.
 
 </details>
 

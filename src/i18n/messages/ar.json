@@ -368,6 +368,9 @@
     }
   },
   "VersionControlSettings": {
+    "groups": {
+      "accounts": "الحسابات"
+    },
     "loading": "جارٍ التحميل...",
     "sectionTitle": "التحكم بالإصدارات",
     "sectionDescription": "تكوين ملف Git التنفيذي وإدارة حسابات GitHub.",
@@ -9893,6 +9896,10 @@
     }
   },
   "TranslationSettings": {
+    "groups": {
+      "whatToTranslate": "ما الذي يُترجم",
+      "glossaryAndCache": "المسرد وذاكرة التخزين المؤقت"
+    },
     "title": "الترجمة",
     "description": "تترجم رسائلك قبل إرسالها، وتترجم ردود الوكلاء إلى لغتك. الترجمة طبقة منفصلة، فلا يغيّر الوكيل نفسه طريقة كتابته.",
     "loading": "جارٍ التحميل…",

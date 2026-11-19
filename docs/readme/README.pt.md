@@ -51,7 +51,7 @@
   </tr>
   <tr>
     <td width="50%" valign="top">🧑‍💼 <strong>Os agentes montam seus assistentes @</strong><br/>Diga “adicione um assistente revisor no Codex com raciocínio alto” numa conversa e o agente cria ou altera o assistente @: nome, agente, modelo e instruções permanentes como você disse, e cada opção que você não citou no padrão do agente. Clique em Editar na própria conversa para ajustar.</td>
-    <td width="50%" valign="top"></td>
+    <td width="50%" valign="top">🧭 <strong>Configurações agrupadas</strong><br/>A navegação das Configurações fica sob cinco títulos; páginas cheias reúnem as opções relacionadas num só cartão, toda página tem título e, no celular, um menu suspenso não espreme mais a descrição.</td>
   </tr>
   <tr>
     <td colspan="2" valign="top">🔄 <strong>Acompanha o original</strong><br/>O projeto original é mesclado regularmente; o que não está listado aqui funciona como na versão oficial. O Kiro CLI integrado, a primeira coisa que esta versão adicionou, faz parte da versão oficial desde a 0.36.0. Os resumos do raciocínio do Claude Code usam, desde a 0.41.3-1, o interruptor da versão oficial: “Mostrar resumos do raciocínio do Claude” em Configurações → Agentes → Claude Code, desativado por padrão. A partir da 0.46.0-1, a próxima mensagem sugerida é preenchida como na versão oficial: Tab no computador e o botão de lâmpada ao lado de Enviar no celular.</td>
@@ -195,6 +195,16 @@
 - Ao criar, o Codeg inicia esse agente por um instante para ler as opções reais dele (leva alguns segundos). As opções que você cita ficam como você disse e as demais nos padrões do próprio agente (os que o editor marca como Recomendado); ao alterar, as opções não citadas continuam como estavam. Se um modelo ou uma opção não bater, nada é salvo e o agente fica sabendo o que está disponível.
 - A conversa mostra uma linha “Criando o assistente …”; expandida, ela mostra o agente, as opções e as instruções do assistente, e Editar abre o mesmo editor das Configurações. O assistente novo aparece na hora no menu @ e já pode receber tarefas delegadas.
 - O interruptor é “Criar assistentes” em Configurações → Colaboração → Ferramentas na conversa, ativado por padrão; desligado, os agentes não veem as duas ferramentas. Um agente configurado para cuidar sozinho de arquivos e comandos não as recebe, assim como não recebe as de delegação.
+
+</details>
+
+<details>
+<summary><strong>Configurações agrupadas</strong>: detalhes</summary>
+<br/>
+
+- A navegação é agrupada sob cinco títulos (Básico, Agentes, Conteúdo, Controle, Conexões e manutenção); as páginas e a ordem são as da versão oficial.
+- Aparência, Geral, Sistema, Controle de versão e Tradução reúnem as configurações relacionadas num cartão com o nome do grupo acima, e uma configuração com um só interruptor ou menu vira uma linha: nome e descrição à esquerda, controle à direita. Aparência passa de doze cartões para três grupos; em Controle de versão, «Adicionar conta» vai para o cabeçalho de cada seção.
+- Toda página começa com título e uma descrição de uma linha; o interruptor do proxy é igual aos outros; no celular, um menu ou botão que não cabe vai para baixo da descrição; numa janela larga do navegador, as páginas de formulário têm largura limitada e centralizada.
 
 </details>
 

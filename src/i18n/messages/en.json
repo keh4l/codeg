@@ -368,6 +368,9 @@
     }
   },
   "VersionControlSettings": {
+    "groups": {
+      "accounts": "Accounts"
+    },
     "loading": "Loading...",
     "sectionTitle": "Version Control",
     "sectionDescription": "Configure Git executable and manage GitHub accounts.",
@@ -9893,6 +9896,10 @@
     }
   },
   "TranslationSettings": {
+    "groups": {
+      "whatToTranslate": "What to translate",
+      "glossaryAndCache": "Glossary & cache"
+    },
     "title": "Translation",
     "description": "Translate your messages before they are sent, and agent replies into your language. Translation is a separate layer: the agent itself never changes how it writes.",
     "loading": "Loading…",

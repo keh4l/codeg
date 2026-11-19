@@ -35,6 +35,7 @@ import { toast } from "sonner"
 import { SettingCard, SettingRow } from "@/components/shared/setting-card"
 import {
   SETTINGS_FORM_WIDTH,
+  SettingsGroup,
   SettingsPageHeader,
   SettingsSection,
 } from "@/components/shared/settings-section"
@@ -383,165 +384,176 @@ export function TranslationSettings() {
           </SettingCard>
         </SettingsSection>
 
-        <SettingsSection
-          icon={MessageSquareText}
-          title={t("output.title")}
-          description={t("output.description")}
-          htmlFor="translation-output-auto"
-          control={
-            <Switch
-              id="translation-output-auto"
-              checked={view.output_auto}
-              disabled={saving}
-              onCheckedChange={(next) => void save({ output_auto: next })}
-            />
-          }
-        >
-          <SettingCard>
-            <SettingRow
-              title={t("output.target")}
-              htmlFor="translation-output-target"
-              control={
-                <Select
-                  value={view.output_target ?? FOLLOW_UI}
-                  onValueChange={(value) =>
-                    void save({
-                      output_target: value === FOLLOW_UI ? null : value,
-                    })
-                  }
-                  disabled={saving}
-                >
-                  <SelectTrigger
-                    id="translation-output-target"
-                    className="w-56"
+        <SettingsGroup label={t("groups.whatToTranslate")}>
+          <SettingsSection
+            icon={MessageSquareText}
+            title={t("output.title")}
+            description={t("output.description")}
+            htmlFor="translation-output-auto"
+            control={
+              <Switch
+                id="translation-output-auto"
+                checked={view.output_auto}
+                disabled={saving}
+                onCheckedChange={(next) => void save({ output_auto: next })}
+              />
+            }
+          >
+            <SettingCard>
+              <SettingRow
+                title={t("output.target")}
+                htmlFor="translation-output-target"
+                control={
+                  <Select
+                    value={view.output_target ?? FOLLOW_UI}
+                    onValueChange={(value) =>
+                      void save({
+                        output_target: value === FOLLOW_UI ? null : value,
+                      })
+                    }
+                    disabled={saving}
                   >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={FOLLOW_UI}>
-                      {t("output.followUi", { language: uiLanguage })}
-                    </SelectItem>
-                    {languageOptions}
-                  </SelectContent>
-                </Select>
-              }
-            />
-            <SettingRow
-              title={t("output.questions")}
-              description={t("output.questionsDescription")}
-              htmlFor="translation-question-auto"
-              control={
-                <Switch
-                  id="translation-question-auto"
-                  checked={view.question_auto}
-                  disabled={saving}
-                  onCheckedChange={(next) => void save({ question_auto: next })}
-                />
-              }
-            />
-            <SettingRow
-              title={t("output.plans")}
-              description={t("output.plansDescription")}
-              htmlFor="translation-plan-auto"
-              control={
-                <Switch
-                  id="translation-plan-auto"
-                  checked={view.plan_auto}
-                  disabled={saving}
-                  onCheckedChange={(next) => void save({ plan_auto: next })}
-                />
-              }
-            />
-          </SettingCard>
-        </SettingsSection>
+                    <SelectTrigger
+                      id="translation-output-target"
+                      className="w-56"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={FOLLOW_UI}>
+                        {t("output.followUi", { language: uiLanguage })}
+                      </SelectItem>
+                      {languageOptions}
+                    </SelectContent>
+                  </Select>
+                }
+              />
+              <SettingRow
+                title={t("output.questions")}
+                description={t("output.questionsDescription")}
+                htmlFor="translation-question-auto"
+                control={
+                  <Switch
+                    id="translation-question-auto"
+                    checked={view.question_auto}
+                    disabled={saving}
+                    onCheckedChange={(next) =>
+                      void save({ question_auto: next })
+                    }
+                  />
+                }
+              />
+              <SettingRow
+                title={t("output.plans")}
+                description={t("output.plansDescription")}
+                htmlFor="translation-plan-auto"
+                control={
+                  <Switch
+                    id="translation-plan-auto"
+                    checked={view.plan_auto}
+                    disabled={saving}
+                    onCheckedChange={(next) => void save({ plan_auto: next })}
+                  />
+                }
+              />
+            </SettingCard>
+          </SettingsSection>
 
-        <SettingsSection
-          icon={PenLine}
-          title={t("input.title")}
-          description={t("input.description")}
-        >
-          <SettingCard>
-            <SettingRow
-              title={t("input.target")}
-              htmlFor="translation-input-target"
-              control={
-                <Select
-                  value={view.input_target}
-                  onValueChange={(value) => void save({ input_target: value })}
-                  disabled={saving}
-                >
-                  <SelectTrigger id="translation-input-target" className="w-56">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>{languageOptions}</SelectContent>
-                </Select>
-              }
-            />
-            <SettingRow
-              title={t("input.onSend", {
-                language: languageLabel(view.input_target, locale),
-              })}
-              description={t("input.onSendDescription")}
-              htmlFor="translation-input-on-send"
-              control={
-                <Switch
-                  id="translation-input-on-send"
-                  checked={view.input_translate_on_send}
-                  disabled={saving}
-                  onCheckedChange={(next) =>
-                    void save({ input_translate_on_send: next })
-                  }
-                />
-              }
-            />
-            <SettingRow
-              title={t("input.shortcut")}
-              control={
-                <div className="flex items-center gap-2">
-                  {translateShortcut ? (
-                    <kbd className="rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground/80">
-                      {translateShortcut}
-                    </kbd>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">
-                      {t("input.shortcutNone")}
-                    </span>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    onClick={openShortcutSettings}
+          <SettingsSection
+            icon={PenLine}
+            title={t("input.title")}
+            description={t("input.description")}
+          >
+            <SettingCard>
+              <SettingRow
+                title={t("input.target")}
+                htmlFor="translation-input-target"
+                control={
+                  <Select
+                    value={view.input_target}
+                    onValueChange={(value) =>
+                      void save({ input_target: value })
+                    }
+                    disabled={saving}
                   >
-                    {t("input.shortcutEdit")}
-                  </Button>
-                </div>
-              }
-            />
-          </SettingCard>
-        </SettingsSection>
+                    <SelectTrigger
+                      id="translation-input-target"
+                      className="w-56"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>{languageOptions}</SelectContent>
+                  </Select>
+                }
+              />
+              <SettingRow
+                title={t("input.onSend", {
+                  language: languageLabel(view.input_target, locale),
+                })}
+                description={t("input.onSendDescription")}
+                htmlFor="translation-input-on-send"
+                control={
+                  <Switch
+                    id="translation-input-on-send"
+                    checked={view.input_translate_on_send}
+                    disabled={saving}
+                    onCheckedChange={(next) =>
+                      void save({ input_translate_on_send: next })
+                    }
+                  />
+                }
+              />
+              <SettingRow
+                title={t("input.shortcut")}
+                control={
+                  <div className="flex items-center gap-2">
+                    {translateShortcut ? (
+                      <kbd className="rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground/80">
+                        {translateShortcut}
+                      </kbd>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">
+                        {t("input.shortcutNone")}
+                      </span>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={openShortcutSettings}
+                    >
+                      {t("input.shortcutEdit")}
+                    </Button>
+                  </div>
+                }
+              />
+            </SettingCard>
+          </SettingsSection>
+        </SettingsGroup>
 
-        <GlossarySection
-          entries={view.glossary}
-          saving={saving}
-          onSave={(glossary) => save({ glossary })}
-        />
+        <SettingsGroup label={t("groups.glossaryAndCache")}>
+          <GlossarySection
+            entries={view.glossary}
+            saving={saving}
+            onSave={(glossary) => save({ glossary })}
+          />
 
-        <SettingsSection
-          icon={Database}
-          title={t("cache.title")}
-          description={t("cache.description")}
-          control={
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={clearingCache}
-              onClick={() => void handleClearCache()}
-            >
-              {clearingCache && <Loader2 className="size-3.5 animate-spin" />}
-              {t("cache.clear")}
-            </Button>
-          }
-        />
+          <SettingsSection
+            icon={Database}
+            title={t("cache.title")}
+            description={t("cache.description")}
+            control={
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={clearingCache}
+                onClick={() => void handleClearCache()}
+              >
+                {clearingCache && <Loader2 className="size-3.5 animate-spin" />}
+                {t("cache.clear")}
+              </Button>
+            }
+          />
+        </SettingsGroup>
       </div>
     </ScrollArea>
   )

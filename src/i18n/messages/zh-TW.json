@@ -368,6 +368,9 @@
     }
   },
   "VersionControlSettings": {
+    "groups": {
+      "accounts": "帳號"
+    },
     "loading": "載入中...",
     "sectionTitle": "版本控制",
     "sectionDescription": "設定 Git 執行檔並管理 GitHub 帳號。",
@@ -9893,6 +9896,10 @@
     }
   },
   "TranslationSettings": {
+    "groups": {
+      "whatToTranslate": "翻譯什麼",
+      "glossaryAndCache": "術語表與快取"
+    },
     "title": "翻譯",
     "description": "送出前把你寫的訊息翻譯成目標語言，把智慧體的回覆翻譯成你的語言。翻譯是獨立的一層，不會改變智慧體自己的寫法。",
     "loading": "載入中…",

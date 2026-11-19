@@ -51,7 +51,7 @@
   </tr>
   <tr>
     <td width="50%" valign="top">🧑‍💼 <strong>Los agentes te preparan asistentes @</strong><br/>Di «añade un asistente revisor con Codex y razonamiento alto» en una conversación y el agente crea o cambia el asistente @: nombre, agente, modelo e instrucciones permanentes como lo dijiste, y cada opción que no mencionaste con el valor por defecto del agente. Pulsa Editar en la propia conversación para ajustarlo.</td>
-    <td width="50%" valign="top"></td>
+    <td width="50%" valign="top">🧭 <strong>Ajustes agrupados</strong><br/>La navegación de Ajustes se agrupa bajo cinco títulos; las páginas con muchas opciones reúnen las relacionadas en una sola tarjeta, todas las páginas tienen título y en el móvil un desplegable ya no aplasta su descripción.</td>
   </tr>
   <tr>
     <td colspan="2" valign="top">🔄 <strong>Al día con el original</strong><br/>Los cambios del proyecto original se incorporan con regularidad; lo que no aparece aquí funciona igual que en la versión oficial. Kiro CLI integrado, lo primero que añadió esta versión, forma parte de la versión oficial desde la 0.36.0. Los resúmenes del razonamiento de Claude Code usan desde la 0.41.3-1 el interruptor de la versión oficial: «Mostrar resúmenes del razonamiento de Claude» en Ajustes → Agentes → Claude Code, desactivado por defecto. Desde la 0.46.0-1, el siguiente mensaje sugerido se rellena como en la versión oficial: con Tab en el ordenador y con el botón de la bombilla junto a Enviar en el móvil.</td>
@@ -195,6 +195,16 @@
 - Al crearlo, Codeg arranca ese agente un momento para leer sus opciones reales (tarda unos segundos). Las opciones que nombras quedan como dijiste y el resto con los valores por defecto del propio agente (los que el editor marca como Recomendado); al cambiarlo, las opciones que no nombras quedan como estaban. Si un modelo o una opción no coincide, no se guarda nada y se le dice al agente qué hay disponible.
 - La conversación muestra una fila «Creando el asistente …»; al desplegarla ves el agente, las opciones y las instrucciones del asistente, y Editar abre el mismo editor que en Ajustes. El asistente nuevo aparece enseguida en el menú @ y se le puede delegar al momento.
 - El interruptor es «Crear asistentes» en Ajustes → Colaboración → Herramientas en la conversación, activado por defecto; apagado, los agentes no ven las dos herramientas. Un agente configurado para manejar archivos y comandos por sí mismo no las recibe, igual que no recibe las de delegación.
+
+</details>
+
+<details>
+<summary><strong>Ajustes agrupados</strong>: detalles</summary>
+<br/>
+
+- La navegación se agrupa bajo cinco títulos (Básico, Agentes, Contenido, Control, Conexiones y mantenimiento); las páginas y su orden son los de la versión oficial.
+- Apariencia, General, Sistema, Control de versiones y Traducción reúnen los ajustes relacionados en una tarjeta con el nombre del grupo encima, y un ajuste con un solo interruptor o desplegable ocupa una fila: nombre y descripción a la izquierda, control a la derecha. Apariencia pasa de doce tarjetas a tres grupos; en Control de versiones, «Añadir cuenta» pasa a la cabecera de cada sección.
+- Cada página empieza con un título y una descripción de una línea; el interruptor del proxy es como los demás; en el móvil, un desplegable o botón que no cabe pasa debajo de su descripción; en una ventana ancha del navegador, las páginas de formulario limitan su ancho y se centran.
 
 </details>
 
