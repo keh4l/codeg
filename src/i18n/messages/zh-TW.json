@@ -3487,7 +3487,9 @@
         },
         "configOptionAdjusted": "{agent} 把{option}設成了 {actual}，而不是 {requested}",
         "noticeTitle": "{agent}：{title}",
-        "pluginLoadFailedTitle": "{agent} 有 {count} 個外掛載入失敗"
+        "pluginLoadFailedTitle": "{agent} 有 {count} 個外掛載入失敗",
+        "snapshotHydrateFailedTitle": "{agent} 的工作階段狀態未能完整讀取",
+        "snapshotHydrateFailedDescription": "已依基本狀態恢復，可以繼續使用。進行中的回覆可能要等它結束後才會完整顯示。"
       },
       "connectionLifecycle": {
         "tasks": {

@@ -3487,7 +3487,9 @@
         },
         "configOptionAdjusted": "{agent} estableció {option} en {actual} en lugar de {requested}",
         "noticeTitle": "{agent}: {title}",
-        "pluginLoadFailedTitle": "{agent} no pudo cargar {count, plural, one {# plugin} other {# plugins}}"
+        "pluginLoadFailedTitle": "{agent} no pudo cargar {count, plural, one {# plugin} other {# plugins}}",
+        "snapshotHydrateFailedTitle": "No se pudo leer por completo el estado de la sesión de {agent}",
+        "snapshotHydrateFailedDescription": "Se restauró a partir de su estado básico, así que puedes seguir trabajando. La respuesta en curso puede mostrarse completa solo cuando termine."
       },
       "connectionLifecycle": {
         "tasks": {

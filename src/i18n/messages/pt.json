@@ -3487,7 +3487,9 @@
         },
         "configOptionAdjusted": "O {agent} definiu {option} como {actual} em vez de {requested}",
         "noticeTitle": "{agent}: {title}",
-        "pluginLoadFailedTitle": "{agent} não conseguiu carregar {count, plural, one {# plugin} other {# plugins}}"
+        "pluginLoadFailedTitle": "{agent} não conseguiu carregar {count, plural, one {# plugin} other {# plugins}}",
+        "snapshotHydrateFailedTitle": "Não foi possível ler totalmente o estado da sessão de {agent}",
+        "snapshotHydrateFailedDescription": "Ela foi restaurada a partir do estado básico, então você pode continuar. A resposta em andamento pode aparecer completa só quando terminar."
       },
       "connectionLifecycle": {
         "tasks": {

@@ -3487,7 +3487,9 @@
         },
         "configOptionAdjusted": "ضبط {agent} {option} على {actual} بدلاً من {requested}",
         "noticeTitle": "{agent}: {title}",
-        "pluginLoadFailedTitle": "تعذّر على {agent} تحميل {count} من الإضافات"
+        "pluginLoadFailedTitle": "تعذّر على {agent} تحميل {count} من الإضافات",
+        "snapshotHydrateFailedTitle": "تعذّرت قراءة حالة جلسة {agent} بالكامل",
+        "snapshotHydrateFailedDescription": "تمت استعادتها من حالتها الأساسية، فيمكنك المتابعة. قد لا يظهر الرد الجاري كاملًا إلا بعد انتهائه."
       },
       "connectionLifecycle": {
         "tasks": {

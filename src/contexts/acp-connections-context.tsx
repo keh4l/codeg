@@ -73,6 +73,7 @@ import type {
   ContentBlock,
   ConversationConnectionInfo,
   EventEnvelope,
+  LiveSessionSnapshot,
   PlanEntryInfo,
   PermissionOptionInfo,
   PendingQuestionState,
@@ -127,6 +128,7 @@ import {
 } from "@/lib/acp-error-presentation"
 import { dismissNotification, notify, type NotifyAction } from "@/lib/notify"
 import type { SnapshotPatch } from "@/lib/snapshot-denormalize"
+import { salvageSnapshot, type SnapshotSalvage } from "@/lib/snapshot-salvage"
 import {
   appendLiveToolRawOutput,
   replaceLiveToolRawOutput,
@@ -610,6 +612,13 @@ type Action =
       type: "HYDRATE_FROM_SNAPSHOT"
       contextKey: string
       patch: import("@/lib/snapshot-denormalize").SnapshotPatch
+    }
+  | {
+      // The full hydrate threw: apply the few fields `salvageSnapshot` could
+      // still read, so the surface does not stay on its placeholder.
+      type: "SALVAGE_SNAPSHOT"
+      contextKey: string
+      salvage: SnapshotSalvage
     }
   | { type: "CONNECTION_REMOVED"; contextKey: string }
   | { type: "REMOVE_ALL" }
@@ -2206,7 +2215,23 @@ function connectionsReducer(
           : mergeAsyncTasks(current.asyncTasks, action.patch.asyncTasks)
 
       if (isStaleSnapshot) {
+        // `connecting` is never re-entered: the backend sets it once, at
+        // spawn. So on an entry still reading `connecting`, it is the
+        // placeholder `CONNECTION_CREATED` wrote, not something an event said
+        // — and even a snapshot that is stale by seq knows better. Without
+        // this, a surface whose live events overtook its snapshot (they carry
+        // no status mid-turn) read "connecting" with a locked composer until
+        // the turn ended.
+        const adoptStatus =
+          current.status === "connecting" &&
+          action.patch.status !== "connecting"
+        const mergedStatus = adoptStatus ? action.patch.status : current.status
+        const mergedSessionId = adoptStatus
+          ? (current.sessionId ?? action.patch.sessionId)
+          : current.sessionId
         if (
+          mergedStatus === current.status &&
+          mergedSessionId === current.sessionId &&
           mergedSelectorsReady === current.selectorsReady &&
           mergedSupportsFork === current.supportsFork &&
           mergedModes === current.modes &&
@@ -2223,13 +2248,15 @@ function connectionsReducer(
         const next = new Map(state)
         next.set(action.contextKey, {
           ...current,
+          status: mergedStatus,
+          sessionId: mergedSessionId,
           modes: mergedModes,
           configOptions: mergedConfigOptions,
           availableCommands: mergedAvailableCommands,
           promptCapabilities: mergedPromptCapabilities,
           selectorsReady: mergedSelectorsReady,
           supportsFork: mergedSupportsFork,
-          hasPrompted: mergedHasPrompted,
+          hasPrompted: mergedHasPrompted || mergedStatus === "prompting",
           sessionFailures: mergedSessionFailures,
           toolApprovals: mergedToolApprovals,
           asyncTasks: mergedAsyncTasks,
@@ -2310,6 +2337,51 @@ function connectionsReducer(
         error: action.patch.lastError,
         errorLevel: action.patch.lastErrorLevel,
         lastAppliedSeq: action.patch.eventSeq,
+      })
+      return next
+    }
+
+    case "SALVAGE_SNAPSHOT": {
+      const current = state.get(action.contextKey)
+      if (!current) return state
+      const { salvage } = action
+      // Same identity guard as the full hydrate.
+      if (current.connectionId !== salvage.connectionId) return state
+      // Status follows the hydrate's rules: a snapshot ahead of this entry is
+      // the newer word, and one behind it still beats the `connecting`
+      // placeholder (see the stale branch of HYDRATE_FROM_SNAPSHOT).
+      const fresh = salvage.eventSeq > current.lastAppliedSeq
+      const status =
+        fresh || current.status === "connecting"
+          ? salvage.status
+          : current.status
+      const sessionId = current.sessionId ?? salvage.sessionId
+      const selectorsReady = current.selectorsReady || salvage.selectorsReady
+      const supportsFork = current.supportsFork || salvage.supportsFork
+      const hasPrompted = current.hasPrompted || status === "prompting"
+      // The snapshot's events are behind us either way: what it would have
+      // filled in is lost with the read that threw, and replaying them on top
+      // would only half-rebuild the reply.
+      const lastAppliedSeq = Math.max(current.lastAppliedSeq, salvage.eventSeq)
+      if (
+        status === current.status &&
+        sessionId === current.sessionId &&
+        selectorsReady === current.selectorsReady &&
+        supportsFork === current.supportsFork &&
+        hasPrompted === current.hasPrompted &&
+        lastAppliedSeq === current.lastAppliedSeq
+      ) {
+        return state
+      }
+      const next = new Map(state)
+      next.set(action.contextKey, {
+        ...current,
+        status,
+        sessionId,
+        selectorsReady,
+        supportsFork,
+        hasPrompted,
+        lastAppliedSeq,
       })
       return next
     }
@@ -4481,7 +4553,10 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           // the events in it — the rest of the reply among them — are skipped.
           // Marked BEFORE the listeners hear of it, so the turn-end edge that
           // their re-render fires finds the mark.
-          if (action.type === "HYDRATE_FROM_SNAPSHOT") {
+          if (
+            action.type === "HYDRATE_FROM_SNAPSHOT" ||
+            action.type === "SALVAGE_SNAPSHOT"
+          ) {
             const before = prev.get(key)
             const after = next.get(key)
             if (before?.status === "prompting" && after?.status !== "prompting")
@@ -6638,6 +6713,74 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
     presentSnapshotPatchRef.current = presentSnapshotPatch
   }, [presentSnapshotPatch])
 
+  // Connections whose snapshot read already failed and was reported — a
+  // re-attach fetches the same snapshot, and one notice per connection is the
+  // whole story.
+  const reportedSnapshotFailuresRef = useRef(new Set<string>())
+
+  /**
+   * Hydrate `contextKey` from a wire snapshot, the one way every snapshot
+   * consumer does it. Returns the patch it applied, or `null` when the read
+   * threw.
+   *
+   * A throw used to vanish: the web attach handler is wrapped by the event
+   * stream's `safeInvoke`, which only logs, and the desktop paths treated it
+   * like a failed fetch. Either way nothing hydrated, so a surface that
+   * attached mid-turn stayed on its `connecting` placeholder — composer
+   * locked, no Stop button — until the turn ended, and every reload fetched
+   * the same snapshot and failed the same way. Now the fields that decide
+   * whether the surface is usable are salvaged from the raw wire, and the
+   * failure is reported once, with the error, so it can be found and fixed.
+   */
+  const hydrateFromWire = useCallback(
+    (contextKey: string, wire: LiveSessionSnapshot): SnapshotPatch | null => {
+      try {
+        const patch = presentSnapshotPatchRef.current(
+          contextKey,
+          denormalizeSnapshot(wire)
+        )
+        dispatch({ type: "HYDRATE_FROM_SNAPSHOT", contextKey, patch })
+        return patch
+      } catch (err) {
+        console.error(
+          "[acp-context] snapshot hydrate failed; salvaging its status for",
+          contextKey,
+          err
+        )
+        const salvage = salvageSnapshot(wire)
+        if (salvage) {
+          dispatch({ type: "SALVAGE_SNAPSHOT", contextKey, salvage })
+        }
+        const conn = storeRef.current.connections.get(contextKey)
+        const connectionId = salvage?.connectionId ?? conn?.connectionId
+        if (
+          connectionId &&
+          !reportedSnapshotFailuresRef.current.has(connectionId)
+        ) {
+          reportedSnapshotFailuresRef.current.add(connectionId)
+          notify({
+            level: "warning",
+            key: `acp-snapshot-hydrate-${connectionId}`,
+            title: t("snapshotHydrateFailedTitle", {
+              agent: conn ? getAgentLabel(conn.agentType) : "",
+            }),
+            description: t("snapshotHydrateFailedDescription"),
+            evidence:
+              err instanceof Error
+                ? (err.stack ?? `${err.name}: ${err.message}`)
+                : String(err),
+          })
+        }
+        return null
+      }
+    },
+    [dispatch, t]
+  )
+  const hydrateFromWireRef = useRef(hydrateFromWire)
+  useEffect(() => {
+    hydrateFromWireRef.current = hydrateFromWire
+  }, [hydrateFromWire])
+
   // Open a Subscribe-with-Snapshot stream for `connectionId` and route its
   // frames into the store under `contextKey`. Returns the subscription
   // handle for cleanup, or `null` when the active transport doesn't
@@ -6659,9 +6802,49 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       const stream = getEventStream()
       if (!stream) return null
 
+      // One subscription per key. A key that is re-attached without its old
+      // subscription being torn down first (a reconnect onto an entry that
+      // had already settled) would otherwise keep both: the old one's frames
+      // land under the same key, its events race the new snapshot, and its
+      // eventual `connection_gone` removes the new entry.
+      const previous = attachSubscriptionsRef.current.get(contextKey)
+      if (previous) {
+        attachSubscriptionsRef.current.delete(contextKey)
+        try {
+          previous.detach()
+        } catch (err) {
+          console.warn("[acp-context] attach detach threw:", err)
+        }
+      }
+
       let activeSub: EventStreamSubscription | null = null
+      // Frames are acted on only while this subscription is still the one
+      // the key holds, and for the connection it was opened for. A superseded
+      // subscription's frames would otherwise be applied to — or, with
+      // `connection_gone`, remove — whatever entry has taken the key since.
+      // Its stream is dropped on first contact so it stops arriving.
+      const isCurrent = (): boolean =>
+        activeSub !== null &&
+        attachSubscriptionsRef.current.get(contextKey) === activeSub
+      const ownsEntry = (): boolean => {
+        const conn = storeRef.current.connections.get(contextKey)
+        return !conn || conn.connectionId === connectionId
+      }
+      const dropIfStray = (): boolean => {
+        if (isCurrent() && ownsEntry()) return false
+        const stray = activeSub
+        if (stray && attachSubscriptionsRef.current.get(contextKey) !== stray) {
+          try {
+            stray.detach()
+          } catch (err) {
+            console.warn("[acp-context] attach detach threw:", err)
+          }
+        }
+        return true
+      }
       const handlers: AttachHandlers = {
         onSnapshot: (snapshot) => {
+          if (dropIfStray()) return
           // Land anything still coalescing BEFORE the snapshot replaces the
           // live message. This handler also runs on an attach-stream
           // RECONNECT, mid-turn, so deltas from before the drop can still be
@@ -6684,21 +6867,19 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           // at `CONNECTION_REMOVED` (see `dispatch`), which is the right
           // outcome there, not a flush.
           flushStreamingQueue(contextKey)
-          const patch = presentSnapshotPatchRef.current(
-            contextKey,
-            denormalizeSnapshot(snapshot)
-          )
-          dispatch({ type: "HYDRATE_FROM_SNAPSHOT", contextKey, patch })
+          const patch = hydrateFromWireRef.current(contextKey, snapshot)
           lastActivityRef.current.set(contextKey, Date.now())
           // Recover delegation bindings the snapshot carries but the transient
           // events don't (the load-bearing fix for the web-only "running shows
           // completed / no 查看会话" bug). Uses the snapshot's own connection_id
           // as the parent id.
-          seedDelegationsFromSnapshot(
-            patch.connectionId,
-            patch.activeDelegations,
-            patch.eventSeq
-          )
+          if (patch) {
+            seedDelegationsFromSnapshot(
+              patch.connectionId,
+              patch.activeDelegations,
+              patch.eventSeq
+            )
+          }
         },
         onReplay: (events) => {
           // Catching up on a gap (reconnect / lagged detach) re-delivers events
@@ -6708,6 +6889,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           // notification centre until the user clears them by hand — and of
           // toasts, which would re-announce every notice of the gap at once,
           // and of a taskbar flash for a prompt that was answered long ago.
+          if (dropIfStray()) return
           envelopeEffectsMutedRef.current += 1
           try {
             withEventSoundsSuppressed(() =>
@@ -6724,9 +6906,18 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           }
         },
         onEvent: (envelope) => {
+          if (dropIfStray()) return
           applyMappedEnvelope(contextKey, envelope)
         },
         onDetached: (reason) => {
+          // The stream already forgot this subscription. A superseded one has
+          // nothing left to say about the key; one whose key now holds another
+          // connection only gives the key up.
+          if (!isCurrent()) return
+          if (!ownsEntry()) {
+            attachSubscriptionsRef.current.delete(contextKey)
+            return
+          }
           if (reason === "lagged" || reason === "server_shutdown") {
             // Transient: re-attach with the latest cursor so we either
             // replay the gap (small) or hydrate fresh (large). For
@@ -7018,6 +7209,65 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(timer)
   }, [heldOpenKeys, isConnectionLiveOnBackend, markConnectionGone])
 
+  // ── Stuck-`connecting` reconciliation ──
+  // `connecting` is the one status a surface can be left in with nothing that
+  // would ever move it. The backend's own `connecting` → `connected` happens
+  // once, at spawn; a surface that attaches later learns its status from the
+  // snapshot alone, and a turn in flight sends no status until it ends. Lose
+  // that snapshot — a read that threw, a re-attach whose events overtook it —
+  // and the surface reads "connecting", composer locked, for as long as the
+  // turn runs. The keepalive's probe above only catches a connection that is
+  // GONE. So an entry still `connecting` on two ticks in a row, with no
+  // connect of ours in flight for it, is checked against the backend and
+  // hydrated when the backend says otherwise. A connection still genuinely
+  // handshaking reads `connecting` there too and is left alone.
+  const connectingSeenRef = useRef(new Map<string, string>())
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const seen = new Map<string, string>()
+      for (const [contextKey, conn] of storeRef.current.connections) {
+        if (conn.status !== "connecting") continue
+        if (connectingKeysRef.current.has(contextKey)) continue
+        const connectionId = conn.connectionId
+        seen.set(contextKey, connectionId)
+        if (connectingSeenRef.current.get(contextKey) !== connectionId) continue
+        void acpGetSessionSnapshot(connectionId)
+          .then((snapshot) => {
+            const current = storeRef.current.connections.get(contextKey)
+            if (
+              current?.connectionId !== connectionId ||
+              current.status !== "connecting"
+            ) {
+              return
+            }
+            if (snapshot === null) {
+              // Broker-owned children are released by their delegation's
+              // end, never settled from here (see the keepalive above).
+              if (!current.isDelegationChild) {
+                markConnectionGone(contextKey, connectionId)
+              }
+              return
+            }
+            if (snapshot.status === "connecting") return
+            flushStreamingQueue(contextKey)
+            const patch = hydrateFromWireRef.current(contextKey, snapshot)
+            if (patch) {
+              seedDelegationsFromSnapshot(
+                patch.connectionId,
+                patch.activeDelegations,
+                patch.eventSeq
+              )
+            }
+          })
+          // Unreachable is not an answer; the next tick asks again.
+          .catch(() => {})
+      }
+      connectingSeenRef.current = seen
+    }, CONNECTION_KEEPALIVE_INTERVAL_MS)
+
+    return () => clearInterval(timer)
+  }, [flushStreamingQueue, markConnectionGone, seedDelegationsFromSnapshot])
+
   // ── Idle sweep timer ──
   // Complements the backend keepalive: this sweep targets connections
   // that are NOT in `openTabKeys ∪ {activeKey}` — i.e. connections the
@@ -7237,8 +7487,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       // surface already routing it received meanwhile. Mirrors the legacy
       // owner path in `connect()`.
       const backlog = beginHydrationEchoes(contextKey, connectionId)
-      let patch: import("@/lib/snapshot-denormalize").SnapshotPatch | null =
-        null
+      let wire: LiveSessionSnapshot | null = null
       // `null` (as opposed to a thrown error) is the backend saying it holds no
       // state under this id — i.e. the connection is definitively gone, not
       // merely unreachable.
@@ -7248,8 +7497,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           acpGetSessionSnapshot(connectionId),
           backlog.cancelledSnapshot,
         ])
-        if (snapshot && !backlog.cancelled)
-          patch = denormalizeSnapshot(snapshot)
+        if (snapshot && !backlog.cancelled) wire = snapshot
         else connectionGone = true
       } catch (e) {
         console.warn(
@@ -7285,12 +7533,8 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
         dispatch({ type: "CONNECTION_REMOVED", contextKey })
         return false
       }
+      const patch = wire ? hydrateFromWireRef.current(contextKey, wire) : null
       if (patch) {
-        dispatch({
-          type: "HYDRATE_FROM_SNAPSHOT",
-          contextKey,
-          patch: presentSnapshotPatchRef.current(contextKey, patch),
-        })
         seedDelegationsFromSnapshot(
           patch.connectionId,
           patch.activeDelegations,
@@ -7515,6 +7759,17 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
             // same immortal "responding" state this gate exists to prevent.
             captureIdentityBeforeRemoval(contextKey)
             dispatch({ type: "CONNECTION_REMOVED", contextKey })
+          } else {
+            // A settled entry can still have delivery in flight: the status
+            // event that settled it arrives before its stream closes. Left in
+            // place, that delivery would carry on under this key once the
+            // connection built below takes it — the old connection's late
+            // frames applied to the new entry, its `connection_gone` removing
+            // it. Retire it now; the entry itself stays, so its identity is
+            // still there for the resume below.
+            releaseConnectionRoute(existing.connectionId, contextKey)
+            teardownAttachSubscription(contextKey)
+            pendingUnmappedEventsRef.current.delete(existing.connectionId)
           }
         }
 
@@ -7738,14 +7993,9 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           // before Phase 3. Awaits snapshot HTTP first, then registers
           // reverseMap, then drains any envelopes that arrived on the
           // global listener while the snapshot was in flight.
-          let snapshotPatch:
-            | import("@/lib/snapshot-denormalize").SnapshotPatch
-            | null = null
+          let snapshotWire: LiveSessionSnapshot | null = null
           try {
-            const snapshot = await acpGetSessionSnapshot(connectionId)
-            if (snapshot) {
-              snapshotPatch = denormalizeSnapshot(snapshot)
-            }
+            snapshotWire = await acpGetSessionSnapshot(connectionId)
           } catch (e: unknown) {
             console.warn(
               "[acp-context] snapshot fetch failed for",
@@ -7766,12 +8016,10 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
             return
           }
 
+          const snapshotPatch = snapshotWire
+            ? hydrateFromWireRef.current(contextKey, snapshotWire)
+            : null
           if (snapshotPatch) {
-            dispatch({
-              type: "HYDRATE_FROM_SNAPSHOT",
-              contextKey,
-              patch: presentSnapshotPatchRef.current(contextKey, snapshotPatch),
-            })
             // Recover delegation bindings from the snapshot here too. On
             // Tauri the firehose also delivers the events (so this is an
             // idempotent no-op), but it keeps RemoteDesktop and the legacy
@@ -8477,15 +8725,13 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       // surface's delivery, and deduped by seq once routed).
       const backlog = beginHydrationEchoes(connectionId, connectionId)
       void (async () => {
-        let patch: import("@/lib/snapshot-denormalize").SnapshotPatch | null =
-          null
+        let wire: LiveSessionSnapshot | null = null
         try {
           const snapshot = await Promise.race([
             acpGetSessionSnapshot(connectionId),
             backlog.cancelledSnapshot,
           ])
-          if (snapshot && !backlog.cancelled)
-            patch = denormalizeSnapshot(snapshot)
+          if (snapshot && !backlog.cancelled) wire = snapshot
         } catch (e) {
           console.warn(
             "[acp-context] child snapshot fetch failed for",
@@ -8501,12 +8747,10 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
         if (!still?.isDelegationChild || still.connectionId !== connectionId) {
           return
         }
+        const patch = wire
+          ? hydrateFromWireRef.current(connectionId, wire)
+          : null
         if (patch) {
-          dispatch({
-            type: "HYDRATE_FROM_SNAPSHOT",
-            contextKey: connectionId,
-            patch: presentSnapshotPatchRef.current(connectionId, patch),
-          })
           // Same recovery the other three snapshot consumers do
           // (`setupAttachSubscription.onSnapshot`, `connectAsViewer`,
           // `connect()`'s legacy branch): `delegation_started` is transient and

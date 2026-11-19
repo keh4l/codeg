@@ -3487,7 +3487,9 @@
         },
         "configOptionAdjusted": "{agent} set {option} to {actual} instead of {requested}",
         "noticeTitle": "{agent}: {title}",
-        "pluginLoadFailedTitle": "{agent} couldn't load {count, plural, one {# plugin} other {# plugins}}"
+        "pluginLoadFailedTitle": "{agent} couldn't load {count, plural, one {# plugin} other {# plugins}}",
+        "snapshotHydrateFailedTitle": "Couldn't fully read {agent}'s session state",
+        "snapshotHydrateFailedDescription": "It was restored from its basic status, so you can keep working. The reply in progress may only show in full once it finishes."
       },
       "connectionLifecycle": {
         "tasks": {

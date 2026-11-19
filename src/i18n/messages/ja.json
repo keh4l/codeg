@@ -3487,7 +3487,9 @@
         },
         "configOptionAdjusted": "{agent} は{option}を {requested} ではなく {actual} にしました",
         "noticeTitle": "{agent}：{title}",
-        "pluginLoadFailedTitle": "{agent} で {count} 個のプラグインを読み込めませんでした"
+        "pluginLoadFailedTitle": "{agent} で {count} 個のプラグインを読み込めませんでした",
+        "snapshotHydrateFailedTitle": "{agent} のセッション状態を完全には読み込めませんでした",
+        "snapshotHydrateFailedDescription": "基本的な状態から復元したので、そのまま使えます。進行中の返信は、終わってから全体が表示される場合があります。"
       },
       "connectionLifecycle": {
         "tasks": {

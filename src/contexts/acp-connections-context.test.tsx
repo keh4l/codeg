@@ -20,6 +20,7 @@ import {
 } from "@/contexts/acp-connections-context"
 import {
   CONNECTION_IDLE_TIMEOUT_MS,
+  CONNECTION_KEEPALIVE_INTERVAL_MS,
   IDLE_SWEEP_INTERVAL_MS,
 } from "@/lib/constants"
 import { DelegationProvider } from "@/contexts/delegation-context"
@@ -9981,5 +9982,264 @@ describe("hasPrompted: whether a turn has run on the connection", () => {
     })
     expect(h.store!.getConnection(TAB)!.connectionId).toBe("respawned-conn")
     expect(hasPrompted()).toBe(false)
+  })
+})
+
+describe("a surface never stays on its `connecting` placeholder", () => {
+  /** The detach spy of the `index`-th `stream.attach` call. */
+  function attachDetach(index: number): Mock {
+    const result = h.attach.mock.results[index]
+    if (!result) throw new Error(`no attach call #${index}`)
+    return (result.value as { detach: Mock }).detach
+  }
+
+  async function connectViewer(): Promise<AttachHandlers> {
+    h.acpFindConnectionForConversation.mockResolvedValue({
+      connection_id: "owner-conn",
+      event_seq: 0,
+    })
+    await mountProvider()
+    await act(async () => {
+      await h.actions!.connect(TAB, "claude_code", "/tmp/x", "sess-1", 42)
+    })
+    expect(h.store!.getConnection(TAB)?.status).toBe("connecting")
+    return latestAttachHandlers()
+  }
+
+  it("a snapshot whose read throws still unlocks the surface, and says so once", async () => {
+    const handlers = await connectViewer()
+    const wire = {
+      connection_id: "owner-conn",
+      status: "prompting",
+      external_id: "sess-1",
+      selectors_ready: true,
+      event_seq: 9,
+    } as unknown as LiveSessionSnapshot
+    h.denormalizeSnapshot.mockImplementation(() => {
+      throw new TypeError("wire.active_tool_calls is not iterable")
+    })
+
+    hydrateSnapshot(handlers, wire)
+
+    const conn = h.store!.getConnection(TAB)
+    expect(conn?.status).toBe("prompting")
+    expect(conn?.selectorsReady).toBe(true)
+    expect(conn?.sessionId).toBe("sess-1")
+    expect(conn?.lastAppliedSeq).toBe(9)
+    expect(h.toastWarning).toHaveBeenCalledTimes(1)
+    expect(h.toastWarning.mock.calls[0]?.[0]).toBe("snapshotHydrateFailedTitle")
+    expect(h.recordAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: "acp-snapshot-hydrate-owner-conn",
+        level: "warning",
+        evidence: expect.stringContaining("not iterable"),
+      })
+    )
+
+    // A re-attach fetches the same snapshot: no second notice.
+    hydrateSnapshot(handlers, wire)
+    expect(h.toastWarning).toHaveBeenCalledTimes(1)
+
+    // Live events carry on from there.
+    emitAcpEvent(handlers, {
+      seq: 10,
+      connection_id: "owner-conn",
+      type: "turn_complete",
+      session_id: "sess-1",
+      stop_reason: "end_turn",
+    } as EventEnvelope)
+    expect(h.store!.getConnection(TAB)?.status).toBe("connected")
+  })
+
+  it("a snapshot overtaken by live events still replaces the placeholder status", async () => {
+    const handlers = await connectViewer()
+    // Mid-turn deltas reach the surface first; they carry no status.
+    for (const seq of [1, 2, 3]) {
+      emitAcpEvent(handlers, {
+        seq,
+        connection_id: "owner-conn",
+        type: "content_delta",
+        text: "x",
+      } as EventEnvelope)
+    }
+    h.denormalizeSnapshot.mockReturnValueOnce({
+      ...snapshotBase(),
+      connectionId: "owner-conn",
+      status: "prompting",
+      sessionId: "sess-1",
+      selectorsReady: true,
+      eventSeq: 3,
+    })
+
+    hydrateSnapshot(handlers, {} as unknown as LiveSessionSnapshot)
+
+    const conn = h.store!.getConnection(TAB)
+    expect(conn?.status).toBe("prompting")
+    expect(conn?.sessionId).toBe("sess-1")
+    expect(conn?.selectorsReady).toBe(true)
+  })
+
+  it("a stale snapshot never overrides a status an event set", async () => {
+    const handlers = await connectViewer()
+    emitAcpEvent(handlers, {
+      seq: 4,
+      connection_id: "owner-conn",
+      type: "status_changed",
+      status: "connected",
+    } as EventEnvelope)
+    h.denormalizeSnapshot.mockReturnValueOnce({
+      ...snapshotBase(),
+      connectionId: "owner-conn",
+      status: "prompting",
+      eventSeq: 3,
+    })
+
+    hydrateSnapshot(handlers, {} as unknown as LiveSessionSnapshot)
+
+    expect(h.store!.getConnection(TAB)?.status).toBe("connected")
+  })
+
+  it("a reconnect retires the settled connection's stream, and its late frames change nothing", async () => {
+    h.acpFindConnectionForConversation.mockResolvedValue(null)
+    h.acpConnect.mockResolvedValue("conn-A")
+    await mountProvider()
+    await act(async () => {
+      await h.actions!.connect(TAB, "claude_code", "/tmp/x", "sess-1", 42)
+    })
+    const handlersA = latestAttachHandlers()
+    emitAcpEvent(handlersA, {
+      seq: 1,
+      connection_id: "conn-A",
+      type: "status_changed",
+      status: "connected",
+    } as EventEnvelope)
+    // A ends: its status event lands before its stream closes.
+    emitAcpEvent(handlersA, {
+      seq: 2,
+      connection_id: "conn-A",
+      type: "status_changed",
+      status: "disconnected",
+    } as EventEnvelope)
+
+    h.acpConnect.mockResolvedValue("conn-B")
+    await act(async () => {
+      await h.actions!.connect(TAB, "claude_code", "/tmp/x", "sess-1", 42)
+    })
+    expect(attachDetach(0)).toHaveBeenCalled()
+    const handlersB = latestAttachHandlers()
+    h.denormalizeSnapshot.mockReturnValueOnce({
+      ...snapshotBase(),
+      connectionId: "conn-B",
+      status: "connected",
+      eventSeq: 3,
+    })
+    hydrateSnapshot(handlersB, {} as unknown as LiveSessionSnapshot)
+
+    // A's late frames: an event with a seq far past B's, then its
+    // `connection_gone`. Neither may touch B's entry.
+    emitAcpEvent(handlersA, {
+      seq: 500,
+      connection_id: "conn-A",
+      type: "status_changed",
+      status: "error",
+    } as EventEnvelope)
+    act(() => {
+      handlersA.onDetached("connection_gone")
+    })
+
+    const conn = h.store!.getConnection(TAB)
+    expect(conn?.connectionId).toBe("conn-B")
+    expect(conn?.status).toBe("connected")
+    expect(conn?.lastAppliedSeq).toBe(3)
+
+    // B's own events still apply.
+    emitAcpEvent(handlersB, {
+      seq: 4,
+      connection_id: "conn-B",
+      type: "status_changed",
+      status: "prompting",
+    } as EventEnvelope)
+    expect(h.store!.getConnection(TAB)?.status).toBe("prompting")
+  })
+
+  describe("reconciliation against the backend", () => {
+    async function viewerWithoutSnapshot() {
+      vi.useFakeTimers()
+      h.acpFindConnectionForConversation.mockResolvedValue({
+        connection_id: "owner-conn",
+        event_seq: 0,
+      })
+      render(
+        <AcpConnectionsProvider>
+          <Probe />
+        </AcpConnectionsProvider>
+      )
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      await act(async () => {
+        await h.actions!.connect(TAB, "claude_code", "/tmp/x", "sess-1", 42)
+      })
+      expect(h.store!.getConnection(TAB)?.status).toBe("connecting")
+    }
+
+    async function tick() {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(CONNECTION_KEEPALIVE_INTERVAL_MS)
+      })
+    }
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it("hydrates an entry left on `connecting` from the backend's snapshot", async () => {
+      await viewerWithoutSnapshot()
+      h.acpGetSessionSnapshot.mockResolvedValue({
+        connection_id: "owner-conn",
+        status: "prompting",
+      } as unknown as LiveSessionSnapshot)
+      h.denormalizeSnapshot.mockReturnValue({
+        ...snapshotBase(),
+        connectionId: "owner-conn",
+        status: "prompting",
+        selectorsReady: true,
+        eventSeq: 5,
+      })
+
+      // First sighting only: a connect may legitimately take a while.
+      await tick()
+      expect(h.acpGetSessionSnapshot).not.toHaveBeenCalled()
+      await tick()
+
+      expect(h.acpGetSessionSnapshot).toHaveBeenCalledWith("owner-conn")
+      expect(h.store!.getConnection(TAB)?.status).toBe("prompting")
+      expect(h.store!.getConnection(TAB)?.selectorsReady).toBe(true)
+    })
+
+    it("leaves a connection that is still handshaking alone", async () => {
+      await viewerWithoutSnapshot()
+      h.acpGetSessionSnapshot.mockResolvedValue({
+        connection_id: "owner-conn",
+        status: "connecting",
+      } as unknown as LiveSessionSnapshot)
+
+      await tick()
+      await tick()
+
+      expect(h.acpGetSessionSnapshot).toHaveBeenCalled()
+      expect(h.denormalizeSnapshot).not.toHaveBeenCalled()
+      expect(h.store!.getConnection(TAB)?.status).toBe("connecting")
+    })
+
+    it("settles an entry whose connection the backend no longer has", async () => {
+      await viewerWithoutSnapshot()
+      h.acpGetSessionSnapshot.mockResolvedValue(null)
+
+      await tick()
+      await tick()
+
+      expect(h.store!.getConnection(TAB)?.status).toBe("disconnected")
+    })
   })
 })

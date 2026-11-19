@@ -3487,7 +3487,9 @@
         },
         "configOptionAdjusted": "{agent} hat {option} auf {actual} statt {requested} gesetzt",
         "noticeTitle": "{agent}: {title}",
-        "pluginLoadFailedTitle": "{agent} konnte {count, plural, one {# Plugin} other {# Plugins}} nicht laden"
+        "pluginLoadFailedTitle": "{agent} konnte {count, plural, one {# Plugin} other {# Plugins}} nicht laden",
+        "snapshotHydrateFailedTitle": "Der Sitzungsstatus von {agent} konnte nicht vollständig gelesen werden",
+        "snapshotHydrateFailedDescription": "Er wurde aus dem Grundstatus wiederhergestellt, Sie können weiterarbeiten. Die laufende Antwort erscheint möglicherweise erst vollständig, wenn sie fertig ist."
       },
       "connectionLifecycle": {
         "tasks": {
