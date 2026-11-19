@@ -147,6 +147,23 @@ jobs:
           mkdir -p out
           printf '<!doctype html><html><body></body></html>\n' > out/index.html
 
+      - name: Enlarge swap (Linux desktop, keh4l build)
+        # keh4l build: codeg_lib and its unit tests compile side by side here,
+        # and on the fork's larger crate the two rustc processes peak near
+        # 20 GB, past the runner's 16 GB of RAM plus 4 GB of swap: the runner
+        # was killed mid-compile ("The runner has received a shutdown
+        # signal", exit 143) before any test ran. A 16 GB swap file on the
+        # scratch disk lets the peak page out instead.
+        if: matrix.os == 'ubuntu-22.04' && matrix.mode == 'desktop'
+        run: |
+          sudo swapoff -a
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l 16G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
+
       - name: cargo test
         # Windows desktop test binaries link the Tauri runtime and can fail at
         # process load on GitHub-hosted runners before Rust tests start. Keep
