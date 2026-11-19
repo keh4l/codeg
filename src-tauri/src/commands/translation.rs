@@ -272,7 +272,7 @@ pub async fn save_translation_settings(
     db: State<'_, AppDatabase>,
     settings: TranslationSettingsInput,
 ) -> Result<TranslationSettingsView, AppCommandError> {
-    save_translation_settings_core(&EventEmitter::Tauri(app), &db, settings).await
+    save_translation_settings_core(&EventEmitter::from_app(&app), &db, settings).await
 }
 
 #[cfg(feature = "tauri-runtime")]

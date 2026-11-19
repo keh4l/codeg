@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useRef, useState } from "react"
+import { useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useTranslations } from "next-intl"
 import {
   Check,
@@ -116,8 +116,11 @@ export function AskQuestionCard({
     initialState(questions, initialSelections)
   )
   // Read after an await, where `state` is the render's and may be stale.
+  // Only read in event handlers, so syncing it after commit is early enough.
   const stateRef = useRef(state)
-  stateRef.current = state
+  useLayoutEffect(() => {
+    stateRef.current = state
+  })
 
   // The card in the reader's language: every text it shows, as one group.
   const cardTexts = useMemo(
@@ -804,6 +807,7 @@ export function AskQuestionCard({
                   )
                 })}
               </TabsList>
+              {/* eslint-disable-next-line react-hooks/refs -- renderOptions reaches `stateRef` only through the translate handlers, which read it after an await, never during render */}
               {questions.map((q) => (
                 <TabsContent
                   key={q.id}
@@ -818,6 +822,7 @@ export function AskQuestionCard({
             </Tabs>
           ) : (
             <div className="min-h-0 space-y-2.5 overflow-y-auto pr-1">
+              {/* eslint-disable-next-line react-hooks/refs -- renderOptions reaches `stateRef` only through the translate handlers, which read it after an await, never during render */}
               {questions.map((q) => (
                 <div key={q.id} className="space-y-2.5">
                   {questionHeading(q)}

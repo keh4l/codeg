@@ -28,10 +28,6 @@ import { cn } from "@/lib/utils"
 
 import { buildComposerExtensions } from "./editor-config"
 import {
-  createLineBreakFillExtension,
-  justFilledByLineBreak,
-} from "./line-break-fill"
-import {
   decidePastedContent,
   textToSeededDoc,
   textToSeededInlineContent,
@@ -252,14 +248,6 @@ export interface RichComposerProps {
    * editor rebuild.
    */
   promptSuggestion?: string | null
-  /**
-   * keh4l build: the submit binding, pressed in the empty document, fills it
-   * with `promptSuggestion` the way Tab does, and sends only when pressed again
-   * — so a phone keyboard, which has no Tab, can take the suggestion too. The
-   * host turns it off while something else (an attached image) would make an
-   * empty-text submit meaningful.
-   */
-  submitFillsSuggestion?: boolean
 }
 
 /**
@@ -299,7 +287,6 @@ export const RichComposer = forwardRef<RichComposerHandle, RichComposerProps>(
       translateShortcut,
       onTranslate,
       promptSuggestion,
-      submitFillsSuggestion,
     },
     ref
   ) {
@@ -329,7 +316,6 @@ export const RichComposer = forwardRef<RichComposerHandle, RichComposerProps>(
     const translateShortcutRef = useRef(translateShortcut)
     const onTranslateRef = useRef(onTranslate)
     const promptSuggestionRef = useRef(promptSuggestion)
-    const submitFillsSuggestionRef = useRef(submitFillsSuggestion)
     // The live editor, captured for command access inside editorProps handlers
     // (which are created before `editor` is assigned in this closure).
     const editorInstanceRef = useRef<Editor | null>(null)
@@ -354,7 +340,6 @@ export const RichComposer = forwardRef<RichComposerHandle, RichComposerProps>(
       translateShortcutRef.current = translateShortcut
       onTranslateRef.current = onTranslate
       promptSuggestionRef.current = promptSuggestion
-      submitFillsSuggestionRef.current = submitFillsSuggestion
     })
 
     // ── Unified `@` mention panel state bridge ──
@@ -408,20 +393,6 @@ export const RichComposer = forwardRef<RichComposerHandle, RichComposerProps>(
       []
     )
 
-    // keh4l build: a phone's line-break key, which never reaches handleKeyDown
-    // as the send key, takes the suggestion too (see line-break-fill.ts). The
-    // refs are read when a line break comes in, never during render.
-    const lineBreakFill = useMemo(
-      () =>
-        // eslint-disable-next-line react-hooks/refs
-        createLineBreakFillExtension({
-          getSuggestion: () => promptSuggestionRef.current,
-          isEnabled: () => submitFillsSuggestionRef.current === true,
-          toDoc: (text) => textToSeededDoc(text, known()),
-        }),
-      [known]
-    )
-
     const editor = useEditor({
       // Static export / SSR safety: never render on the server.
       immediatelyRender: false,
@@ -429,13 +400,12 @@ export const RichComposer = forwardRef<RichComposerHandle, RichComposerProps>(
       // it stays inert until `referenceSearch` is set (checked at runtime in the
       // controller). `mentionController` (stable, from useMemo) captures refs
       // but only dereferences them inside event-time callbacks, never during
-      // render — the React Compiler lint can't prove that. Mirrors Tiptap's own
-      // React suggestion pattern (render() → component.ref.onKeyDown).
-      // eslint-disable-next-line react-hooks/refs
+      // render. Mirrors Tiptap's own React suggestion pattern
+      // (render() → component.ref.onKeyDown).
       extensions: buildComposerExtensions({
         placeholder: getPlaceholder,
         mentionController,
-      }).concat(lineBreakFill),
+      }),
       editable: !disabled,
       autofocus: autoFocus ? "end" : false,
       editorProps: {
@@ -563,23 +533,6 @@ export const RichComposer = forwardRef<RichComposerHandle, RichComposerProps>(
             bindings
           )
           if (action === "submit") {
-            // keh4l build: the Enter iOS replays after the key whose line
-            // break just took the suggestion is that same press, not a second
-            // one — it must not send what it filled.
-            if (justFilledByLineBreak(view.state)) return true
-            // keh4l build: an empty document takes the suggestion first, the
-            // same fill as Tab above; the next press sends it.
-            if (submitFillsSuggestionRef.current) {
-              const suggestion = promptSuggestionRef.current?.trim()
-              const ed = editorInstanceRef.current
-              if (suggestion && ed?.isEmpty) {
-                ed.chain()
-                  .setContent(textToSeededDoc(suggestion, known()))
-                  .focus("end")
-                  .run()
-                return true
-              }
-            }
             // Only consume the key once a handler actually runs; otherwise let
             // the editor apply its default (Enter splits the paragraph).
             if (!onSubmitRef.current) return false

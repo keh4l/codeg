@@ -47,14 +47,14 @@
   </tr>
   <tr>
     <td width="50%" valign="top">🔁 <strong>Reiniciar o servidor pela web</strong><br/>Configurações → Sistema ganha “Reiniciar o codeg”: o codeg implantado num servidor reinicia sem entrar no servidor, e a página se reconecta sozinha; restaurar um backup num servidor agora também reinicia para aplicá-lo.</td>
-    <td width="50%" valign="top">⏎ <strong>Enter usa a próxima mensagem sugerida</strong><br/>A mensagem que o agente prevê que você vai mandar em seguida aparece na caixa vazia; no computador, Enter a preenche e outro Enter a envia. No teclado do celular, que não tem a tecla Tab, a tecla de nova linha a preenche.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">⏯️ <strong>Subagentes continuam de onde um erro os parou</strong><br/>Quando um subagente delegado para porque a rede caiu, a cota acabou, o login expirou ou o provedor devolveu um erro, o agente principal pode fazê-lo continuar na sessão original, com o contexto e o trabalho pela metade intactos, em vez de começar do zero numa nova.</td>
-    <td width="50%" valign="top">🧑‍💼 <strong>Os agentes montam seus assistentes @</strong><br/>Diga “adicione um assistente revisor no Codex com raciocínio alto” numa conversa e o agente cria ou altera o assistente @: nome, agente, modelo e instruções permanentes como você disse, e cada opção que você não citou no padrão do agente. Clique em Editar na própria conversa para ajustar.</td>
   </tr>
   <tr>
-    <td colspan="2" valign="top">🔄 <strong>Acompanha o original</strong><br/>O projeto original é mesclado regularmente; o que não está listado aqui funciona como na versão oficial. O Kiro CLI integrado, a primeira coisa que esta versão adicionou, faz parte da versão oficial desde a 0.36.0. Os resumos do raciocínio do Claude Code usam, desde a 0.41.3-1, o interruptor da versão oficial: “Mostrar resumos do raciocínio do Claude” em Configurações → Agentes → Claude Code, desativado por padrão.</td>
+    <td width="50%" valign="top">🧑‍💼 <strong>Os agentes montam seus assistentes @</strong><br/>Diga “adicione um assistente revisor no Codex com raciocínio alto” numa conversa e o agente cria ou altera o assistente @: nome, agente, modelo e instruções permanentes como você disse, e cada opção que você não citou no padrão do agente. Clique em Editar na própria conversa para ajustar.</td>
+    <td width="50%" valign="top"></td>
+  </tr>
+  <tr>
+    <td colspan="2" valign="top">🔄 <strong>Acompanha o original</strong><br/>O projeto original é mesclado regularmente; o que não está listado aqui funciona como na versão oficial. O Kiro CLI integrado, a primeira coisa que esta versão adicionou, faz parte da versão oficial desde a 0.36.0. Os resumos do raciocínio do Claude Code usam, desde a 0.41.3-1, o interruptor da versão oficial: “Mostrar resumos do raciocínio do Claude” em Configurações → Agentes → Claude Code, desativado por padrão. A partir da 0.46.0-1, a próxima mensagem sugerida é preenchida como na versão oficial: Tab no computador e o botão de lâmpada ao lado de Enviar no celular.</td>
   </tr>
 </table>
 
@@ -172,19 +172,6 @@
 - Reinicia do mesmo jeito que uma atualização no local: com Docker ou o supervisor (`--supervise`), o supervisor o inicia de novo após `CODEG_RESTART_DELAY_MS`; rodando sozinho, o processo reinicia no mesmo lugar (systemd e afins continuam vendo o mesmo processo). Um reinício comum não entra no período de teste da atualização nem dispara a reversão automática dela. Não é possível reiniciar enquanto uma atualização está sendo baixada ou instalada.
 - Depois de restaurar um backup num servidor, “Reiniciar agora” no painel de resultado usa o mesmo reinício, então a restauração passa a valer sozinha.
 - Só nas versões de servidor: não aparece no app de desktop nem num navegador conectado ao serviço web integrado de um desktop; como a atualização no local, ainda não em servidores Windows.
-
-</details>
-
-<details>
-<summary><strong>Enter usa a próxima mensagem sugerida</strong>: detalhes</summary>
-<br/>
-
-- Ao fim de um turno, a versão oficial mostra na caixa de mensagem vazia a previsão do agente para a sua próxima mensagem, com "(Tab para usar)". Os teclados na tela de celulares e tablets não têm tecla Tab, então lá a sugestão não pode ser usada.
-- Nesta versão, apertar a tecla de envio (Enter por padrão) com a caixa vazia primeiro preenche a sugestão, com o cursor no fim para você poder editar; apertar de novo envia. Com texto na caixa, Enter envia como sempre. Tab continua funcionando e a dica passa a dizer "(Enter para usar)".
-- No teclado na tela de um celular ou tablet essa tecla é a de nova linha, que ali só começa uma linha nova e nunca envia. Por isso, com a caixa vazia ela preenche a sugestão e a dica diz "(tecla de nova linha para usar)"; depois disso, ou com texto na caixa, ela pula de linha como sempre, e o envio é pelo botão de enviar.
-- Se você trocar Enviar mensagem para outra tecla em Configurações → Atalhos (por exemplo `⌘Enter`), a dica e o preenchimento seguem essa tecla.
-- Quando a caixa só tem imagens anexadas e nenhum texto, Enter continua enviando as imagens e a dica volta a "(Tab para usar)".
-- Um Enter enquanto um método de entrada está compondo só confirma o texto; não preenche a sugestão.
 
 </details>
 

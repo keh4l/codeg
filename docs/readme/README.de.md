@@ -47,14 +47,14 @@
   </tr>
   <tr>
     <td width="50%" valign="top">🔁 <strong>Server aus dem Web neu starten</strong><br/>Einstellungen → Systemeinstellungen bekommt „codeg neu starten“: codeg auf einem Server startet neu, ohne dass man sich am Server anmelden muss, und die Seite verbindet sich von selbst wieder; eine Sicherung, die auf einem Server wiederhergestellt wird, startet jetzt ebenfalls neu, um wirksam zu werden.</td>
-    <td width="50%" valign="top">⏎ <strong>Enter übernimmt die vorgeschlagene nächste Nachricht</strong><br/>Die Nachricht, die der Agent als deine nächste vorhersagt, steht im leeren Eingabefeld; am Computer übernimmt Enter sie, ein weiteres Enter sendet sie. Auf der Handytastatur, die keine Tab-Taste hat, übernimmt sie die Zeilenumbruch-Taste.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">⏯️ <strong>Subagenten machen nach einem Fehler weiter</strong><br/>Bleibt ein delegierter Subagent stehen, weil das Netz weg war, sein Kontingent aufgebraucht ist, seine Anmeldung abgelaufen ist oder der Anbieter einen Fehler gemeldet hat, kann der Hauptagent ihn in seiner ursprünglichen Sitzung weitermachen lassen – mit Kontext und halb fertiger Arbeit, statt in einer neuen Sitzung von vorn anzufangen.</td>
-    <td width="50%" valign="top">🧑‍💼 <strong>Agenten richten @-Assistenten für dich ein</strong><br/>Sag in einer Unterhaltung „leg einen Review-Assistenten mit Codex und hohem Reasoning an“, und der Agent legt den @-Assistenten an oder ändert ihn: Name, Agent, Modell und dauerhafte Anweisungen wie gesagt, jede nicht genannte Option auf dem Standard des Agenten. Mit Bearbeiten direkt in der Unterhaltung passt du ihn an.</td>
   </tr>
   <tr>
-    <td colspan="2" valign="top">🔄 <strong>Nah am Upstream</strong><br/>Upstream wird regelmäßig hineingemergt; was hier nicht steht, funktioniert genau wie in der offiziellen Version. Das eingebaute Kiro CLI, das diese Version als Erstes hinzugefügt hat, ist seit 0.36.0 Teil der offiziellen Version. Die Zusammenfassungen von Claudes Denken nutzen seit 0.41.3-1 den Schalter der offiziellen Version: „Zusammenfassungen von Claudes Denken anzeigen“ unter Einstellungen → Agenten → Claude Code, standardmäßig aus.</td>
+    <td width="50%" valign="top">🧑‍💼 <strong>Agenten richten @-Assistenten für dich ein</strong><br/>Sag in einer Unterhaltung „leg einen Review-Assistenten mit Codex und hohem Reasoning an“, und der Agent legt den @-Assistenten an oder ändert ihn: Name, Agent, Modell und dauerhafte Anweisungen wie gesagt, jede nicht genannte Option auf dem Standard des Agenten. Mit Bearbeiten direkt in der Unterhaltung passt du ihn an.</td>
+    <td width="50%" valign="top"></td>
+  </tr>
+  <tr>
+    <td colspan="2" valign="top">🔄 <strong>Nah am Upstream</strong><br/>Upstream wird regelmäßig hineingemergt; was hier nicht steht, funktioniert genau wie in der offiziellen Version. Das eingebaute Kiro CLI, das diese Version als Erstes hinzugefügt hat, ist seit 0.36.0 Teil der offiziellen Version. Die Zusammenfassungen von Claudes Denken nutzen seit 0.41.3-1 den Schalter der offiziellen Version: „Zusammenfassungen von Claudes Denken anzeigen“ unter Einstellungen → Agenten → Claude Code, standardmäßig aus. Seit 0.46.0-1 wird die vorgeschlagene nächste Nachricht wie in der offiziellen Version übernommen: am Computer mit Tab, am Handy mit der Glühbirnen-Schaltfläche neben „Senden“.</td>
   </tr>
 </table>
 
@@ -172,19 +172,6 @@
 - Der Neustart läuft wie bei einem In-Place-Update: Unter Docker oder dem Supervisor (`--supervise`) startet der Supervisor ihn nach `CODEG_RESTART_DELAY_MS` neu; läuft er für sich allein, startet sich der Prozess an Ort und Stelle neu (systemd und Ähnliche sehen weiterhin denselben Prozess). Ein normaler Neustart kommt nicht in die Probezeit des Updates und löst nie dessen automatisches Zurücksetzen aus. Während ein Update heruntergeladen oder installiert wird, ist kein Neustart möglich.
 - Nach dem Wiederherstellen einer Sicherung auf einem Server nutzt „Jetzt neu starten“ im Ergebnisbereich denselben Neustart, sodass die Wiederherstellung von selbst wirksam wird.
 - Nur in Server-Versionen: nicht in der Desktop-App und nicht in einem Browser, der mit dem eingebauten Webdienst einer Desktop-App verbunden ist; wie das In-Place-Update noch nicht auf Windows-Servern.
-
-</details>
-
-<details>
-<summary><strong>Enter übernimmt die vorgeschlagene nächste Nachricht</strong> – Details</summary>
-<br/>
-
-- Nach einer Runde zeigt die offizielle Version die vom Agenten vorhergesagte nächste Nachricht im leeren Eingabefeld, mit „(Tab zum Übernehmen)“. Bildschirmtastaturen auf Handys und Tablets haben keine Tab-Taste, dort lässt sich der Vorschlag nicht nutzen.
-- In dieser Version übernimmt die Sendetaste (standardmäßig Enter) im leeren Eingabefeld zuerst den Vorschlag, mit dem Cursor am Ende, sodass du ihn noch ändern kannst; ein zweiter Druck sendet. Steht schon Text im Feld, sendet Enter wie gewohnt. Tab funktioniert weiterhin, und der Hinweis lautet nun „(Enter zum Übernehmen)“.
-- Auf der Bildschirmtastatur von Handy oder Tablet ist diese Taste die Zeilenumbruch-Taste, die dort nur eine neue Zeile beginnt und nie sendet. Im leeren Feld übernimmt sie deshalb den Vorschlag, und der Hinweis lautet „(Zeilenumbruch-Taste zum Übernehmen)“; danach oder mit Text im Feld beginnt sie wie gewohnt eine neue Zeile, gesendet wird mit dem Senden-Button.
-- Legst du „Nachricht senden“ unter Einstellungen → Kurzbefehle auf eine andere Taste (etwa `⌘Enter`), folgen Hinweis und Übernahme dieser Taste.
-- Enthält das Feld nur angehängte Bilder und keinen Text, sendet Enter wie bisher die Bilder, und der Hinweis lautet wieder „(Tab zum Übernehmen)“.
-- Ein Enter während einer laufenden Eingabemethoden-Komposition bestätigt nur den Text und übernimmt den Vorschlag nicht.
 
 </details>
 

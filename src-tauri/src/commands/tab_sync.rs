@@ -78,7 +78,7 @@ pub async fn set_tab_sync_settings(
     db: tauri::State<'_, crate::db::AppDatabase>,
     settings: TabSyncSettings,
 ) -> Result<TabSyncSettings, AppCommandError> {
-    set_tab_sync_settings_core(&db.conn, &EventEmitter::Tauri(app), settings).await
+    set_tab_sync_settings_core(&db.conn, &EventEmitter::from_app(&app), settings).await
 }
 
 #[cfg(test)]

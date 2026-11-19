@@ -158,6 +158,7 @@ function modelFor(
 /** A full load, as the settings nav does on Windows, keeping the query that
  *  names a remote workspace. */
 function openShortcutSettings() {
+  // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- a full load on purpose, like the settings nav on Windows
   window.location.assign(`/settings/shortcuts${window.location.search}`)
 }
 

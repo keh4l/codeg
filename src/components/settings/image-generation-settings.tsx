@@ -120,6 +120,7 @@ export function ConfigureImageServicesLink({ label }: { label: string }) {
       type="button"
       className="text-foreground underline underline-offset-2"
       onClick={() =>
+        // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- a full load on purpose: this link also renders where no Next router is mounted
         window.location.assign(
           `/settings/image-generation${window.location.search}`
         )

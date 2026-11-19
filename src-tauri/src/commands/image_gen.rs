@@ -287,7 +287,7 @@ pub async fn save_image_gen_settings(
     db: State<'_, AppDatabase>,
     settings: ImageGenSettingsInput,
 ) -> Result<ImageGenSettingsView, AppCommandError> {
-    save_image_gen_settings_core(&EventEmitter::Tauri(app), &db, settings).await
+    save_image_gen_settings_core(&EventEmitter::from_app(&app), &db, settings).await
 }
 
 #[cfg(feature = "tauri-runtime")]
