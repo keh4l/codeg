@@ -70,4 +70,4 @@ gh pr view <n> -R spacering-net/codeg --json state,mergeable,mergeStateStatus,re
 
 ## 上游合并之后
 
-功能会随 `codeg-fork-sync` 回到 `keh4l`。若上游是 squash 合并或改过再合，同步时这些文件会冲突，**以上游版本为准**；fork 发布过的迁移文件不要删。分支可以留着，或在用户同意后删除远端分支 `git push origin --delete feat/<name>`。
+功能会随 `codeg-fork-sync` 回到 `keh4l`。若上游是 squash 合并或改过再合，同步时这些文件会冲突，**以上游版本为准**；fork 发布过的迁移文件不要删。PR 合并后删掉 fork 上的功能分支：先确认 `git rev-list --count keh4l..origin/feat/<name>` 是 0（改动都已在 `keh4l` 里），再 `git push origin --delete feat/<name>`。fork 远端只留 `keh4l` 和 `main`（2026-11-19 用户定的）；本地的 `upstream` 也只拉 `main`（`remote.upstream.fetch` 是 `+refs/heads/main:refs/remotes/upstream/main`），新 clone 要自己设一次，否则会多出上游的几十个分支。
