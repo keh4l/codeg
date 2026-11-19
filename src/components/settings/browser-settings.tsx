@@ -119,6 +119,11 @@ import type {
   WireHostRule,
 } from "@/lib/browser/types"
 import { isDesktop } from "@/lib/platform"
+import {
+  SETTINGS_FORM_WIDTH,
+  SettingsPageHeader,
+} from "@/components/shared/settings-section"
+import { cn } from "@/lib/utils"
 
 // Literal message keys per id — next-intl only resolves literal keys, so the
 // lookup tables keep the rows data-driven without losing key checking.
@@ -631,13 +636,11 @@ export function BrowserSettings() {
 
   return (
     <ScrollArea className="h-full">
-      <div className="w-full space-y-4 p-3 md:p-4">
-        <section className="space-y-1">
-          <h1 className="text-sm font-semibold">{t("title")}</h1>
-          <p className="text-xs text-muted-foreground">
-            {desktop ? t("description") : t("descriptionWeb")}
-          </p>
-        </section>
+      <div className={cn(SETTINGS_FORM_WIDTH, "space-y-4 p-3 md:p-4")}>
+        <SettingsPageHeader
+          title={t("title")}
+          description={desktop ? t("description") : t("descriptionWeb")}
+        />
 
         {policy && !policy.enabled ? (
           <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-foreground">

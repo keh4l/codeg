@@ -51,6 +51,7 @@ import {
 } from "@/lib/custom-style"
 import { copyTextToClipboard, cn } from "@/lib/utils"
 import { CustomCssDialog } from "./custom-css-dialog"
+import { useSettingsSurface } from "@/components/shared/settings-section"
 
 const RADIUS_RANGE = { min: 0, max: 1.5, step: 0.025 }
 const DEFAULT_RADIUS_REM = 0.625
@@ -156,6 +157,7 @@ function TokenField({
 
 export function CustomStyleSection() {
   const t = useTranslations("AppearanceSettings")
+  const surface = useSettingsSurface()
   const {
     isDarkMode,
     customTheme,
@@ -291,7 +293,7 @@ export function CustomStyleSection() {
     <Collapsible
       open={expanded}
       onOpenChange={setExpanded}
-      className="overflow-hidden rounded-xl border bg-card"
+      className={cn("overflow-hidden", surface)}
       asChild
     >
       <section>

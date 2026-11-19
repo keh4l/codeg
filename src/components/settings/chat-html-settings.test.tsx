@@ -23,7 +23,7 @@ describe("聊天 HTML 设置联动", () => {
       </NextIntlClientProvider>
     )
     const toggle = screen.getByRole("switch", {
-      name: "Enable rich HTML rendering",
+      name: "Chat HTML rendering",
     })
     expect(toggle).not.toBeChecked()
     expect(screen.queryByTitle("HTML preview")).toBeNull()

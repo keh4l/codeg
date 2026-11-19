@@ -45,6 +45,13 @@
     "generateToken": "產生權杖"
   },
   "SettingsShell": {
+    "groups": {
+      "basics": "基礎",
+      "agents": "智慧體",
+      "content": "內容",
+      "control": "操作",
+      "upkeep": "連線與維護"
+    },
     "title": "設定",
     "preferences": "偏好設定",
     "nav": {
@@ -70,6 +77,12 @@
     }
   },
   "AppearanceSettings": {
+    "groups": {
+      "theme": "主題",
+      "display": "視窗與字型",
+      "conversation": "對話區域"
+    },
+    "pageDescription": "主題、配色、縮放、字型，以及對話區域的顯示方式。",
     "sectionTitle": "主題外觀",
     "sectionDescription": "選擇淺色、深色或跟隨系統主題，設定會自動儲存。",
     "themeMode": "主題模式",
@@ -252,6 +265,10 @@
     }
   },
   "SystemSettings": {
+    "groups": {
+      "app": "應用程式",
+      "networkAndLanguage": "網路與語言"
+    },
     "loading": "載入中...",
     "sectionTitle": "系統管理",
     "sectionDescription": "管理應用升級、開機自動啟動、網路代理與語言偏好。",
@@ -1961,6 +1978,11 @@
     "actionFailed": "操作失敗：{message}"
   },
   "GeneralSettings": {
+    "groups": {
+      "terminal": "終端機",
+      "tabsAndInput": "分頁與輸入",
+      "windowAndAlerts": "視窗與提醒"
+    },
     "loading": "載入中...",
     "sectionTitle": "一般",
     "sectionDescription": "集中管理預設終端機、渲染加速、@ 提及面板、關閉行為、通知與提示音等通用偏好。",

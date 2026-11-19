@@ -32,7 +32,6 @@ import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { AppToaster } from "@/components/ui/app-toaster"
-import { cn } from "@/lib/utils"
 import {
   detectEnvironment,
   type TransportEnvironment,
@@ -146,6 +145,48 @@ const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
   },
 ]
 
+type SettingsNavGroup = "basics" | "agents" | "content" | "control" | "upkeep"
+
+/**
+ * Which heading each page files under in the nav. Groups are runs of the
+ * existing order, so grouping changes nothing about where a page sits.
+ */
+const SETTINGS_NAV_GROUP: Record<
+  SettingsNavItem["labelKey"],
+  SettingsNavGroup
+> = {
+  appearance: "basics",
+  general: "basics",
+  collaboration: "agents",
+  agents: "agents",
+  model_providers: "agents",
+  translation: "content",
+  image_generation: "content",
+  quick_messages: "content",
+  browser: "control",
+  computer_use: "control",
+  shortcuts: "control",
+  version_control: "upkeep",
+  chat_channels: "upkeep",
+  web_service: "upkeep",
+  logs: "upkeep",
+  system: "upkeep",
+}
+
+/** Consecutive nav items that share a group, in nav order. */
+export function groupSettingsNavItems(
+  items: SettingsNavItem[]
+): { group: SettingsNavGroup; items: SettingsNavItem[] }[] {
+  const groups: { group: SettingsNavGroup; items: SettingsNavItem[] }[] = []
+  for (const item of items) {
+    const group = SETTINGS_NAV_GROUP[item.labelKey]
+    const last = groups[groups.length - 1]
+    if (last?.group === group) last.items.push(item)
+    else groups.push({ group, items: [item] })
+  }
+  return groups
+}
+
 interface SettingsShellProps {
   children: ReactNode
 }
@@ -225,38 +266,43 @@ export function SettingsShell({ children }: SettingsShellProps) {
   const filteredNavItems = settingsNavItemsFor(detectEnvironment())
 
   const navContent = (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="px-2 pb-2 text-2xs font-medium text-muted-foreground">
-        {t("preferences")}
-      </div>
-      <ScrollArea className="min-h-0 flex-1">
-        <nav className="space-y-1">
-          {filteredNavItems.map((item) => {
-            const Icon = item.icon
-            const translationKey = `nav.${item.labelKey}` as const
-            const active =
-              normalizedPathname === item.href ||
-              normalizedPathname.startsWith(`${item.href}/`)
-            return (
-              <Button
-                key={item.href}
-                variant={active ? "secondary" : "ghost"}
-                size="sm"
-                className={cn("w-full justify-start px-2")}
-                type="button"
-                onClick={() => navigateTo(item.href)}
-                aria-current={active ? "page" : undefined}
-              >
-                <span className="inline-flex items-center gap-1">
-                  <Icon className="h-3.5 w-3.5" />
-                  {t(translationKey)}
-                </span>
-              </Button>
-            )
-          })}
-        </nav>
-      </ScrollArea>
-    </div>
+    <ScrollArea className="min-h-0 flex-1">
+      {/* Rows a notch shorter than a plain `sm` button: with five headings
+          added, all sixteen pages still fit the 700px-tall desktop window
+          without scrolling the nav, as they did before the grouping. */}
+      <nav className="space-y-3 pb-3">
+        {groupSettingsNavItems(filteredNavItems).map(({ group, items }) => (
+          <div key={group} className="space-y-0.5">
+            <div className="px-2 pb-0.5 text-2xs font-medium text-muted-foreground">
+              {t(`groups.${group}`)}
+            </div>
+            {items.map((item) => {
+              const Icon = item.icon
+              const translationKey = `nav.${item.labelKey}` as const
+              const active =
+                normalizedPathname === item.href ||
+                normalizedPathname.startsWith(`${item.href}/`)
+              return (
+                <Button
+                  key={item.href}
+                  variant={active ? "secondary" : "ghost"}
+                  size="sm"
+                  className="h-7 w-full justify-start px-2"
+                  type="button"
+                  onClick={() => navigateTo(item.href)}
+                  aria-current={active ? "page" : undefined}
+                >
+                  <span className="inline-flex items-center gap-1">
+                    <Icon className="h-3.5 w-3.5" />
+                    {t(translationKey)}
+                  </span>
+                </Button>
+              )
+            })}
+          </div>
+        ))}
+      </nav>
+    </ScrollArea>
   )
 
   return (

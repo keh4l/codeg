@@ -45,6 +45,13 @@
     "generateToken": "إنشاء رمز"
   },
   "SettingsShell": {
+    "groups": {
+      "basics": "الأساسيات",
+      "agents": "الوكلاء",
+      "content": "المحتوى",
+      "control": "التحكم",
+      "upkeep": "الاتصالات والصيانة"
+    },
     "title": "الإعدادات",
     "preferences": "التفضيلات",
     "nav": {
@@ -70,6 +77,12 @@
     }
   },
   "AppearanceSettings": {
+    "groups": {
+      "theme": "السمة",
+      "display": "النافذة والخطوط",
+      "conversation": "منطقة المحادثة"
+    },
+    "pageDescription": "السمة والألوان والتكبير والخطوط وطريقة عرض منطقة المحادثة.",
     "sectionTitle": "مظهر السمة",
     "sectionDescription": "اختر الفاتح أو الداكن أو اتباع النظام. يتم حفظ الإعدادات تلقائيًا.",
     "themeMode": "وضع السمة",
@@ -252,6 +265,10 @@
     }
   },
   "SystemSettings": {
+    "groups": {
+      "app": "التطبيق",
+      "networkAndLanguage": "الشبكة واللغة"
+    },
     "loading": "جارٍ التحميل...",
     "sectionTitle": "إدارة النظام",
     "sectionDescription": "إدارة تحديثات التطبيق والتشغيل عند تسجيل الدخول ووكيل الشبكة وتفضيلات اللغة.",
@@ -1961,6 +1978,11 @@
     "actionFailed": "فشل تنفيذ الإجراء: {message}"
   },
   "GeneralSettings": {
+    "groups": {
+      "terminal": "الطرفية",
+      "tabsAndInput": "علامات التبويب والإدخال",
+      "windowAndAlerts": "النافذة والتنبيهات"
+    },
     "loading": "جارٍ التحميل...",
     "sectionTitle": "عام",
     "sectionDescription": "تفضيلات موحّدة للطرفية الافتراضية وتسريع العرض ولوحة الإشارات @ وسلوك إغلاق النافذة والإشعارات والأصوات.",

@@ -25,19 +25,22 @@ import { useTranslations } from "next-intl"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { DelegationSettingsSection } from "@/components/settings/delegation-settings"
 import { AgentToolsSettingsSection } from "@/components/settings/agent-tools-settings"
+import {
+  SETTINGS_FORM_WIDTH,
+  SettingsPageHeader,
+} from "@/components/shared/settings-section"
+import { cn } from "@/lib/utils"
 
 export function CollaborationSettings() {
   const t = useTranslations("CollaborationSettings")
 
   return (
     <ScrollArea className="h-full">
-      <div className="w-full space-y-4 p-3 md:p-4">
-        <section className="space-y-1">
-          <h1 className="text-sm font-semibold">{t("sectionTitle")}</h1>
-          <p className="text-xs text-muted-foreground">
-            {t("sectionDescription")}
-          </p>
-        </section>
+      <div className={cn(SETTINGS_FORM_WIDTH, "space-y-4 p-3 md:p-4")}>
+        <SettingsPageHeader
+          title={t("sectionTitle")}
+          description={t("sectionDescription")}
+        />
 
         <DelegationSettingsSection />
 

@@ -28,6 +28,7 @@ import {
   type FontSize,
 } from "@/lib/font-presets"
 import { cn } from "@/lib/utils"
+import { SettingsSection } from "@/components/shared/settings-section"
 
 // 字体样张（非 UI 文案，故不做 i18n，统一用拉丁字符展示字形差异）
 const UI_PREVIEW = "The quick brown fox jumps over the lazy dog — 0123456789"
@@ -200,16 +201,12 @@ export function FontSettingsSection() {
   const fieldLabel = "text-xs font-medium text-muted-foreground"
 
   return (
-    <section className="rounded-xl border bg-card p-4 space-y-4">
-      <div className="flex items-center gap-2">
-        <Type className="h-4 w-4 text-muted-foreground" />
-        <h2 className="text-sm font-semibold">{t("fonts.sectionTitle")}</h2>
-      </div>
-
-      <p className="text-xs text-muted-foreground leading-5">
-        {t("fonts.sectionDescription")}
-      </p>
-
+    <SettingsSection
+      icon={Type}
+      title={t("fonts.sectionTitle")}
+      description={t("fonts.sectionDescription")}
+      className="space-y-4"
+    >
       {/* ===== 界面字体 ===== */}
       <div className="space-y-2">
         <label className={fieldLabel}>{t("fonts.interface")}</label>
@@ -327,6 +324,6 @@ export function FontSettingsSection() {
           </pre>
         </div>
       </div>
-    </section>
+    </SettingsSection>
   )
 }

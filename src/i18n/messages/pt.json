@@ -45,6 +45,13 @@
     "generateToken": "Gerar token"
   },
   "SettingsShell": {
+    "groups": {
+      "basics": "Básico",
+      "agents": "Agentes",
+      "content": "Conteúdo",
+      "control": "Controle",
+      "upkeep": "Conexões e manutenção"
+    },
     "title": "Configurações",
     "preferences": "Preferências",
     "nav": {
@@ -70,6 +77,12 @@
     }
   },
   "AppearanceSettings": {
+    "groups": {
+      "theme": "Tema",
+      "display": "Janela e fontes",
+      "conversation": "Área de conversa"
+    },
+    "pageDescription": "Tema, cores, zoom, fontes e a aparência da área de conversa.",
     "sectionTitle": "Aparência do tema",
     "sectionDescription": "Escolha claro, escuro ou seguir o sistema. As configurações são salvas automaticamente.",
     "themeMode": "Modo de tema",
@@ -252,6 +265,10 @@
     }
   },
   "SystemSettings": {
+    "groups": {
+      "app": "Aplicativo",
+      "networkAndLanguage": "Rede e idioma"
+    },
     "loading": "Carregando...",
     "sectionTitle": "Gerenciamento do sistema",
     "sectionDescription": "Gerencie atualizações do app, o início automático ao fazer login, o proxy de rede e as preferências de idioma.",
@@ -1961,6 +1978,11 @@
     "actionFailed": "Falha na ação: {message}"
   },
   "GeneralSettings": {
+    "groups": {
+      "terminal": "Terminal",
+      "tabsAndInput": "Abas e entrada",
+      "windowAndAlerts": "Janela e alertas"
+    },
     "loading": "Carregando...",
     "sectionTitle": "Geral",
     "sectionDescription": "Preferências centralizadas para o terminal padrão, aceleração de renderização, painel de menções @, comportamento ao fechar a janela, notificações e sons.",

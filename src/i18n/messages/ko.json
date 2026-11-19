@@ -45,6 +45,13 @@
     "generateToken": "토큰 생성"
   },
   "SettingsShell": {
+    "groups": {
+      "basics": "기본",
+      "agents": "에이전트",
+      "content": "콘텐츠",
+      "control": "조작",
+      "upkeep": "연결 및 관리"
+    },
     "title": "설정",
     "preferences": "환경설정",
     "nav": {
@@ -70,6 +77,12 @@
     }
   },
   "AppearanceSettings": {
+    "groups": {
+      "theme": "테마",
+      "display": "창 및 글꼴",
+      "conversation": "대화 영역"
+    },
+    "pageDescription": "테마, 색상, 확대/축소, 글꼴, 대화 영역의 표시 방식을 설정합니다.",
     "sectionTitle": "테마 모양",
     "sectionDescription": "라이트, 다크 또는 시스템 설정을 선택할 수 있습니다. 설정은 자동으로 저장됩니다.",
     "themeMode": "테마 모드",
@@ -252,6 +265,10 @@
     }
   },
   "SystemSettings": {
+    "groups": {
+      "app": "앱",
+      "networkAndLanguage": "네트워크 및 언어"
+    },
     "loading": "로딩 중...",
     "sectionTitle": "시스템 관리",
     "sectionDescription": "앱 업데이트, 로그인 시 실행, 네트워크 프록시, 언어 설정을 관리합니다.",
@@ -1961,6 +1978,11 @@
     "actionFailed": "작업 실패: {message}"
   },
   "GeneralSettings": {
+    "groups": {
+      "terminal": "터미널",
+      "tabsAndInput": "탭 및 입력",
+      "windowAndAlerts": "창 및 알림"
+    },
     "loading": "로딩 중...",
     "sectionTitle": "일반",
     "sectionDescription": "기본 터미널, 렌더링 가속, @ 멘션 패널, 창을 닫을 때의 동작, 알림과 알림음 등 공용 환경설정을 한곳에서 관리합니다.",

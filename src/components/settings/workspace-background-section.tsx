@@ -27,6 +27,7 @@ import {
   type WorkspaceBgFillMode,
 } from "@/lib/workspace-background"
 import { cn } from "@/lib/utils"
+import { SettingsSection } from "@/components/shared/settings-section"
 
 export function WorkspaceBackgroundSection() {
   const t = useTranslations("AppearanceSettings")
@@ -95,29 +96,20 @@ export function WorkspaceBackgroundSection() {
   const pct = (v: number) => `${Math.round(v * 100)}%`
 
   return (
-    <section className="rounded-xl border bg-card p-4 space-y-4">
-      <div className="flex items-center gap-2">
-        <ImageIcon className="h-4 w-4 text-muted-foreground" />
-        <h2 className="text-sm font-semibold">
-          {t("workspaceBackground.sectionTitle")}
-        </h2>
-      </div>
-
-      <p className="text-xs text-muted-foreground leading-5">
-        {t("workspaceBackground.sectionDescription")}
-      </p>
-
-      {/* ===== 启用开关 ===== */}
-      <label className="flex items-center gap-2">
+    <SettingsSection
+      icon={ImageIcon}
+      title={t("workspaceBackground.sectionTitle")}
+      description={t("workspaceBackground.sectionDescription")}
+      htmlFor="workspace-background-enabled"
+      className="space-y-4"
+      control={
         <Switch
+          id="workspace-background-enabled"
           checked={workspaceBgEnabled}
           onCheckedChange={setWorkspaceBgEnabled}
         />
-        <span className="text-xs text-muted-foreground">
-          {t("workspaceBackground.enable")}
-        </span>
-      </label>
-
+      }
+    >
       {/* ===== 选图 + 预览 + 移除 ===== */}
       <div className="space-y-2">
         <label className={fieldLabel}>{t("workspaceBackground.image")}</label>
@@ -292,6 +284,6 @@ export function WorkspaceBackgroundSection() {
         appliedSourceUrl={workspaceBgSourceUrl}
         onApply={downloadMarketWorkspaceBackground}
       />
-    </section>
+    </SettingsSection>
   )
 }

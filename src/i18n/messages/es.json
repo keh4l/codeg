@@ -45,6 +45,13 @@
     "generateToken": "Generar token"
   },
   "SettingsShell": {
+    "groups": {
+      "basics": "Básico",
+      "agents": "Agentes",
+      "content": "Contenido",
+      "control": "Control",
+      "upkeep": "Conexiones y mantenimiento"
+    },
     "title": "Configuración",
     "preferences": "Preferencias",
     "nav": {
@@ -70,6 +77,12 @@
     }
   },
   "AppearanceSettings": {
+    "groups": {
+      "theme": "Tema",
+      "display": "Ventana y fuentes",
+      "conversation": "Área de conversación"
+    },
+    "pageDescription": "Tema, colores, zoom, fuentes y el aspecto del área de conversación.",
     "sectionTitle": "Apariencia del tema",
     "sectionDescription": "Elige claro, oscuro o seguir el sistema. La configuración se guarda automáticamente.",
     "themeMode": "Modo de tema",
@@ -252,6 +265,10 @@
     }
   },
   "SystemSettings": {
+    "groups": {
+      "app": "Aplicación",
+      "networkAndLanguage": "Red e idioma"
+    },
     "loading": "Cargando...",
     "sectionTitle": "Administración del sistema",
     "sectionDescription": "Administra las actualizaciones de la app, el inicio al iniciar sesión, el proxy de red y las preferencias de idioma.",
@@ -1961,6 +1978,11 @@
     "actionFailed": "La acción falló: {message}"
   },
   "GeneralSettings": {
+    "groups": {
+      "terminal": "Terminal",
+      "tabsAndInput": "Pestañas y entrada",
+      "windowAndAlerts": "Ventana y avisos"
+    },
     "loading": "Cargando...",
     "sectionTitle": "General",
     "sectionDescription": "Preferencias centralizadas para el terminal predeterminado, la aceleración de renderizado, el panel de menciones @, el comportamiento al cerrar la ventana, las notificaciones y los sonidos.",

@@ -45,6 +45,13 @@
     "generateToken": "生成令牌"
   },
   "SettingsShell": {
+    "groups": {
+      "basics": "基础",
+      "agents": "智能体",
+      "content": "内容",
+      "control": "操作",
+      "upkeep": "连接与维护"
+    },
     "title": "设置",
     "preferences": "偏好设置",
     "nav": {
@@ -70,6 +77,12 @@
     }
   },
   "AppearanceSettings": {
+    "groups": {
+      "theme": "主题",
+      "display": "窗口与字体",
+      "conversation": "会话区域"
+    },
+    "pageDescription": "主题、配色、缩放、字体，以及会话区域的显示方式。",
     "sectionTitle": "主题外观",
     "sectionDescription": "选择浅色、深色或跟随系统主题，设置会自动保存。",
     "themeMode": "主题模式",
@@ -252,6 +265,10 @@
     }
   },
   "SystemSettings": {
+    "groups": {
+      "app": "应用",
+      "networkAndLanguage": "网络与语言"
+    },
     "loading": "加载中...",
     "sectionTitle": "系统管理",
     "sectionDescription": "管理应用升级、开机自启、网络代理与语言偏好。",
@@ -1961,6 +1978,11 @@
     "actionFailed": "操作失败：{message}"
   },
   "GeneralSettings": {
+    "groups": {
+      "terminal": "终端",
+      "tabsAndInput": "标签页与输入",
+      "windowAndAlerts": "窗口与提醒"
+    },
     "loading": "加载中...",
     "sectionTitle": "常规",
     "sectionDescription": "集中管理默认终端、渲染加速、@ 提及面板、关闭行为、通知与提示音等通用偏好。",

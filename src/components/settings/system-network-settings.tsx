@@ -23,7 +23,13 @@ import { useAppI18n } from "@/components/i18n-provider"
 import { CliAccessSettings } from "@/components/settings/cli-access-settings"
 import { DataSyncSettings } from "@/components/settings/data-sync-settings"
 import { ReleaseNotes } from "@/components/settings/release-notes"
-import { SettingsSection } from "@/components/shared/settings-section"
+import {
+  SETTINGS_FORM_WIDTH,
+  SettingsError,
+  SettingsGroup,
+  SettingsPageHeader,
+  SettingsSection,
+} from "@/components/shared/settings-section"
 import { ServerRestartCard } from "@/components/settings/server-restart-card"
 import {
   AlertDialog,
@@ -60,6 +66,7 @@ import { describeAppUpdateError, usesTauriUpdater } from "@/lib/updater"
 import { useAppUpdate } from "@/components/providers/update-provider"
 import { APP_LOCALES } from "@/lib/i18n"
 import { toErrorMessage } from "@/lib/app-error"
+import { cn } from "@/lib/utils"
 import type { AppCommandError } from "@/lib/types"
 
 function GithubMarkIcon({ className }: { className?: string }) {
@@ -455,10 +462,11 @@ export function SystemNetworkSettings() {
 
   return (
     <ScrollArea className="h-full">
-      <div className="w-full space-y-4 p-3 md:p-4">
-        <section className="space-y-1">
-          <div className="flex items-center justify-between">
-            <h1 className="text-sm font-semibold">{t("sectionTitle")}</h1>
+      <div className={cn(SETTINGS_FORM_WIDTH, "space-y-4 p-3 md:p-4")}>
+        <SettingsPageHeader
+          title={t("sectionTitle")}
+          description={t("sectionDescription")}
+          actions={
             <Button
               variant="ghost"
               className="size-5 rounded-full"
@@ -466,400 +474,397 @@ export function SystemNetworkSettings() {
             >
               <GithubMarkIcon className="size-5" />
             </Button>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            {t("sectionDescription")}
-          </p>
-        </section>
+          }
+        />
 
-        <section className="rounded-xl border bg-card p-4 space-y-4">
-          <div className="flex items-center gap-2">
-            {checkingUpdate ? (
-              <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin" />
-            ) : availableUpdate ? (
-              <ArrowUpCircle className="h-4 w-4 text-muted-foreground" />
-            ) : lastCheckedAt ? (
-              <CheckCircle2 className="h-4 w-4 text-green-500" />
-            ) : (
-              <RefreshCw className="h-4 w-4 text-muted-foreground" />
-            )}
-            <h2 className="text-sm font-semibold">{t("versionTitle")}</h2>
-          </div>
-
-          <p className="text-xs text-muted-foreground leading-5">
-            {t("updateDescription")}
-          </p>
-
-          <div className="rounded-md border bg-muted/20 px-3 py-3 text-xs space-y-2">
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-muted-foreground">
-                {t("currentVersion")}：
-                {currentVersion ? `v${currentVersion}` : "-"}
-              </p>
-              {checkingUpdate ? (
-                <Button
-                  key="checking-update"
-                  size="sm"
-                  disabled
-                  aria-busy="true"
-                  className="w-[9.5rem] justify-center transition-none"
-                >
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  {t("checking")}
-                </Button>
-              ) : updateReady ? (
-                // Download finished in the background — relaunch into it
-                // (IDE-style "Restart to update").
-                <Button
-                  size="sm"
-                  onClick={() => void restart()}
-                  disabled={isBusy}
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  {t("restartToUpdate")}
-                </Button>
-              ) : isBusy ? (
-                <Button
-                  size="sm"
-                  disabled
-                  aria-busy="true"
-                  className="w-[9.5rem] justify-center transition-none"
-                >
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  {t("updating")}
-                </Button>
-              ) : availableUpdate ? (
-                // In-place upgrade only when this client can actually drive it:
-                // desktop (Tauri plugin) or a server speaking the live-progress
-                // protocol. An older remote server falls back to "view release".
-                canInstallInPlace ? (
-                  <Button size="sm" onClick={() => void startUpdate()}>
-                    <ArrowUpCircle className="h-3.5 w-3.5" />
-                    {t("upgradeTo", { version: availableUpdate.version })}
-                  </Button>
+        <SettingsGroup label={t("groups.app")}>
+          {/* The status glyph goes in the title rather than `icon`: it spins
+            while checking and turns green once up to date. */}
+          <SettingsSection
+            title={
+              <span className="flex items-center gap-2">
+                {checkingUpdate ? (
+                  <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin" />
+                ) : availableUpdate ? (
+                  <ArrowUpCircle className="h-4 w-4 text-muted-foreground" />
+                ) : lastCheckedAt ? (
+                  <CheckCircle2 className="h-4 w-4 text-green-500" />
                 ) : (
+                  <RefreshCw className="h-4 w-4 text-muted-foreground" />
+                )}
+                {t("versionTitle")}
+              </span>
+            }
+            description={t("updateDescription")}
+            className="space-y-4"
+          >
+            <div className="rounded-md border bg-muted/20 px-3 py-3 text-xs space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-muted-foreground">
+                  {t("currentVersion")}：
+                  {currentVersion ? `v${currentVersion}` : "-"}
+                </p>
+                {checkingUpdate ? (
+                  <Button
+                    key="checking-update"
+                    size="sm"
+                    disabled
+                    aria-busy="true"
+                    className="w-[9.5rem] justify-center transition-none"
+                  >
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    {t("checking")}
+                  </Button>
+                ) : updateReady ? (
+                  // Download finished in the background — relaunch into it
+                  // (IDE-style "Restart to update").
                   <Button
                     size="sm"
-                    onClick={() =>
-                      openUrl("https://github.com/keh4l/codeg/releases/latest")
-                    }
+                    onClick={() => void restart()}
+                    disabled={isBusy}
                   >
-                    <ArrowUpCircle className="h-3.5 w-3.5" />
-                    {t("viewRelease", { version: availableUpdate.version })}
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    {t("restartToUpdate")}
                   </Button>
-                )
-              ) : (
-                <Button
-                  key="check-update"
-                  size="sm"
-                  onClick={checkForUpdates}
-                  disabled={isBusy}
-                  className="w-[9.5rem] justify-center transition-none"
-                >
-                  <RefreshCw className="h-3.5 w-3.5" />
-                  {t("checkUpdate")}
-                </Button>
-              )}
-            </div>
-
-            {!availableUpdate && formattedLastCheckedAt && (
-              <p className="text-muted-foreground">
-                {t("lastChecked", { time: formattedLastCheckedAt })}
-              </p>
-            )}
-
-            {updateStatusMessage && !isUpdating && (
-              <p className="text-muted-foreground">{updateStatusMessage}</p>
-            )}
-
-            {isUpdating && (
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between text-muted-foreground">
-                  <span>
-                    {updateState.status === "downloading"
-                      ? t("downloading")
-                      : t("updating")}
-                  </span>
-                  {updateState.status === "downloading" && (
-                    <span>
-                      {formatBytes(updateState.downloaded ?? 0)}
-                      {updateState.total
-                        ? ` / ${formatBytes(updateState.total)}`
-                        : ""}
-                    </span>
-                  )}
-                </div>
-                <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-                  {downloadDeterminate ? (
-                    <div
-                      className="h-full rounded-full bg-primary transition-all duration-300"
-                      style={{ width: `${downloadPercent}%` }}
-                    />
+                ) : isBusy ? (
+                  <Button
+                    size="sm"
+                    disabled
+                    aria-busy="true"
+                    className="w-[9.5rem] justify-center transition-none"
+                  >
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    {t("updating")}
+                  </Button>
+                ) : availableUpdate ? (
+                  // In-place upgrade only when this client can actually drive it:
+                  // desktop (Tauri plugin) or a server speaking the live-progress
+                  // protocol. An older remote server falls back to "view release".
+                  canInstallInPlace ? (
+                    <Button size="sm" onClick={() => void startUpdate()}>
+                      <ArrowUpCircle className="h-3.5 w-3.5" />
+                      {t("upgradeTo", { version: availableUpdate.version })}
+                    </Button>
                   ) : (
-                    <div className="h-full w-1/3 rounded-full bg-primary animate-pulse" />
-                  )}
-                </div>
+                    <Button
+                      size="sm"
+                      onClick={() =>
+                        openUrl(
+                          "https://github.com/keh4l/codeg/releases/latest"
+                        )
+                      }
+                    >
+                      <ArrowUpCircle className="h-3.5 w-3.5" />
+                      {t("viewRelease", { version: availableUpdate.version })}
+                    </Button>
+                  )
+                ) : (
+                  <Button
+                    key="check-update"
+                    size="sm"
+                    onClick={checkForUpdates}
+                    disabled={isBusy}
+                    className="w-[9.5rem] justify-center transition-none"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    {t("checkUpdate")}
+                  </Button>
+                )}
               </div>
-            )}
 
-            {updateReady && (
-              <p className="text-muted-foreground">{t("updateReadyHint")}</p>
-            )}
-
-            {restartCountdown !== null && (
-              <p className="flex items-center gap-2 text-muted-foreground">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                {restartCountdown > 0
-                  ? t("restartingIn", { seconds: restartCountdown })
-                  : t("waitingForServer")}
-              </p>
-            )}
-
-            {canRollback && (
-              <div className="flex items-center justify-between gap-3 pt-1">
-                <span className="text-muted-foreground/80 text-2xs leading-5">
-                  {t("rollbackDescription")}
-                </span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setRollbackConfirmOpen(true)}
-                  disabled={isBusy}
-                >
-                  {isRollingBack ? (
-                    <>
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      {t("rollingBack")}
-                    </>
-                  ) : (
-                    <>
-                      <RotateCcw className="h-3.5 w-3.5" />
-                      {t("rollbackButton")}
-                    </>
-                  )}
-                </Button>
-              </div>
-            )}
-
-            {blockerHint && (
-              <p className="text-2xs leading-5 text-amber-500">{blockerHint}</p>
-            )}
-
-            {availableUpdate &&
-              serverSelfUpdate &&
-              !selfUpdateBlocker &&
-              serverRuntime === "docker" && (
-                <p className="text-muted-foreground/80 text-2xs leading-5">
-                  {t("dockerUpgradeHint")}
+              {!availableUpdate && formattedLastCheckedAt && (
+                <p className="text-muted-foreground">
+                  {t("lastChecked", { time: formattedLastCheckedAt })}
                 </p>
               )}
 
-            {availableUpdate && (
-              <div className="space-y-2 pt-2 border-t border-border/70">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="font-medium">
-                    {t("upgradableVersion")}：v{availableUpdate.version}
-                  </span>
-                  {formattedUpdateDate && (
-                    <span className="text-muted-foreground text-2xs">
-                      {formattedUpdateDate}
+              {updateStatusMessage && !isUpdating && (
+                <p className="text-muted-foreground">{updateStatusMessage}</p>
+              )}
+
+              {isUpdating && (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-muted-foreground">
+                    <span>
+                      {updateState.status === "downloading"
+                        ? t("downloading")
+                        : t("updating")}
                     </span>
-                  )}
+                    {updateState.status === "downloading" && (
+                      <span>
+                        {formatBytes(updateState.downloaded ?? 0)}
+                        {updateState.total
+                          ? ` / ${formatBytes(updateState.total)}`
+                          : ""}
+                      </span>
+                    )}
+                  </div>
+                  <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                    {downloadDeterminate ? (
+                      <div
+                        className="h-full rounded-full bg-primary transition-all duration-300"
+                        style={{ width: `${downloadPercent}%` }}
+                      />
+                    ) : (
+                      <div className="h-full w-1/3 rounded-full bg-primary animate-pulse" />
+                    )}
+                  </div>
                 </div>
-                <ReleaseNotes
-                  notes={updateNotes}
-                  emptyLabel={t("none")}
-                  className="mt-3 max-h-72 overflow-auto rounded-md border bg-background/70 px-3 py-3"
-                />
+              )}
+
+              {updateReady && (
+                <p className="text-muted-foreground">{t("updateReadyHint")}</p>
+              )}
+
+              {restartCountdown !== null && (
+                <p className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  {restartCountdown > 0
+                    ? t("restartingIn", { seconds: restartCountdown })
+                    : t("waitingForServer")}
+                </p>
+              )}
+
+              {canRollback && (
+                <div className="flex items-center justify-between gap-3 pt-1">
+                  <span className="text-muted-foreground/80 text-2xs leading-5">
+                    {t("rollbackDescription")}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setRollbackConfirmOpen(true)}
+                    disabled={isBusy}
+                  >
+                    {isRollingBack ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        {t("rollingBack")}
+                      </>
+                    ) : (
+                      <>
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        {t("rollbackButton")}
+                      </>
+                    )}
+                  </Button>
+                </div>
+              )}
+
+              {blockerHint && (
+                <p className="text-2xs leading-5 text-amber-500">
+                  {blockerHint}
+                </p>
+              )}
+
+              {availableUpdate &&
+                serverSelfUpdate &&
+                !selfUpdateBlocker &&
+                serverRuntime === "docker" && (
+                  <p className="text-muted-foreground/80 text-2xs leading-5">
+                    {t("dockerUpgradeHint")}
+                  </p>
+                )}
+
+              {availableUpdate && (
+                <div className="space-y-2 pt-2 border-t border-border/70">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-medium">
+                      {t("upgradableVersion")}：v{availableUpdate.version}
+                    </span>
+                    {formattedUpdateDate && (
+                      <span className="text-muted-foreground text-2xs">
+                        {formattedUpdateDate}
+                      </span>
+                    )}
+                  </div>
+                  <ReleaseNotes
+                    notes={updateNotes}
+                    emptyLabel={t("none")}
+                    className="mt-3 max-h-72 overflow-auto rounded-md border bg-background/70 px-3 py-3"
+                  />
+                </div>
+              )}
+            </div>
+
+            {bannerError && (
+              <div className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs text-red-400">
+                {t("updateError", { message: bannerError })}
               </div>
             )}
-          </div>
+          </SettingsSection>
 
-          {bannerError && (
-            <div className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs text-red-400">
-              {t("updateError", { message: bannerError })}
-            </div>
-          )}
-        </section>
+          {/* keh4l: restart the server this page is connected to. */}
+          <ServerRestartCard />
 
-        {/* keh4l: restart the server this page is connected to. */}
-        <ServerRestartCard />
-
-        {/* Titled by the option itself: the section *is* the one switch, so a
+          {/* Titled by the option itself: the section *is* the one switch, so a
             card holding a single row would only say the heading back one line
             lower. */}
-        {autostartVisible && (
+          {autostartVisible && (
+            <SettingsSection
+              icon={Power}
+              title={t("autostartTitle")}
+              description={t("autostartDescription")}
+              htmlFor="launch-at-login"
+              control={
+                <Switch
+                  id="launch-at-login"
+                  checked={autostartEnabled}
+                  disabled={savingAutostart || autostartError !== null}
+                  onCheckedChange={(next) => {
+                    const prev = autostartEnabled
+                    setAutostartEnabled(next)
+                    void saveAutostartSettings(next, prev)
+                  }}
+                />
+              }
+            >
+              {autostartError !== null && (
+                <p className="text-2xs text-amber-500">
+                  {t("autostartUnavailable", { message: autostartError })}
+                </p>
+              )}
+            </SettingsSection>
+          )}
+
+          <CliAccessSettings />
+        </SettingsGroup>
+
+        <SettingsGroup label={t("groups.networkAndLanguage")}>
+          {/* The master switch sits on the heading line like every other
+            on/off option in Settings; it was the one native checkbox left. */}
           <SettingsSection
-            icon={Power}
-            title={t("autostartTitle")}
-            description={t("autostartDescription")}
-            htmlFor="launch-at-login"
+            icon={Wifi}
+            title={t("proxyTitle")}
+            description={t("proxyDescription")}
+            className="space-y-4"
             control={
               <Switch
-                id="launch-at-login"
-                checked={autostartEnabled}
-                disabled={savingAutostart || autostartError !== null}
+                checked={enabled}
+                disabled={saving}
+                aria-label={t("enableProxy")}
                 onCheckedChange={(next) => {
-                  const prev = autostartEnabled
-                  setAutostartEnabled(next)
-                  void saveAutostartSettings(next, prev)
+                  if (next && !proxyUrl.trim()) {
+                    setProxyUrlError(t("proxyRequired"))
+                    return
+                  }
+                  setProxyUrlError(null)
+                  setEnabled(next)
+                  saveProxySettings(next, proxyUrl, noProxy)
                 }}
               />
             }
           >
-            {autostartError !== null && (
-              <p className="text-2xs text-amber-500">
-                {t("autostartUnavailable", { message: autostartError })}
+            {loadError && (
+              <SettingsError>
+                {t("loadFailed", { message: loadError })}
+              </SettingsError>
+            )}
+
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-muted-foreground">
+                {t("proxyAddress")}
+              </label>
+              <Input
+                value={proxyUrl}
+                onChange={(event) => {
+                  setProxyUrl(event.target.value)
+                  if (event.target.value.trim()) setProxyUrlError(null)
+                }}
+                onBlur={() => {
+                  if (enabled && !proxyUrl.trim()) {
+                    setProxyUrlError(t("proxyRequired"))
+                    return
+                  }
+                  setProxyUrlError(null)
+                  saveProxySettings(enabled, proxyUrl, noProxy)
+                }}
+                placeholder={PROXY_EXAMPLE}
+                disabled={saving}
+                aria-invalid={proxyUrlError ? true : undefined}
+              />
+              {proxyUrlError && (
+                <p className="text-2xs text-destructive">{proxyUrlError}</p>
+              )}
+              <p className="text-2xs text-muted-foreground">
+                {t("proxyHint", { example: PROXY_EXAMPLE })}
               </p>
-            )}
-          </SettingsSection>
-        )}
-
-        <CliAccessSettings />
-
-        <section className="rounded-xl border bg-card p-4 space-y-4">
-          <div className="flex items-center gap-2">
-            <Wifi className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold">{t("proxyTitle")}</h2>
-          </div>
-
-          <p className="text-xs text-muted-foreground leading-5">
-            {t("proxyDescription")}
-          </p>
-
-          {loadError && (
-            <div className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs text-red-400">
-              {t("loadFailed", { message: loadError })}
             </div>
-          )}
 
-          <label className="inline-flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={enabled}
-              disabled={saving}
-              onChange={(event) => {
-                const next = event.target.checked
-                if (next && !proxyUrl.trim()) {
-                  setProxyUrlError(t("proxyRequired"))
-                  return
-                }
-                setProxyUrlError(null)
-                setEnabled(next)
-                saveProxySettings(next, proxyUrl, noProxy)
-              }}
-            />
-            {t("enableProxy")}
-          </label>
+            <div className="space-y-2">
+              <label
+                htmlFor="system-proxy-bypass"
+                className="text-xs font-medium text-muted-foreground"
+              >
+                {t("proxyBypass")}
+              </label>
+              <Input
+                id="system-proxy-bypass"
+                // Hosts read left to right in every locale; in Arabic an entry
+                // typed first as `.example.com` would show its dot at the end.
+                dir="ltr"
+                value={noProxy}
+                onChange={(event) => setNoProxy(event.target.value)}
+                onBlur={() => saveProxySettings(enabled, proxyUrl, noProxy)}
+                placeholder={PROXY_BYPASS_EXAMPLE}
+                disabled={saving}
+              />
+              <p className="text-2xs text-muted-foreground">
+                {t.rich("proxyBypassHint", {
+                  example: PROXY_BYPASS_EXAMPLE,
+                  code: hintLiteral,
+                })}
+              </p>
+            </div>
+          </SettingsSection>
 
-          <div className="space-y-2">
-            <label className="text-xs font-medium text-muted-foreground">
-              {t("proxyAddress")}
-            </label>
-            <Input
-              value={proxyUrl}
-              onChange={(event) => {
-                setProxyUrl(event.target.value)
-                if (event.target.value.trim()) setProxyUrlError(null)
-              }}
-              onBlur={() => {
-                if (enabled && !proxyUrl.trim()) {
-                  setProxyUrlError(t("proxyRequired"))
-                  return
-                }
-                setProxyUrlError(null)
-                saveProxySettings(enabled, proxyUrl, noProxy)
-              }}
-              placeholder={PROXY_EXAMPLE}
-              disabled={saving}
-              aria-invalid={proxyUrlError ? true : undefined}
-            />
-            {proxyUrlError && (
-              <p className="text-2xs text-destructive">{proxyUrlError}</p>
-            )}
-            <p className="text-2xs text-muted-foreground">
-              {t("proxyHint", { example: PROXY_EXAMPLE })}
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <label
-              htmlFor="system-proxy-bypass"
-              className="text-xs font-medium text-muted-foreground"
-            >
-              {t("proxyBypass")}
-            </label>
-            <Input
-              id="system-proxy-bypass"
-              // Hosts read left to right in every locale; in Arabic an entry
-              // typed first as `.example.com` would show its dot at the end.
-              dir="ltr"
-              value={noProxy}
-              onChange={(event) => setNoProxy(event.target.value)}
-              onBlur={() => saveProxySettings(enabled, proxyUrl, noProxy)}
-              placeholder={PROXY_BYPASS_EXAMPLE}
-              disabled={saving}
-            />
-            <p className="text-2xs text-muted-foreground">
-              {t.rich("proxyBypassHint", {
-                example: PROXY_BYPASS_EXAMPLE,
-                code: hintLiteral,
-              })}
-            </p>
-          </div>
-        </section>
-
-        <section className="rounded-xl border bg-card p-4 space-y-4">
-          <div className="flex items-center gap-2">
-            <Languages className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold">{t("languageTitle")}</h2>
-          </div>
-
-          <p className="text-xs text-muted-foreground leading-5">
-            {t("languageDescription")}
-          </p>
-
-          <div className="space-y-2">
-            <label className="text-xs font-medium text-muted-foreground">
-              {t("appLanguage")}
-            </label>
-            <Select
-              value={appLanguage}
-              onValueChange={(value) => {
-                let nextLang: LanguageSelectValue
-                if (value === "system") {
-                  nextLang = "system"
-                } else if (isAppLocale(value)) {
-                  nextLang = value
-                } else {
-                  return
-                }
-                setAppLanguage(nextLang)
-                saveLanguage(nextLang)
-              }}
-              disabled={savingLanguage || !languageSettingsLoaded}
-            >
-              <SelectTrigger className="w-full sm:w-56">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent align="start">
-                <SelectItem value="system">
-                  {tLanguage("followSystem")}
-                </SelectItem>
-                <SelectItem value="en">{languageLabels.en}</SelectItem>
-                <SelectItem value="zh_cn">{languageLabels.zh_cn}</SelectItem>
-                <SelectItem value="zh_tw">{languageLabels.zh_tw}</SelectItem>
-                <SelectItem value="ja">{languageLabels.ja}</SelectItem>
-                <SelectItem value="ko">{languageLabels.ko}</SelectItem>
-                <SelectItem value="es">{languageLabels.es}</SelectItem>
-                <SelectItem value="de">{languageLabels.de}</SelectItem>
-                <SelectItem value="fr">{languageLabels.fr}</SelectItem>
-                <SelectItem value="pt">{languageLabels.pt}</SelectItem>
-                <SelectItem value="ar">{languageLabels.ar}</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </section>
+          <SettingsSection
+            icon={Languages}
+            title={t("languageTitle")}
+            description={t("languageDescription")}
+            control={
+              <Select
+                value={appLanguage}
+                onValueChange={(value) => {
+                  let nextLang: LanguageSelectValue
+                  if (value === "system") {
+                    nextLang = "system"
+                  } else if (isAppLocale(value)) {
+                    nextLang = value
+                  } else {
+                    return
+                  }
+                  setAppLanguage(nextLang)
+                  saveLanguage(nextLang)
+                }}
+                disabled={savingLanguage || !languageSettingsLoaded}
+              >
+                <SelectTrigger
+                  size="sm"
+                  className="w-40 bg-background text-xs"
+                  aria-label={t("appLanguage")}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent align="end">
+                  <SelectItem value="system">
+                    {tLanguage("followSystem")}
+                  </SelectItem>
+                  <SelectItem value="en">{languageLabels.en}</SelectItem>
+                  <SelectItem value="zh_cn">{languageLabels.zh_cn}</SelectItem>
+                  <SelectItem value="zh_tw">{languageLabels.zh_tw}</SelectItem>
+                  <SelectItem value="ja">{languageLabels.ja}</SelectItem>
+                  <SelectItem value="ko">{languageLabels.ko}</SelectItem>
+                  <SelectItem value="es">{languageLabels.es}</SelectItem>
+                  <SelectItem value="de">{languageLabels.de}</SelectItem>
+                  <SelectItem value="fr">{languageLabels.fr}</SelectItem>
+                  <SelectItem value="pt">{languageLabels.pt}</SelectItem>
+                  <SelectItem value="ar">{languageLabels.ar}</SelectItem>
+                </SelectContent>
+              </Select>
+            }
+          />
+        </SettingsGroup>
 
         <DataSyncSettings />
 

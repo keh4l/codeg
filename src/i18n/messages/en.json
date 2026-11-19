@@ -45,6 +45,13 @@
     "generateToken": "Generate token"
   },
   "SettingsShell": {
+    "groups": {
+      "basics": "Basics",
+      "agents": "Agents",
+      "content": "Content",
+      "control": "Control",
+      "upkeep": "Connections & upkeep"
+    },
     "title": "Settings",
     "preferences": "Preferences",
     "nav": {
@@ -70,6 +77,12 @@
     }
   },
   "AppearanceSettings": {
+    "groups": {
+      "theme": "Theme",
+      "display": "Window & fonts",
+      "conversation": "Conversation area"
+    },
+    "pageDescription": "Theme, colors, zoom, fonts, and how the conversation area looks.",
     "sectionTitle": "Theme Appearance",
     "sectionDescription": "Choose light, dark, or follow system. Settings are saved automatically.",
     "themeMode": "Theme mode",
@@ -252,6 +265,10 @@
     }
   },
   "SystemSettings": {
+    "groups": {
+      "app": "App",
+      "networkAndLanguage": "Network & language"
+    },
     "loading": "Loading...",
     "sectionTitle": "System Management",
     "sectionDescription": "Manage app updates, launch at login, network proxy and language preferences.",
@@ -1961,6 +1978,11 @@
     "actionFailed": "Action failed: {message}"
   },
   "GeneralSettings": {
+    "groups": {
+      "terminal": "Terminal",
+      "tabsAndInput": "Tabs & input",
+      "windowAndAlerts": "Window & alerts"
+    },
     "loading": "Loading...",
     "sectionTitle": "General",
     "sectionDescription": "Centralized preferences for the default terminal, rendering acceleration, the @ mention panel, window close behavior, notifications and sounds.",

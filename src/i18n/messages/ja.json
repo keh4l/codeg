@@ -45,6 +45,13 @@
     "generateToken": "トークンを生成"
   },
   "SettingsShell": {
+    "groups": {
+      "basics": "基本",
+      "agents": "エージェント",
+      "content": "コンテンツ",
+      "control": "操作",
+      "upkeep": "連携とメンテナンス"
+    },
     "title": "設定",
     "preferences": "環境設定",
     "nav": {
@@ -70,6 +77,12 @@
     }
   },
   "AppearanceSettings": {
+    "groups": {
+      "theme": "テーマ",
+      "display": "ウィンドウとフォント",
+      "conversation": "会話エリア"
+    },
+    "pageDescription": "テーマ、配色、拡大率、フォント、会話エリアの表示を設定します。",
     "sectionTitle": "テーマ外観",
     "sectionDescription": "ライト、ダーク、またはシステム追従を選択できます。設定は自動保存されます。",
     "themeMode": "テーマモード",
@@ -252,6 +265,10 @@
     }
   },
   "SystemSettings": {
+    "groups": {
+      "app": "アプリ",
+      "networkAndLanguage": "ネットワークと言語"
+    },
     "loading": "読み込み中...",
     "sectionTitle": "システム管理",
     "sectionDescription": "アプリ更新、ログイン時の起動、ネットワークプロキシ、言語設定を管理します。",
@@ -1961,6 +1978,11 @@
     "actionFailed": "操作に失敗しました: {message}"
   },
   "GeneralSettings": {
+    "groups": {
+      "terminal": "ターミナル",
+      "tabsAndInput": "タブと入力",
+      "windowAndAlerts": "ウィンドウと通知"
+    },
     "loading": "読み込み中...",
     "sectionTitle": "一般",
     "sectionDescription": "デフォルトターミナル、レンダリング高速化、@ メンションパネル、ウィンドウを閉じたときの動作、通知と通知音などの共通設定をここで一括管理します。",

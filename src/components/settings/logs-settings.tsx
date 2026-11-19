@@ -54,6 +54,7 @@ import type {
   TargetDirective,
 } from "@/lib/types"
 import { applyLogBatch } from "./log-buffer"
+import { SettingsPageHeader } from "@/components/shared/settings-section"
 
 // Capture levels offered in the level dropdown (controls what the backend
 // records). `off` disables capture entirely.
@@ -657,12 +658,10 @@ export function LogsSettings() {
   return (
     <ScrollArea className="h-full">
       <div className="w-full space-y-4 p-3 md:p-4">
-        <section className="space-y-1">
-          <h1 className="text-sm font-semibold">{t("sectionTitle")}</h1>
-          <p className="text-xs text-muted-foreground">
-            {t("sectionDescription")}
-          </p>
-        </section>
+        <SettingsPageHeader
+          title={t("sectionTitle")}
+          description={t("sectionDescription")}
+        />
 
         {loadError && (
           <div className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs text-red-400">

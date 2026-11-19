@@ -12,7 +12,7 @@
  * with two different error banners and five subtly different save footers.
  */
 
-import { Children } from "react"
+import { Children, createContext, useContext } from "react"
 import type { LucideIcon } from "lucide-react"
 import { AlertCircle, ChevronDown, Loader2 } from "lucide-react"
 
@@ -90,6 +90,7 @@ export function SettingsSection({
   children,
   className,
 }: SettingsSectionProps) {
+  const surface = useSettingsSurface()
   const heading = (
     <>
       {Icon ? (
@@ -120,21 +121,19 @@ export function SettingsSection({
       // wrapper in and out would remount the header, and the control on it
       // would lose keyboard focus the moment it was used.
       <Collapsible open={expanded} onOpenChange={onOpenChange} asChild>
-        <section
-          className={cn("overflow-hidden rounded-xl border bg-card", className)}
-        >
+        <section className={cn("overflow-hidden", surface, className)}>
           {/* `relative` is the anchor the trigger stretches its hit area to,
               and `has-…:hover` paints the hover state from the trigger rather
               than from the row: pointing at the switch then leaves the row
               plain, because clicking there does not fold anything. */}
           <div
             className={cn(
-              "relative flex justify-between gap-3 border-b border-transparent p-4 transition-colors has-[[data-slot=collapsible-trigger]:hover]:bg-muted/50",
+              "relative flex flex-wrap justify-between gap-x-3 gap-y-2 border-b border-transparent p-4 transition-colors has-[[data-slot=collapsible-trigger]:hover]:bg-muted/50",
               description ? "items-start" : "items-center",
               expanded && "border-border"
             )}
           >
-            <div className="min-w-0 flex-1 space-y-1">
+            <div className="min-w-0 flex-1 basis-64 space-y-1">
               {/* The button goes inside the h2, not the other way round:
                   role=button flattens its descendants' semantics, which would
                   drop the section out of the page's heading list — so the
@@ -183,18 +182,20 @@ export function SettingsSection({
   }
 
   return (
-    <section
-      className={cn("space-y-3 rounded-xl border bg-card p-4", className)}
-    >
+    <section className={cn("space-y-3 p-4", surface, className)}>
       {/* Same alignment rule as `SettingRow`: with an explanation the control
           sits on the heading's line, without one the two center on each other. */}
+      {/* Wraps instead of squeezing: on a phone a select or button would
+          otherwise pin the explanation into a column a few characters wide,
+          so a control that doesn't fit beside 16rem of text drops below it.
+          A switch is narrow enough to stay on the heading's line. */}
       <div
         className={cn(
-          "flex justify-between gap-3",
+          "flex flex-wrap justify-between gap-x-3 gap-y-2",
           description ? "items-start" : "items-center"
         )}
       >
-        <div className="min-w-0 space-y-1">
+        <div className="min-w-0 flex-1 basis-64 space-y-1">
           <h2 className="text-sm font-semibold">
             {htmlFor ? (
               // A `<label>` inside the heading, so clicking the title works the
@@ -217,6 +218,103 @@ export function SettingsSection({
     </section>
   )
 }
+
+const SettingsGroupContext = createContext(false)
+
+/**
+ * The bordered card a settings block draws around itself — unless it sits in
+ * a {@link SettingsGroup}, which draws one card for the whole run and a
+ * hairline between its rows. Exported for the few blocks that build their own
+ * `<section>` (the custom-style disclosure) so they join a group the same way.
+ */
+export function useSettingsSurface(): string {
+  return useContext(SettingsGroupContext) ? "" : "rounded-xl border bg-card"
+}
+
+/**
+ * A titled run of related settings on one card: the label sits above the
+ * card, the sections inside become rows divided by hairlines. A page of
+ * twelve separate cards reads as twelve unrelated things; three groups say
+ * which options belong together before any of them is read.
+ *
+ * A group whose every child renders nothing (desktop-only options in a
+ * browser) hides itself, label included, rather than leaving an empty card.
+ */
+export function SettingsGroup({
+  label,
+  children,
+  className,
+}: {
+  label: React.ReactNode
+  children: React.ReactNode
+  className?: string
+}) {
+  return (
+    <section
+      className={cn(
+        "space-y-2 has-[>[data-slot=settings-group-body]:empty]:hidden",
+        className
+      )}
+    >
+      <h2 className="px-1 text-xs font-medium text-muted-foreground">
+        {label}
+      </h2>
+      <div
+        data-slot="settings-group-body"
+        className="divide-y overflow-hidden rounded-xl border bg-card"
+      >
+        <SettingsGroupContext.Provider value={true}>
+          {children}
+        </SettingsGroupContext.Provider>
+      </div>
+    </section>
+  )
+}
+
+/**
+ * The title block every settings page opens with: the page's name one step
+ * above the section headings (`text-base` against their `text-sm`), what the
+ * page is for, and page-wide actions on the right. Pages used to hand-roll
+ * this in five different sizes, and two pages had none — on a phone, with
+ * the nav folded away, that left nothing saying which page you were on.
+ */
+export function SettingsPageHeader({
+  title,
+  description,
+  actions,
+  className,
+}: {
+  title: React.ReactNode
+  description?: React.ReactNode
+  actions?: React.ReactNode
+  className?: string
+}) {
+  return (
+    <header
+      className={cn(
+        "flex flex-wrap items-start justify-between gap-x-3 gap-y-2",
+        className
+      )}
+    >
+      <div className="min-w-0 flex-1 basis-64 space-y-1">
+        <h1 className="text-base font-semibold">{title}</h1>
+        {description ? (
+          <p className="text-xs leading-5 text-muted-foreground">
+            {description}
+          </p>
+        ) : null}
+      </div>
+      {actions ? <div className="shrink-0">{actions}</div> : null}
+    </header>
+  )
+}
+
+/**
+ * Width of a settings page made of options rather than lists. Rows hold a
+ * label on one side and its control on the other; in a wide browser window
+ * an uncapped row put the two over a thousand pixels apart.
+ */
+export const SETTINGS_FORM_WIDTH = "mx-auto w-full max-w-[52rem]"
 
 /**
  * A section couldn't load (or save) what it configures. Uses the `destructive`

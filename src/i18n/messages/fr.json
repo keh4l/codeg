@@ -45,6 +45,13 @@
     "generateToken": "Générer un jeton"
   },
   "SettingsShell": {
+    "groups": {
+      "basics": "Essentiel",
+      "agents": "Agents",
+      "content": "Contenu",
+      "control": "Contrôle",
+      "upkeep": "Connexions et maintenance"
+    },
     "title": "Paramètres",
     "preferences": "Préférences",
     "nav": {
@@ -70,6 +77,12 @@
     }
   },
   "AppearanceSettings": {
+    "groups": {
+      "theme": "Thème",
+      "display": "Fenêtre et polices",
+      "conversation": "Zone de conversation"
+    },
+    "pageDescription": "Thème, couleurs, zoom, polices et apparence de la zone de conversation.",
     "sectionTitle": "Apparence du thème",
     "sectionDescription": "Choisissez clair, sombre ou suivre le système. Les paramètres sont enregistrés automatiquement.",
     "themeMode": "Mode du thème",
@@ -252,6 +265,10 @@
     }
   },
   "SystemSettings": {
+    "groups": {
+      "app": "Application",
+      "networkAndLanguage": "Réseau et langue"
+    },
     "loading": "Chargement...",
     "sectionTitle": "Gestion du système",
     "sectionDescription": "Gérez les mises à jour de l’app, le lancement à l’ouverture de session, le proxy réseau et les préférences de langue.",
@@ -1961,6 +1978,11 @@
     "actionFailed": "Échec de l'action : {message}"
   },
   "GeneralSettings": {
+    "groups": {
+      "terminal": "Terminal",
+      "tabsAndInput": "Onglets et saisie",
+      "windowAndAlerts": "Fenêtre et alertes"
+    },
     "loading": "Chargement...",
     "sectionTitle": "Général",
     "sectionDescription": "Préférences centralisées pour le terminal par défaut, l’accélération du rendu, le panneau de mentions @, le comportement à la fermeture de la fenêtre, les notifications et les sons.",

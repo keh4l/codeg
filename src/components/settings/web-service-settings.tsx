@@ -51,6 +51,11 @@ import {
   webServerErrorCode,
 } from "@/lib/web-service/start-error"
 import { asWebServiceHost } from "@/lib/web-service/hosts"
+import {
+  SETTINGS_FORM_WIDTH,
+  SettingsPageHeader,
+} from "@/components/shared/settings-section"
+import { cn } from "@/lib/utils"
 
 // Remembers which reachable address the user last chose to display/open.
 // Keyed by host (IP) only, so the choice survives a port change.
@@ -517,13 +522,11 @@ export function WebServiceSettings() {
 
   return (
     <ScrollArea className="h-full">
-      <div className="space-y-6 p-3 md:p-4">
-        <div>
-          <h3 className="text-lg font-medium">{t("sectionTitle")}</h3>
-          <p className="text-sm text-muted-foreground">
-            {t("sectionDescription")}
-          </p>
-        </div>
+      <div className={cn(SETTINGS_FORM_WIDTH, "space-y-6 p-3 md:p-4")}>
+        <SettingsPageHeader
+          title={t("sectionTitle")}
+          description={t("sectionDescription")}
+        />
 
         <div className="space-y-4">
           {showStaleBanner && (

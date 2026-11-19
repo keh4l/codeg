@@ -30,7 +30,11 @@ import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 
 import { SettingCard, SettingRow } from "@/components/shared/setting-card"
-import { SettingsSection } from "@/components/shared/settings-section"
+import {
+  SETTINGS_FORM_WIDTH,
+  SettingsPageHeader,
+  SettingsSection,
+} from "@/components/shared/settings-section"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -312,11 +316,8 @@ export function ImageGenerationSettings() {
 
   return (
     <ScrollArea className="h-full">
-      <div className="w-full space-y-4 p-3 md:p-4">
-        <section className="space-y-1">
-          <h1 className="text-sm font-semibold">{t("title")}</h1>
-          <p className="text-xs text-muted-foreground">{t("description")}</p>
-        </section>
+      <div className={cn(SETTINGS_FORM_WIDTH, "space-y-4 p-3 md:p-4")}>
+        <SettingsPageHeader title={t("title")} description={t("description")} />
 
         <SettingCard>
           <SettingRow

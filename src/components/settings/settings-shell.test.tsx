@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { settingsNavItemsFor } from "./settings-shell"
+import { groupSettingsNavItems, settingsNavItemsFor } from "./settings-shell"
 
 describe("settingsNavItemsFor", () => {
   it("drops the Web service page in a browser session and nothing else", () => {
@@ -51,5 +51,33 @@ describe("settingsNavItemsFor", () => {
     const labels = settingsNavItemsFor("tauri").map((item) => item.labelKey)
     expect(labels).toContain("web_service")
     expect(labels).toContain("browser")
+  })
+
+  it("groups the nav in runs of its own order, each page once", () => {
+    for (const env of ["tauri", "web"] as const) {
+      const items = settingsNavItemsFor(env)
+      const groups = groupSettingsNavItems(items)
+      // Flattening the groups gives back the nav exactly: grouping only adds
+      // headings, it never moves a page.
+      expect(groups.flatMap((g) => g.items)).toEqual(items)
+      // No heading appears twice, so each group is one contiguous run.
+      const names = groups.map((g) => g.group)
+      expect(new Set(names).size).toBe(names.length)
+    }
+    expect(
+      groupSettingsNavItems(settingsNavItemsFor("tauri")).map((g) => [
+        g.group,
+        g.items.map((i) => i.labelKey),
+      ])
+    ).toEqual([
+      ["basics", ["appearance", "general"]],
+      ["agents", ["collaboration", "agents", "model_providers"]],
+      ["content", ["translation", "image_generation", "quick_messages"]],
+      ["control", ["browser", "computer_use", "shortcuts"]],
+      [
+        "upkeep",
+        ["version_control", "chat_channels", "web_service", "logs", "system"],
+      ],
+    ])
   })
 })

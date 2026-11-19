@@ -104,13 +104,15 @@ export function SettingRow({
       {/* With an explanation under the title the control aligns to the title
           line; without one there is only that line, so the two center on each
           other instead of hanging off a taller control's top edge. */}
+      {/* Same wrapping rule as `SettingsSection`: a control that doesn't fit
+          beside 14rem of text moves under it instead of squeezing it. */}
       <div
         className={cn(
-          "flex justify-between gap-3",
+          "flex flex-wrap justify-between gap-x-3 gap-y-2",
           description ? "items-start" : "items-center"
         )}
       >
-        <div className="flex min-w-0 flex-col gap-1">
+        <div className="flex min-w-0 flex-1 basis-56 flex-col gap-1">
           <Label htmlFor={htmlFor} className="gap-1.5 text-sm">
             {Icon ? (
               <Icon

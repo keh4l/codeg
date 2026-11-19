@@ -45,6 +45,13 @@
     "generateToken": "Token erstellen"
   },
   "SettingsShell": {
+    "groups": {
+      "basics": "Grundlagen",
+      "agents": "Agenten",
+      "content": "Inhalte",
+      "control": "Steuerung",
+      "upkeep": "Verbindungen & Wartung"
+    },
     "title": "Einstellungen",
     "preferences": "Präferenzen",
     "nav": {
@@ -70,6 +77,12 @@
     }
   },
   "AppearanceSettings": {
+    "groups": {
+      "theme": "Design",
+      "display": "Fenster & Schriften",
+      "conversation": "Gesprächsbereich"
+    },
+    "pageDescription": "Design, Farben, Zoom, Schriften und das Aussehen des Gesprächsbereichs.",
     "sectionTitle": "Design-Erscheinungsbild",
     "sectionDescription": "Wähle hell, dunkel oder Systemvorgabe. Einstellungen werden automatisch gespeichert.",
     "themeMode": "Designmodus",
@@ -252,6 +265,10 @@
     }
   },
   "SystemSettings": {
+    "groups": {
+      "app": "App",
+      "networkAndLanguage": "Netzwerk & Sprache"
+    },
     "loading": "Wird geladen...",
     "sectionTitle": "Systemverwaltung",
     "sectionDescription": "Verwalte App-Updates, den Autostart beim Anmelden, den Netzwerk-Proxy und die Spracheinstellungen.",
@@ -1961,6 +1978,11 @@
     "actionFailed": "Aktion fehlgeschlagen: {message}"
   },
   "GeneralSettings": {
+    "groups": {
+      "terminal": "Terminal",
+      "tabsAndInput": "Tabs & Eingabe",
+      "windowAndAlerts": "Fenster & Hinweise"
+    },
     "loading": "Wird geladen...",
     "sectionTitle": "Allgemein",
     "sectionDescription": "Zentrale Einstellungen für das Standardterminal, die Rendering-Beschleunigung, das @-Erwähnungspanel, das Verhalten beim Schließen des Fensters sowie Benachrichtigungen und Töne.",

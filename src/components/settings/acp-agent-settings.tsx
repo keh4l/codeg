@@ -63,6 +63,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { SettingsPageHeader } from "@/components/shared/settings-section"
 import {
   Collapsible,
   CollapsibleContent,
@@ -8680,23 +8681,22 @@ export function AcpAgentSettings() {
 
   return (
     <div className="h-full flex flex-col p-3 md:p-4">
-      <div className="flex items-center justify-between gap-3 pb-4">
-        <div>
-          <h2 className="text-base font-semibold">{t("title")}</h2>
-          <p className="text-xs text-muted-foreground mt-1">
-            {t("description")}
-          </p>
-        </div>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-8 text-xs shrink-0"
-          onClick={() => setAddCustomOpen(true)}
-        >
-          <Plus className="h-3.5 w-3.5 mr-1" />
-          {t("addCustomAgent")}
-        </Button>
-      </div>
+      <SettingsPageHeader
+        className="pb-4"
+        title={t("title")}
+        description={t("description")}
+        actions={
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 text-xs shrink-0"
+            onClick={() => setAddCustomOpen(true)}
+          >
+            <Plus className="h-3.5 w-3.5 mr-1" />
+            {t("addCustomAgent")}
+          </Button>
+        }
+      />
 
       <AddCustomAgentDialog
         open={addCustomOpen}

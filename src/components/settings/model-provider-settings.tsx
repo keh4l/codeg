@@ -34,6 +34,7 @@ import {
 import { getAgentLabel } from "@/lib/custom-agents"
 import { AddModelProviderDialog } from "./add-model-provider-dialog"
 import { EditModelProviderDialog } from "./edit-model-provider-dialog"
+import { SettingsPageHeader } from "@/components/shared/settings-section"
 
 export function ModelProviderSettings() {
   const t = useTranslations("ModelProviderSettings")
@@ -95,12 +96,10 @@ export function ModelProviderSettings() {
   return (
     <ScrollArea className="h-full">
       <section className="space-y-3 px-3 pt-3 md:px-4 md:pt-4">
-        <div>
-          <h1 className="text-sm font-semibold">{t("sectionTitle")}</h1>
-          <p className="text-sm text-muted-foreground">
-            {t("sectionDescription")}
-          </p>
-        </div>
+        <SettingsPageHeader
+          title={t("sectionTitle")}
+          description={t("sectionDescription")}
+        />
       </section>
 
       <section className="mt-4 space-y-2 px-3 pb-3 md:px-4 md:pb-4">

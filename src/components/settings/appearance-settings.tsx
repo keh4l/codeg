@@ -37,6 +37,12 @@ import {
 } from "@/lib/chat-content-width"
 import { cn } from "@/lib/utils"
 import {
+  SETTINGS_FORM_WIDTH,
+  SettingsGroup,
+  SettingsPageHeader,
+  SettingsSection,
+} from "@/components/shared/settings-section"
+import {
   DEFAULT_ZOOM_LEVEL,
   THEME_COLOR_PREVIEW,
   THEME_COLORS,
@@ -63,6 +69,7 @@ type ThemeMode = "system" | "light" | "dark"
 
 export function AppearanceSettings() {
   const t = useTranslations("AppearanceSettings")
+  const tShell = useTranslations("SettingsShell")
   const { theme, resolvedTheme, setTheme } = useTheme()
   const { themeColor, setThemeColor } = useThemeColor()
   const { zoomLevel, setZoomLevel } = useZoomLevel()
@@ -84,261 +91,204 @@ export function AppearanceSettings() {
 
   return (
     <ScrollArea className="h-full">
-      <div className="w-full space-y-4 p-3 md:p-4">
-        {/* ===== Theme Mode ===== */}
-        <section className="rounded-xl border bg-card p-4 space-y-4">
-          <div className="flex items-center gap-2">
-            <Sun className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold">{t("sectionTitle")}</h2>
-          </div>
+      <div className={cn(SETTINGS_FORM_WIDTH, "space-y-4 p-3 md:p-4")}>
+        <SettingsPageHeader
+          title={tShell("nav.appearance")}
+          description={t("pageDescription")}
+        />
 
-          <p className="text-xs text-muted-foreground leading-5">
-            {t("sectionDescription")}
-          </p>
-
-          <div className="space-y-2">
-            <label className="text-xs font-medium text-muted-foreground">
-              {t("themeMode")}
-            </label>
-            <Select
-              value={theme ?? "system"}
-              onValueChange={(value) => {
-                setTheme(value as ThemeMode)
-                if (
-                  typeof window !== "undefined" &&
-                  "__TAURI_INTERNALS__" in window
-                ) {
-                  import("@/lib/tauri").then((t) =>
-                    t.updateAppearanceMode(value).catch(() => {})
-                  )
-                }
-              }}
-            >
-              <SelectTrigger className="w-56">
-                <SelectValue placeholder={t("placeholder")} />
-              </SelectTrigger>
-              <SelectContent align="start">
-                <SelectItem value="system">
-                  <span className="inline-flex items-center gap-2">
-                    <Monitor className="h-3.5 w-3.5" />
-                    {t("system")}
+        <SettingsGroup label={t("groups.theme")}>
+          {/* ===== Theme Mode ===== */}
+          <SettingsSection
+            icon={Sun}
+            title={t("sectionTitle")}
+            description={
+              <>
+                {t("sectionDescription")}
+                {/* Only worth a line when it isn't what the picker says: under
+                  "follow system" the picker can't tell you which one won. */}
+                {theme === "system" ? (
+                  <span className="mt-1 block" suppressHydrationWarning>
+                    {t("currentTheme", { theme: resolvedThemeLabel })}
                   </span>
-                </SelectItem>
-                <SelectItem value="light">
-                  <span className="inline-flex items-center gap-2">
-                    <Sun className="h-3.5 w-3.5" />
-                    {t("light")}
-                  </span>
-                </SelectItem>
-                <SelectItem value="dark">
-                  <span className="inline-flex items-center gap-2">
-                    <Moon className="h-3.5 w-3.5" />
-                    {t("dark")}
-                  </span>
-                </SelectItem>
-              </SelectContent>
-            </Select>
-            <p
-              className="text-2xs text-muted-foreground"
-              suppressHydrationWarning
-            >
-              {t("currentTheme", { theme: resolvedThemeLabel })}
-            </p>
-          </div>
-        </section>
-
-        {/* ===== Theme Color ===== */}
-        <section className="rounded-xl border bg-card p-4 space-y-4">
-          <div className="flex items-center gap-2">
-            <span
-              className="size-4 rounded-full border"
-              style={{ backgroundColor: THEME_COLOR_PREVIEW[themeColor] }}
-              aria-hidden
-            />
-            <h2 className="text-sm font-semibold">
-              {t("themeColor.sectionTitle")}
-            </h2>
-          </div>
-
-          <p className="text-xs text-muted-foreground leading-5">
-            {t("themeColor.sectionDescription")}
-          </p>
-
-          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6">
-            {THEME_COLORS.map((color) => {
-              const isActive = themeColor === color
-              return (
-                <button
-                  key={color}
-                  type="button"
-                  onClick={() => setThemeColor(color as ThemeColor)}
-                  aria-pressed={isActive}
-                  className={cn(
-                    "flex items-center gap-2 rounded-md border px-3 py-2 text-xs transition-colors",
-                    "hover:bg-accent hover:text-accent-foreground",
-                    isActive && "border-primary ring-2 ring-primary/30"
-                  )}
+                ) : null}
+              </>
+            }
+            htmlFor="appearance-theme-mode"
+            control={
+              <Select
+                value={theme ?? "system"}
+                onValueChange={(value) => {
+                  setTheme(value as ThemeMode)
+                  if (
+                    typeof window !== "undefined" &&
+                    "__TAURI_INTERNALS__" in window
+                  ) {
+                    import("@/lib/tauri").then((t) =>
+                      t.updateAppearanceMode(value).catch(() => {})
+                    )
+                  }
+                }}
+              >
+                <SelectTrigger
+                  id="appearance-theme-mode"
+                  size="sm"
+                  className="w-40 bg-background text-xs"
                 >
-                  <span
-                    className="size-4 shrink-0 rounded-full border"
-                    style={{ backgroundColor: THEME_COLOR_PREVIEW[color] }}
-                    aria-hidden
-                  />
-                  <span className="truncate">
-                    {t(`themeColor.options.${color}`)}
-                  </span>
-                </button>
-              )
-            })}
-          </div>
-
-          <p className="text-2xs text-muted-foreground">
-            {t("themeColor.current", {
-              color: t(`themeColor.options.${themeColor}`),
-            })}
-          </p>
-        </section>
-
-        {/* ===== Custom style (token overrides + free-form CSS) ===== */}
-        <CustomStyleSection />
-
-        {/* ===== Zoom Level ===== */}
-        <section className="rounded-xl border bg-card p-4 space-y-4">
-          <div className="flex items-center gap-2">
-            <Type className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold">
-              {t("zoomLevel.sectionTitle")}
-            </h2>
-          </div>
-
-          <p className="text-xs text-muted-foreground leading-5">
-            {t("zoomLevel.sectionDescription")}
-          </p>
-
-          <div className="space-y-2">
-            <Select
-              value={String(zoomLevel)}
-              onValueChange={(value) =>
-                setZoomLevel(parseInt(value, 10) as ZoomLevel)
-              }
-            >
-              <SelectTrigger className="w-56">
-                <SelectValue placeholder={t("zoomLevel.placeholder")} />
-              </SelectTrigger>
-              <SelectContent align="start">
-                {ZOOM_LEVELS.map((z) => (
-                  <SelectItem key={z} value={String(z)}>
-                    {z}%
-                    {z === DEFAULT_ZOOM_LEVEL
-                      ? ` (${t("zoomLevel.default")})`
-                      : ""}
+                  <SelectValue placeholder={t("placeholder")} />
+                </SelectTrigger>
+                <SelectContent align="end">
+                  <SelectItem value="system">
+                    <span className="inline-flex items-center gap-2">
+                      <Monitor className="h-3.5 w-3.5" />
+                      {t("system")}
+                    </span>
                   </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-2xs text-muted-foreground">
-              {t("zoomLevel.current", { zoom: zoomLevel })}
-            </p>
-          </div>
-        </section>
+                  <SelectItem value="light">
+                    <span className="inline-flex items-center gap-2">
+                      <Sun className="h-3.5 w-3.5" />
+                      {t("light")}
+                    </span>
+                  </SelectItem>
+                  <SelectItem value="dark">
+                    <span className="inline-flex items-center gap-2">
+                      <Moon className="h-3.5 w-3.5" />
+                      {t("dark")}
+                    </span>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            }
+          />
 
-        {/* ===== Fonts ===== */}
-        <FontSettingsSection />
-
-        {/* ===== Workspace background ===== */}
-        <WorkspaceBackgroundSection />
-
-        {/* ===== New conversation — mode selection area ===== */}
-        <section className="rounded-xl border bg-card p-4 space-y-4">
-          <div className="flex items-center gap-2">
-            <LayoutGrid className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold">
-              {t("welcomePanel.sectionTitle")}
-            </h2>
-          </div>
-
-          <p className="text-xs text-muted-foreground leading-5">
-            {t("welcomePanel.sectionDescription")}
-          </p>
-
-          <label className="flex items-center gap-2">
-            <Switch
-              checked={showWelcomeQuickActions}
-              onCheckedChange={setShowWelcomeQuickActions}
-            />
-            <span className="text-xs text-muted-foreground">
-              {t("welcomePanel.showQuickActions")}
-            </span>
-          </label>
-        </section>
-
-        {/* ===== Chat animations ===== */}
-        <section className="rounded-xl border bg-card p-4 space-y-4">
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold">
-              {t("chatAnimations.sectionTitle")}
-            </h2>
-          </div>
-
-          <p className="text-xs text-muted-foreground leading-5">
-            {t("chatAnimations.sectionDescription")}
-          </p>
-
-          <label className="flex items-center gap-2">
-            <Switch
-              checked={chatAnimations}
-              onCheckedChange={setChatAnimations}
-            />
-            <span className="text-xs text-muted-foreground">
-              {t("chatAnimations.enable")}
-            </span>
-          </label>
-        </section>
-
-        <ChatHtmlSettingsSection />
-
-        {/* ===== Chat content width ===== */}
-        <section className="rounded-xl border bg-card p-4 space-y-4">
-          <div className="flex items-center gap-2">
-            <MoveHorizontal className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold">
-              {t("chatWidth.sectionTitle")}
-            </h2>
-          </div>
-
-          <p className="text-xs text-muted-foreground leading-5">
-            {t("chatWidth.sectionDescription")}
-          </p>
-
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-xs text-muted-foreground">
-                {t("chatWidth.label")}
+          {/* ===== Theme Color ===== */}
+          <SettingsSection
+            title={
+              <span className="flex items-center gap-2">
+                <span
+                  className="size-4 rounded-full border"
+                  style={{ backgroundColor: THEME_COLOR_PREVIEW[themeColor] }}
+                  aria-hidden
+                />
+                {t("themeColor.sectionTitle")}
               </span>
-              <span className="text-xs tabular-nums text-muted-foreground">
-                {chatContentWidth === null
-                  ? t("chatWidth.default", { width: CHAT_CONTENT_DEFAULT })
-                  : `${chatContentWidth}px`}
-              </span>
+            }
+            description={t("themeColor.sectionDescription")}
+          >
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6">
+              {THEME_COLORS.map((color) => {
+                const isActive = themeColor === color
+                return (
+                  <button
+                    key={color}
+                    type="button"
+                    onClick={() => setThemeColor(color as ThemeColor)}
+                    aria-pressed={isActive}
+                    className={cn(
+                      "flex items-center gap-2 rounded-md border px-3 py-2 text-xs transition-colors",
+                      "hover:bg-accent hover:text-accent-foreground",
+                      isActive && "border-primary ring-2 ring-primary/30"
+                    )}
+                  >
+                    <span
+                      className="size-4 shrink-0 rounded-full border"
+                      style={{ backgroundColor: THEME_COLOR_PREVIEW[color] }}
+                      aria-hidden
+                    />
+                    <span className="truncate">
+                      {t(`themeColor.options.${color}`)}
+                    </span>
+                  </button>
+                )
+              })}
             </div>
-            <Slider
-              value={[
-                Math.min(
-                  chatContentWidth ?? CHAT_CONTENT_DEFAULT,
-                  chatWidthMax
-                ),
-              ]}
-              min={CHAT_CONTENT_MIN}
-              max={chatWidthMax}
-              step={8}
-              onValueChange={([v]) => setChatContentWidth(v)}
-              aria-label={t("chatWidth.label")}
-            />
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-2xs text-muted-foreground leading-4">
-                {t("chatWidth.hint")}
-              </p>
+          </SettingsSection>
+
+          {/* ===== Custom style (token overrides + free-form CSS) ===== */}
+          <CustomStyleSection />
+        </SettingsGroup>
+
+        <SettingsGroup label={t("groups.display")}>
+          {/* ===== Zoom Level ===== */}
+          <SettingsSection
+            icon={Type}
+            title={t("zoomLevel.sectionTitle")}
+            description={t("zoomLevel.sectionDescription")}
+            htmlFor="appearance-zoom-level"
+            control={
+              <Select
+                value={String(zoomLevel)}
+                onValueChange={(value) =>
+                  setZoomLevel(parseInt(value, 10) as ZoomLevel)
+                }
+              >
+                <SelectTrigger
+                  id="appearance-zoom-level"
+                  size="sm"
+                  className="w-40 bg-background text-xs"
+                >
+                  <SelectValue placeholder={t("zoomLevel.placeholder")} />
+                </SelectTrigger>
+                <SelectContent align="end">
+                  {ZOOM_LEVELS.map((z) => (
+                    <SelectItem key={z} value={String(z)}>
+                      {z}%
+                      {z === DEFAULT_ZOOM_LEVEL
+                        ? ` (${t("zoomLevel.default")})`
+                        : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            }
+          />
+
+          {/* ===== Fonts ===== */}
+          <FontSettingsSection />
+
+          {/* ===== Workspace background ===== */}
+          <WorkspaceBackgroundSection />
+        </SettingsGroup>
+
+        <SettingsGroup label={t("groups.conversation")}>
+          {/* ===== New conversation — mode selection area ===== */}
+          <SettingsSection
+            icon={LayoutGrid}
+            title={t("welcomePanel.sectionTitle")}
+            description={t("welcomePanel.sectionDescription")}
+            htmlFor="appearance-welcome-quick-actions"
+            control={
+              <Switch
+                id="appearance-welcome-quick-actions"
+                checked={showWelcomeQuickActions}
+                onCheckedChange={setShowWelcomeQuickActions}
+              />
+            }
+          />
+
+          {/* ===== Chat animations ===== */}
+          <SettingsSection
+            icon={Sparkles}
+            title={t("chatAnimations.sectionTitle")}
+            description={t("chatAnimations.sectionDescription")}
+            htmlFor="appearance-chat-animations"
+            control={
+              <Switch
+                id="appearance-chat-animations"
+                checked={chatAnimations}
+                onCheckedChange={setChatAnimations}
+              />
+            }
+          />
+
+          <ChatHtmlSettingsSection />
+
+          {/* ===== Chat content width ===== */}
+          <SettingsSection
+            icon={MoveHorizontal}
+            title={t("chatWidth.sectionTitle")}
+            description={t("chatWidth.sectionDescription")}
+            control={
               <Button
                 type="button"
                 variant="outline"
@@ -348,9 +298,38 @@ export function AppearanceSettings() {
               >
                 {t("chatWidth.reset")}
               </Button>
+            }
+          >
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-muted-foreground">
+                  {t("chatWidth.label")}
+                </span>
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {chatContentWidth === null
+                    ? t("chatWidth.default", { width: CHAT_CONTENT_DEFAULT })
+                    : `${chatContentWidth}px`}
+                </span>
+              </div>
+              <Slider
+                value={[
+                  Math.min(
+                    chatContentWidth ?? CHAT_CONTENT_DEFAULT,
+                    chatWidthMax
+                  ),
+                ]}
+                min={CHAT_CONTENT_MIN}
+                max={chatWidthMax}
+                step={8}
+                onValueChange={([v]) => setChatContentWidth(v)}
+                aria-label={t("chatWidth.label")}
+              />
+              <p className="text-2xs text-muted-foreground leading-4">
+                {t("chatWidth.hint")}
+              </p>
             </div>
-          </div>
-        </section>
+          </SettingsSection>
+        </SettingsGroup>
 
         {/* ===== Desktop Pet ===== */}
         <PetManagerSection />

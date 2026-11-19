@@ -38,7 +38,9 @@ import { toast } from "sonner"
 import { ComputerSettingsSection } from "@/components/settings/computer-settings"
 import { SettingCard, SettingRow } from "@/components/shared/setting-card"
 import {
+  SETTINGS_FORM_WIDTH,
   SettingsError,
+  SettingsPageHeader,
   SettingsSection,
 } from "@/components/shared/settings-section"
 import {
@@ -69,6 +71,7 @@ import {
   codegHoldsPermission,
   useComputerStatus,
 } from "@/lib/computer/use-computer-status"
+import { cn } from "@/lib/utils"
 
 export function ComputerUseSettings() {
   const t = useTranslations("ComputerUse.settings")
@@ -94,13 +97,11 @@ export function ComputerUseSettings() {
 
   return (
     <ScrollArea className="h-full">
-      <div className="w-full space-y-4 p-3 md:p-4">
-        <section className="space-y-1">
-          <h1 className="text-sm font-semibold">{t("pageTitle")}</h1>
-          <p className="text-xs text-muted-foreground">
-            {t("pageDescription")}
-          </p>
-        </section>
+      <div className={cn(SETTINGS_FORM_WIDTH, "space-y-4 p-3 md:p-4")}>
+        <SettingsPageHeader
+          title={t("pageTitle")}
+          description={t("pageDescription")}
+        />
 
         <SettingsSection
           icon={Monitor}

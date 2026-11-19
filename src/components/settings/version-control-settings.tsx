@@ -53,6 +53,11 @@ import type {
 import { toErrorMessage } from "@/lib/app-error"
 import { AddForgeAccountDialog } from "./add-forge-account-dialog"
 import { AddGitAccountDialog } from "./add-git-account-dialog"
+import {
+  SETTINGS_FORM_WIDTH,
+  SettingsPageHeader,
+} from "@/components/shared/settings-section"
+import { cn } from "@/lib/utils"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -450,13 +455,11 @@ export function VersionControlSettings() {
 
   return (
     <ScrollArea className="h-full">
-      <div className="w-full space-y-4 p-3 md:p-4">
-        <section className="space-y-1">
-          <h1 className="text-sm font-semibold">{t("sectionTitle")}</h1>
-          <p className="text-xs text-muted-foreground">
-            {t("sectionDescription")}
-          </p>
-        </section>
+      <div className={cn(SETTINGS_FORM_WIDTH, "space-y-4 p-3 md:p-4")}>
+        <SettingsPageHeader
+          title={t("sectionTitle")}
+          description={t("sectionDescription")}
+        />
 
         {/* ---- Git Configuration ---- */}
         <section className="rounded-xl border bg-card p-4 space-y-4">
