@@ -65,6 +65,16 @@ export function reconnectWebNow(): void {
 }
 
 /**
+ * Actively verify transport liveness (called on `online`, `pageshow`, and
+ * `visibilitychange` back to visible). Probes immediately if already
+ * reconnecting, or sends a WebSocket ping when supposedly connected so a
+ * half-open zombie socket is caught and rebuilt quickly.
+ */
+export function verifyWebConnection(): void {
+  webTransport()?.verifyConnection()
+}
+
+/**
  * Funnel a definitive HTTP 401 (e.g. from a raw file-upload fetch in
  * `lib/api.ts` that bypasses `WebTransport.call`) into the same unauthorized
  * dialog state, rather than an abrupt redirect. No-op off the web shell.

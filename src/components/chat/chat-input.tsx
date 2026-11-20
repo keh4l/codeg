@@ -52,7 +52,11 @@ interface ChatInputProps {
    *  tab when tiled across multiple sessions; passed through to MessageInput. */
   showActiveFlow?: boolean
   queue?: QueuedMessage[]
-  onEnqueue?: (draft: PromptDraft, modeId: string | null) => void
+  onEnqueue?: (
+    draft: PromptDraft,
+    modeId: string | null,
+    opts?: { adoptSendTimeMode?: boolean }
+  ) => void
   onQueueReorder?: (items: QueuedMessage[]) => void
   onQueueEdit?: (id: string) => void
   onQueueDelete?: (id: string) => void
@@ -165,6 +169,21 @@ export const ChatInput = memo(function ChatInput({
   // and is bounded: `selectors_ready` fires on every establishment path whether
   // or not the agent has any commands, so this can never hang on a spinner.
   const commandsLoading = isConnecting || selectorsLoading
+  // While connecting or waiting for `selectors_ready`, keep the composer
+  // unlocked whenever the host provides a message queue: the user can start
+  // typing immediately and press Enter to queue the draft, which flushes
+  // automatically as soon as the session is ready. Surfaces without a queue
+  // (e.g. canvas cards) or genuinely dead connections (`error` / `disconnected`
+  // / `null`) keep the disabled state.
+  const queueWhileConnecting =
+    !allowOfflineCompose &&
+    Boolean(onEnqueue) &&
+    (isConnecting || (isConnected && selectorsLoading))
+  const composerDisabled = allowOfflineCompose
+    ? false
+    : queueWhileConnecting
+      ? false
+      : (!isConnected && !isPrompting) || selectorsLoading
 
   // Active/historical conversations dock the composer at the very bottom of the
   // message list. The attached folder/branch selector row now sits at the
@@ -201,6 +220,7 @@ export const ChatInput = memo(function ChatInput({
             editingItemId={editingItemId ?? null}
             onSteerItem={onQueueSteer}
             steerChannel={steerChannel}
+            waitingForConnection={queueWhileConnecting}
           />
         )}
       <MessageInput
@@ -208,12 +228,9 @@ export const ChatInput = memo(function ChatInput({
         promptCapabilities={promptCapabilities}
         onFocus={onFocus}
         defaultPath={defaultPath}
-        disabled={
-          allowOfflineCompose
-            ? false
-            : (!isConnected && !isPrompting) || selectorsLoading
-        }
+        disabled={composerDisabled}
         isPrompting={isPrompting}
+        queueOnSubmit={queueWhileConnecting}
         onCancel={onCancel}
         modes={modes}
         configOptions={configOptions}
@@ -246,11 +263,13 @@ export const ChatInput = memo(function ChatInput({
         injectContent={injectContent}
         onInjectConsumed={onInjectConsumed}
         placeholder={
-          isConnecting
-            ? t("connecting")
-            : isPrompting
-              ? t("agentResponding", { agent: agentName ?? "Agent" })
-              : t("sendMessage")
+          queueWhileConnecting
+            ? t("connectingQueueHint")
+            : isConnecting
+              ? t("connecting")
+              : isPrompting
+                ? t("agentResponding", { agent: agentName ?? "Agent" })
+                : t("sendMessage")
         }
         // The floor goes through `tall`, not through a `min-h-*` here: the box
         // and its editable area carry two halves of the same number, and only

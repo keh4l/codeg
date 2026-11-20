@@ -72,7 +72,10 @@ pub mod work_task_tools;
 pub mod zcode;
 pub(crate) mod zcode_turn;
 
-pub use idle_sweep::{idle_sweep_task, idle_timeout_from_env, SWEEP_INTERVAL_SECS};
+pub use idle_sweep::{
+    idle_sweep_task, idle_timeout_from_env, idle_timeout_from_env_with_default,
+    DEFAULT_SERVER_IDLE_TIMEOUT_SECS, SWEEP_INTERVAL_SECS,
+};
 pub use internal_bus::{EventBusMetrics, EventBusMetricsSnapshot, InternalEventBus};
 pub use lifecycle::lifecycle_subscriber_task;
 pub use session_state::{LiveSessionSnapshot, SessionState};

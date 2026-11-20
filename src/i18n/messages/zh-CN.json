@@ -3539,7 +3539,8 @@
       "chatInput": {
         "connecting": "连接中...",
         "agentResponding": "{agent} 正在响应...",
-        "sendMessage": "发送消息..."
+        "sendMessage": "发送消息...",
+        "connectingQueueHint": "正在连接…可直接输入，回车后就绪自动发送"
       },
       "messageInput": {
         "askAnything": "请开始输入...",
@@ -3621,7 +3622,8 @@
         "editItem": "编辑",
         "deleteItem": "删除",
         "steerItemNow": "插入当前回合",
-        "steerItemAsNote": "作为留言，供下次检查时读取"
+        "steerItemAsNote": "作为留言，供下次检查时读取",
+        "waitingForConnection": "正在连接，就绪后自动发送"
       },
       "welcomeInputPanel": {
         "agentsSettingsPath": "设置 > Agents",

@@ -169,4 +169,13 @@ describe("MessageQueueDisplay click-to-insert", () => {
     })
     expect(screen.getAllByTitle(TQ.steerItemNow)).toHaveLength(1)
   })
+
+  it("shows a waiting-for-connection notice only while waitingForConnection is true", () => {
+    renderDisplay({ waitingForConnection: false })
+    expect(screen.queryByText(TQ.waitingForConnection)).toBeNull()
+    cleanup()
+
+    renderDisplay({ waitingForConnection: true })
+    expect(screen.getByText(TQ.waitingForConnection)).toBeInTheDocument()
+  })
 })

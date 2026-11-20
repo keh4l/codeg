@@ -18,6 +18,7 @@ import {
   getWebConnectionSnapshot,
   reconnectWebNow,
   subscribeWebConnection,
+  verifyWebConnection,
 } from "@/lib/transport/web-connection-store"
 import { redirectToCodegLogin } from "@/lib/transport/web-auth"
 
@@ -64,23 +65,26 @@ export function WebConnectionGuard() {
     }
   }, [state])
 
-  // Fast recovery on network restore / tab wake. Backoff caps at 32s, but the
-  // browser signals the instant connectivity returns (`online`) or the tab
-  // becomes visible after sleep — probe right away instead of waiting out the
-  // remaining backoff (sleep/wake and Wi‑Fi flaps are the common triggers).
-  // Guarded to "reconnecting" so a healthy link is never torn down; the store
-  // accessors are no-ops off web, so this is inert on desktop/SSR.
+  // Fast recovery + half-open detection on network restore / tab wake.
+  // Backoff caps at 32s, and sleep/wake or Wi-Fi switches often leave the
+  // socket looking "connected" (half-open) with no `onclose`. Always ask the
+  // transport to verify liveness on `online`, `pageshow`, and `visibilitychange`
+  // back to visible: reconnecting states probe immediately, while connected
+  // sockets fire a lightweight ping/pong check without disrupting a healthy
+  // link. No-op off web/SSR.
   useEffect(() => {
-    const nudgeIfReconnecting = () => {
-      if (getWebConnectionSnapshot() === "reconnecting") reconnectWebNow()
+    const verify = () => {
+      verifyWebConnection()
     }
     const onVisible = () => {
-      if (document.visibilityState === "visible") nudgeIfReconnecting()
+      if (document.visibilityState === "visible") verify()
     }
-    window.addEventListener("online", nudgeIfReconnecting)
+    window.addEventListener("online", verify)
+    window.addEventListener("pageshow", verify)
     document.addEventListener("visibilitychange", onVisible)
     return () => {
-      window.removeEventListener("online", nudgeIfReconnecting)
+      window.removeEventListener("online", verify)
+      window.removeEventListener("pageshow", verify)
       document.removeEventListener("visibilitychange", onVisible)
     }
   }, [])
@@ -92,7 +96,33 @@ export function WebConnectionGuard() {
   // proxy run its own login flow and keeps the token; "Go to login" stays as
   // the way out should the proxy keep refusing after the reload.
   const showProxyUnauthorized = state === "proxyUnauthorized"
-  const open = showReconnecting || showUnauthorized || showProxyUnauthorized
+
+  // Non-blocking floating status pill for transient disconnects so the user can
+  // keep reading conversation history and drafting messages while reconnecting
+  // (matches RemoteConnectionStatus). Only definitive auth expirations block
+  // the page with a modal dialog.
+  if (showReconnecting) {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="fixed inset-x-4 bottom-4 z-50 mx-auto flex w-fit max-w-[calc(100%_-_2rem)] items-center gap-3 rounded-xl border bg-background/95 px-4 py-2.5 text-sm shadow-lg backdrop-blur-sm"
+      >
+        <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" />
+        <div className="min-w-0">
+          <p className="font-medium leading-snug">{t("disconnectedTitle")}</p>
+          <p className="text-xs text-muted-foreground">
+            {t("reconnectingDescription")}
+          </p>
+        </div>
+        <Button size="sm" variant="outline" onClick={() => reconnectWebNow()}>
+          {t("reconnectNow")}
+        </Button>
+      </div>
+    )
+  }
+
+  const open = showUnauthorized || showProxyUnauthorized
 
   if (!open) return null
 
@@ -106,25 +136,17 @@ export function WebConnectionGuard() {
       >
         <AlertDialogHeader>
           <AlertDialogMedia>
-            {showUnauthorized || showProxyUnauthorized ? (
-              <ShieldAlert className="text-destructive" />
-            ) : (
-              <Loader2 className="animate-spin" />
-            )}
+            <ShieldAlert className="text-destructive" />
           </AlertDialogMedia>
           <AlertDialogTitle>
             {showProxyUnauthorized
               ? t("proxySignInTitle")
-              : showUnauthorized
-                ? t("sessionExpiredTitle")
-                : t("disconnectedTitle")}
+              : t("sessionExpiredTitle")}
           </AlertDialogTitle>
           <AlertDialogDescription>
             {showProxyUnauthorized
               ? t("proxySignInDescription")
-              : showUnauthorized
-                ? t("sessionExpiredDescription")
-                : t("reconnectingDescription")}
+              : t("sessionExpiredDescription")}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -137,13 +159,9 @@ export function WebConnectionGuard() {
                 {t("reloadPage")}
               </Button>
             </>
-          ) : showUnauthorized ? (
+          ) : (
             <Button onClick={() => redirectToCodegLogin()}>
               {t("goToLogin")}
-            </Button>
-          ) : (
-            <Button onClick={() => reconnectWebNow()}>
-              {t("reconnectNow")}
             </Button>
           )}
         </AlertDialogFooter>

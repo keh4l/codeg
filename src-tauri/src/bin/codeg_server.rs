@@ -632,9 +632,12 @@ async fn async_main(
 
     // Spawn the idle sweep so connections abandoned without an explicit
     // disconnect (e.g. browser tab closed, panic survivors) are reaped.
-    // Override the 60-second default via `CODEG_ACP_IDLE_TIMEOUT_SECS`
-    // (set to `0` to disable).
-    if let Some(idle_timeout) = codeg_lib::idle_timeout_from_env() {
+    // Defaults to 30 minutes in server mode so mobile/web clients returning
+    // after lock-screen or background tab throttling keep their agent warm;
+    // override via `CODEG_ACP_IDLE_TIMEOUT_SECS` (set to `0` to disable).
+    if let Some(idle_timeout) = codeg_lib::idle_timeout_from_env_with_default(
+        codeg_lib::DEFAULT_SERVER_IDLE_TIMEOUT_SECS,
+    ) {
         tokio::spawn(codeg_lib::idle_sweep_task(
             state.connection_manager.clone_ref(),
             idle_timeout,

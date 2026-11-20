@@ -293,6 +293,90 @@ export function useConnectionLifecycle({
     }
   }, [isActive, workingDir, agentType])
 
+  // Auto-reconnect on foreground wake when the active tab's connection was
+  // reaped while the browser tab was backgrounded / device was locked.
+  // Two paths are covered without risking a reconnect loop:
+  //   1. Already `disconnected` at wake time → reconnect immediately once.
+  //   2. Still reading `connected` / `prompting` at wake time, then settled to
+  //      `disconnected` by the immediate keepalive liveness probe within
+  //      WAKE_RECOVERY_WINDOW_MS → reconnect once (consumes the wake timestamp
+  //      so a subsequent disconnect or failure never loops).
+  // `error` is intentionally excluded so permanent errors (uninstalled CLI,
+  // broken config) never auto-retry in a loop.
+  const WAKE_RECOVERY_WINDOW_MS = 15_000
+  const lastWakeAtRef = useRef(0)
+  const triggerWakeReconnect = useCallback(() => {
+    if (!isActive || !workingDir) return
+    lastWakeAtRef.current = 0
+    setLastAutoConnectError(null)
+    connConnectRef
+      .current(
+        agentType,
+        workingDir,
+        sessionIdRef.current,
+        conversationIdRef.current
+      )
+      .catch((e: unknown) => {
+        if (!isExpectedConnectError(e)) {
+          console.error("[ConnLifecycle] wake reconnect:", e)
+        }
+      })
+  }, [isActive, workingDir, agentType])
+
+  useEffect(() => {
+    if (!isActive || !workingDir) return
+    const onWake = () => {
+      if (
+        typeof document !== "undefined" &&
+        document.visibilityState === "hidden"
+      ) {
+        return
+      }
+      touchActivity(contextKeyRef.current)
+      if (statusRef.current === "disconnected") {
+        triggerWakeReconnect()
+      } else {
+        lastWakeAtRef.current = Date.now()
+      }
+    }
+    const onVisible = () => {
+      if (document.visibilityState === "visible") onWake()
+    }
+    document.addEventListener("visibilitychange", onVisible)
+    window.addEventListener("pageshow", onWake)
+    window.addEventListener("online", onWake)
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible)
+      window.removeEventListener("pageshow", onWake)
+      window.removeEventListener("online", onWake)
+    }
+  }, [isActive, workingDir, touchActivity, triggerWakeReconnect])
+
+  const prevWakeStatusRef = useRef(status)
+  useEffect(() => {
+    const prev = prevWakeStatusRef.current
+    prevWakeStatusRef.current = status
+    if (
+      status !== "disconnected" ||
+      (prev !== "connected" && prev !== "prompting")
+    ) {
+      return
+    }
+    if (!isActive || !workingDir) return
+    if (
+      typeof document !== "undefined" &&
+      document.visibilityState === "hidden"
+    ) {
+      return
+    }
+    if (
+      lastWakeAtRef.current > 0 &&
+      Date.now() - lastWakeAtRef.current <= WAKE_RECOVERY_WINDOW_MS
+    ) {
+      triggerWakeReconnect()
+    }
+  }, [status, isActive, workingDir, triggerWakeReconnect])
+
   // Status-bar task for the two legs that precede a usable session:
   //   "preparing"  — the caller is resolving what to connect to (see `preparing`)
   //   "connecting" — `connect()` is in flight: agent spawn, ACP `initialize`,

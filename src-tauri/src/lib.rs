@@ -17,7 +17,8 @@ pub mod acp;
 pub mod acp_transcript;
 pub mod agent_turn_files;
 pub use acp::{
-    idle_sweep_task, idle_timeout_from_env, lifecycle_subscriber_task, SWEEP_INTERVAL_SECS,
+    idle_sweep_task, idle_timeout_from_env, idle_timeout_from_env_with_default,
+    lifecycle_subscriber_task, DEFAULT_SERVER_IDLE_TIMEOUT_SECS, SWEEP_INTERVAL_SECS,
 };
 pub use acp::scratch_dir::scratch_sweep_task;
 pub use network::proxy::init_proxy_from_db;

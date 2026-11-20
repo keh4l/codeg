@@ -3539,7 +3539,8 @@
       "chatInput": {
         "connecting": "Connecting...",
         "agentResponding": "{agent} is responding...",
-        "sendMessage": "Send a message..."
+        "sendMessage": "Send a message...",
+        "connectingQueueHint": "Connecting... type now and press Enter to queue"
       },
       "messageInput": {
         "askAnything": "Ask anything...",
@@ -3621,7 +3622,8 @@
         "editItem": "Edit",
         "deleteItem": "Remove",
         "steerItemNow": "Insert into current turn",
-        "steerItemAsNote": "Send as note for next check"
+        "steerItemAsNote": "Send as note for next check",
+        "waitingForConnection": "Connecting... will send automatically once ready"
       },
       "welcomeInputPanel": {
         "agentsSettingsPath": "Settings > Agents",

@@ -3539,7 +3539,8 @@
       "chatInput": {
         "connecting": "جارٍ الاتصال...",
         "agentResponding": "{agent} يرد...",
-        "sendMessage": "أرسل رسالة..."
+        "sendMessage": "أرسل رسالة...",
+        "connectingQueueHint": "جارٍ الاتصال… اكتب الآن واضغط Enter للإضافة إلى قائمة الانتظار"
       },
       "messageInput": {
         "askAnything": "اسأل أي شيء...",
@@ -3621,7 +3622,8 @@
         "editItem": "تعديل",
         "deleteItem": "حذف",
         "steerItemNow": "إدراج في الدور الحالي",
-        "steerItemAsNote": "إرسال كملاحظة للفحص التالي"
+        "steerItemAsNote": "إرسال كملاحظة للفحص التالي",
+        "waitingForConnection": "جارٍ الاتصال… سيتم الإرسال تلقائيًا عند الجاهزية"
       },
       "welcomeInputPanel": {
         "agentsSettingsPath": "الإعدادات > الوكلاء",

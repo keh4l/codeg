@@ -117,7 +117,11 @@ interface ConversationShellProps {
    *  active tab only). Threaded straight through to the composer. */
   showActiveFlow?: boolean
   queue?: QueuedMessage[]
-  onEnqueue?: (draft: PromptDraft, modeId: string | null) => void
+  onEnqueue?: (
+    draft: PromptDraft,
+    modeId: string | null,
+    opts?: { adoptSendTimeMode?: boolean }
+  ) => void
   onQueueReorder?: (items: QueuedMessage[]) => void
   onQueueEdit?: (id: string) => void
   onQueueDelete?: (id: string) => void

@@ -29,6 +29,7 @@ const store = vi.hoisted(() => {
       listeners.clear()
     },
     reconnectWebNow: vi.fn(),
+    verifyWebConnection: vi.fn(),
     redirectToCodegLogin: vi.fn(),
   }
 })
@@ -38,6 +39,7 @@ vi.mock("@/lib/transport/web-connection-store", () => ({
   getWebConnectionSnapshot: store.getState,
   getWebConnectionServerSnapshot: () => "connected",
   reconnectWebNow: store.reconnectWebNow,
+  verifyWebConnection: store.verifyWebConnection,
   notifyWebUnauthorized: vi.fn(),
 }))
 
@@ -61,6 +63,7 @@ beforeEach(() => {
   vi.useFakeTimers()
   store.reset()
   store.reconnectWebNow.mockClear()
+  store.verifyWebConnection.mockClear()
   store.redirectToCodegLogin.mockClear()
 })
 
@@ -75,15 +78,17 @@ describe("WebConnectionGuard", () => {
     expect(screen.queryByText("Connection lost")).not.toBeInTheDocument()
   })
 
-  it("stays hidden during the grace window, then shows the reconnecting dialog", () => {
+  it("stays hidden during the grace window, then shows a non-blocking reconnecting banner", () => {
     renderGuard()
     act(() => store.setState("reconnecting"))
-    // Within the grace window — a brief blip must not flash a modal.
+    // Within the grace window — a brief blip must not flash a banner.
     expect(screen.queryByText("Connection lost")).not.toBeInTheDocument()
 
     act(() => {
       vi.advanceTimersByTime(4000)
     })
+    expect(screen.getByRole("status")).toBeInTheDocument()
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument()
     expect(screen.getByText("Connection lost")).toBeInTheDocument()
     expect(
       screen.getByRole("button", { name: "Reconnect now" })
@@ -143,22 +148,15 @@ describe("WebConnectionGuard", () => {
     expect(screen.queryByText("Connection lost")).not.toBeInTheDocument()
   })
 
-  it("probes immediately on network restore while reconnecting", () => {
-    renderGuard()
-    act(() => store.setState("reconnecting"))
-    store.reconnectWebNow.mockClear()
-
-    act(() => {
-      window.dispatchEvent(new Event("online"))
-    })
-    expect(store.reconnectWebNow).toHaveBeenCalledTimes(1)
-  })
-
-  it("does not nudge on network events while connected", () => {
+  it("verifies connection on network restore, pageshow, and tab wake", () => {
     renderGuard()
     act(() => {
       window.dispatchEvent(new Event("online"))
+      window.dispatchEvent(new Event("pageshow"))
+      document.dispatchEvent(new Event("visibilitychange"))
     })
+    expect(store.verifyWebConnection).toHaveBeenCalledTimes(3)
+    // Connected state relies on lightweight ping verification, not forced teardown.
     expect(store.reconnectWebNow).not.toHaveBeenCalled()
   })
 })

@@ -3539,7 +3539,8 @@
       "chatInput": {
         "connecting": "연결 중...",
         "agentResponding": "{agent} 응답 중...",
-        "sendMessage": "메시지 보내기..."
+        "sendMessage": "메시지 보내기...",
+        "connectingQueueHint": "연결 중… 지금 입력하고 Enter를 누르면 준비 후 자동 전송됩니다"
       },
       "messageInput": {
         "askAnything": "무엇이든 물어보세요...",
@@ -3621,7 +3622,8 @@
         "editItem": "편집",
         "deleteItem": "삭제",
         "steerItemNow": "현재 턴에 삽입",
-        "steerItemAsNote": "메모로 보내 다음 점검 때 읽도록 함"
+        "steerItemAsNote": "메모로 보내 다음 점검 때 읽도록 함",
+        "waitingForConnection": "연결 중… 준비되면 자동으로 전송됩니다"
       },
       "welcomeInputPanel": {
         "agentsSettingsPath": "설정 > 에이전트",

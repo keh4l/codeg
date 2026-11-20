@@ -168,4 +168,38 @@ describe("ChatInput slash-command loading window", () => {
     expect(renderStatus({ status: "error" })?.disabled).toBe(true)
     expect(renderStatus({ status: "disconnected" })?.disabled).toBe(true)
   })
+
+  it("keeps the composer unlocked and queues submits while connecting when a queue is wired", () => {
+    const onEnqueue = vi.fn()
+    const connecting = renderStatus({ status: "connecting", onEnqueue })
+    expect(connecting?.disabled).toBe(false)
+    expect(connecting?.queueOnSubmit).toBe(true)
+
+    const initializing = renderStatus({
+      status: "connected",
+      selectorsLoading: true,
+      onEnqueue,
+    })
+    expect(initializing?.disabled).toBe(false)
+    expect(initializing?.queueOnSubmit).toBe(true)
+
+    // Without a queue handler (e.g. canvas cards), connecting remains disabled.
+    const noQueue = renderStatus({ status: "connecting" })
+    expect(noQueue?.disabled).toBe(true)
+    expect(noQueue?.queueOnSubmit).toBe(false)
+
+    // Dead connections stay disabled even when a queue is wired (and even if
+    // selectorsLoading is transiently true).
+    expect(
+      renderStatus({ status: "error", selectorsLoading: true, onEnqueue })
+        ?.disabled
+    ).toBe(true)
+    expect(
+      renderStatus({
+        status: "disconnected",
+        selectorsLoading: true,
+        onEnqueue,
+      })?.disabled
+    ).toBe(true)
+  })
 })

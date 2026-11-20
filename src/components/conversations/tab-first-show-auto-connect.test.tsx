@@ -302,9 +302,9 @@ describe("TabViewGate mirrors ConversationTabView", () => {
     expect(panel).toContain("isVisible={visible}")
   })
 
-  it("holds the auto-connect on detailLoading", () => {
+  it("holds the auto-connect on detailLoading only when externalId is not yet known", () => {
     expect(panel).toMatch(
-      /const awaitingHistoricalSessionId =\s+hasPersistedConversation && selectedAgent !== "cline" && detailLoading/
+      /const awaitingHistoricalSessionId =\s+hasPersistedConversation &&\s+selectedAgent !== "cline" &&\s+detailLoading &&\s+!externalId/
     )
     expect(panel).toContain("!awaitingHistoricalSessionId &&")
     expect(panel).toContain("isActive: isActive && canAutoConnect,")

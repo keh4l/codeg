@@ -48,6 +48,13 @@ const WS_BACKOFF_MAX_MS = 32_000
 // unreachable (keep retrying). Bounded so a SYN black-hole (dead server still
 // completing the TCP handshake) can't hang the "Reconnect now" button.
 const HEALTH_PROBE_TIMEOUT_MS = 8_000
+// Periodic application-level WebSocket heartbeat. The server's `ws.rs` replies
+// to `{"action":"ping"}` with `{"type":"pong"}`. A 20s cadence keeps NATs and
+// reverse proxies from silently dropping idle sockets and catches half-open
+// zombie connections (laptop sleep/wake, mobile network switch) within 5s
+// instead of hanging indefinitely with `readyState === OPEN`.
+const WS_PING_INTERVAL_MS = 20_000
+const WS_PONG_TIMEOUT_MS = 5_000
 
 // Connection health of the web transport, surfaced to React via
 // `subscribeConnection`/`getConnectionSnapshot` so a single global dialog can
@@ -120,6 +127,9 @@ export class WebTransport implements Transport {
   private proxyDiscoveryTimer: ReturnType<typeof setTimeout> | null = null
   private proxyDiscoveryAttempts = 0
   private proxyDiscoveryRefused = false
+  // Periodic application-level ping/pong timers for half-open WS detection.
+  private pingIntervalTimer: ReturnType<typeof setInterval> | null = null
+  private pongTimeoutTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl
@@ -308,6 +318,39 @@ export class WebTransport implements Transport {
   }
 
   /**
+   * Actively verify connection liveness (called on `visibilitychange` back to
+   * visible, `pageshow`, and `online`):
+   * - If already `reconnecting`, triggers an immediate health probe instead of
+   *   waiting out exponential backoff.
+   * - If `connected` with an open socket, sends an immediate ping frame so a
+   *   half-open zombie connection (e.g. after sleep/wake or NAT timeout) is
+   *   detected and rebuilt within `WS_PONG_TIMEOUT_MS`.
+   * - If `unauthorized` / `proxyUnauthorized`, does nothing.
+   */
+  verifyConnection(): void {
+    if (this.destroyed) return
+    if (
+      this.connState === "unauthorized" ||
+      this.connState === "proxyUnauthorized"
+    ) {
+      return
+    }
+    if (this.connState === "reconnecting") {
+      this.reconnectNow()
+      return
+    }
+    if (this.wsOpen && this.ws?.readyState === WebSocket.OPEN) {
+      this.sendPing()
+    } else if (
+      !this.ws &&
+      hasCodegCredentials() &&
+      (this.handlers.size > 0 || this.eventStreamInstance !== null)
+    ) {
+      this.connectWs()
+    }
+  }
+
+  /**
    * Enter the unauthorized state: a definitive 401 was observed (token
    * rejected, or a proxy's session expired). Stop reconnecting and let the
    * dialog prompt re-login. Does NOT clear the token — that happens when the
@@ -444,6 +487,7 @@ export class WebTransport implements Transport {
 
     this.ws.onopen = () => {
       this.wsOpen = true
+      this.startHeartbeat()
       // NB: connection health is NOT flipped to "connected" here. `onopen`
       // only means the socket is physically up; the application-level
       // "ready" signal is the server's `__ready__` frame (see onmessage),
@@ -466,6 +510,8 @@ export class WebTransport implements Transport {
     }
 
     this.ws.onmessage = (msg) => {
+      // Any incoming frame proves the server-to-client path is alive.
+      this.clearPongTimeout()
       try {
         const parsed = JSON.parse(msg.data) as unknown
         // Attach-protocol frames carry a `type` discriminator; legacy
@@ -476,6 +522,9 @@ export class WebTransport implements Transport {
           typeof parsed === "object" &&
           "type" in (parsed as object)
         ) {
+          if ((parsed as { type?: unknown }).type === "pong") {
+            return
+          }
           this.eventStreamInstance?.handleServerFrame(parsed)
           return
         }
@@ -524,6 +573,7 @@ export class WebTransport implements Transport {
     }
 
     this.ws.onclose = () => {
+      this.stopHeartbeat()
       this.ws = null
       this.wsOpen = false
       // New subscribers (and any concurrent subscribe() calls in flight)
@@ -627,11 +677,65 @@ export class WebTransport implements Transport {
     }
   }
 
+  private startHeartbeat() {
+    this.stopHeartbeat()
+    this.pingIntervalTimer = setInterval(() => {
+      this.sendPing()
+    }, WS_PING_INTERVAL_MS)
+  }
+
+  private clearPongTimeout() {
+    if (this.pongTimeoutTimer !== null) {
+      clearTimeout(this.pongTimeoutTimer)
+      this.pongTimeoutTimer = null
+    }
+  }
+
+  private stopHeartbeat() {
+    if (this.pingIntervalTimer !== null) {
+      clearInterval(this.pingIntervalTimer)
+      this.pingIntervalTimer = null
+    }
+    this.clearPongTimeout()
+  }
+
+  private sendPing() {
+    if (
+      this.destroyed ||
+      !this.wsOpen ||
+      !this.ws ||
+      this.ws.readyState !== WebSocket.OPEN
+    ) {
+      return
+    }
+    // Already waiting on a pong — keep the earlier deadline.
+    if (this.pongTimeoutTimer !== null) return
+    if (!this.sendWsFrame({ action: "ping" })) {
+      this.handleHeartbeatTimeout()
+      return
+    }
+    this.pongTimeoutTimer = setTimeout(() => {
+      this.pongTimeoutTimer = null
+      this.handleHeartbeatTimeout()
+    }, WS_PONG_TIMEOUT_MS)
+  }
+
+  private handleHeartbeatTimeout() {
+    if (this.destroyed) return
+    this.stopHeartbeat()
+    this.teardownWs()
+    this.resetReady()
+    this.wsFailCount = 0
+    this.setConnState("reconnecting")
+    void this.probeHealth()
+  }
+
   // Detach handlers BEFORE close() so the browser's async onclose can't see
   // this instance and drive a spurious state transition / backoff schedule.
   // Shared by connectWs (pre-rebuild), reconnectNow, markUnauthorized, and
   // destroy. Idempotent — a no-op when there's no live socket.
   private teardownWs() {
+    this.stopHeartbeat()
     if (this.ws) {
       this.ws.onopen = null
       this.ws.onmessage = null

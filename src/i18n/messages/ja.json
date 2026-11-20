@@ -3539,7 +3539,8 @@
       "chatInput": {
         "connecting": "接続中...",
         "agentResponding": "{agent} が応答中...",
-        "sendMessage": "メッセージを送信..."
+        "sendMessage": "メッセージを送信...",
+        "connectingQueueHint": "接続中…入力して Enter で送信予約できます"
       },
       "messageInput": {
         "askAnything": "何でも質問してください...",
@@ -3621,7 +3622,8 @@
         "editItem": "編集",
         "deleteItem": "削除",
         "steerItemNow": "現在のターンに挿入",
-        "steerItemAsNote": "メモとして送信し次回チェック時に読ませる"
+        "steerItemAsNote": "メモとして送信し次回チェック時に読ませる",
+        "waitingForConnection": "接続中…準備完了後に自動送信します"
       },
       "welcomeInputPanel": {
         "agentsSettingsPath": "設定 > エージェント",

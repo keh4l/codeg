@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState, type PointerEvent } from "react"
 import { Reorder, useDragControls } from "motion/react"
-import { Clock, GripVertical, Pencil, X, Zap } from "lucide-react"
+import { Clock, GripVertical, Loader2, Pencil, X, Zap } from "lucide-react"
 import { useTranslations } from "next-intl"
 import { cn } from "@/lib/utils"
 import { draftRidesBlocks } from "@/lib/prompt-draft"
@@ -26,6 +26,9 @@ interface MessageQueueDisplayProps {
    *  mirroring the composer's split-button (`Zap` = instant insert,
    *  `Clock` = note the agent reads on its next check). */
   steerChannel?: "native" | "pull"
+  /** True when the session is still connecting / initializing selectors so the
+   *  queued messages will auto-send as soon as the agent is ready. */
+  waitingForConnection?: boolean
 }
 
 interface QueueItemProps {
@@ -150,7 +153,9 @@ export function MessageQueueDisplay({
   editingItemId,
   onSteerItem,
   steerChannel = "pull",
+  waitingForConnection = false,
 }: MessageQueueDisplayProps) {
+  const t = useTranslations("Folder.chat.messageQueue")
   // The id whose insert is in flight. A per-row `steering` would let a
   // concurrent click on another row race the same channel; one shared id
   // both disables the clicked row and (via `steeringId !== null`) the others
@@ -181,6 +186,12 @@ export function MessageQueueDisplay({
 
   return (
     <div className="max-h-28 overflow-y-auto pb-1">
+      {waitingForConnection && (
+        <div className="flex items-center gap-1.5 px-1 pb-1 text-3xs text-muted-foreground">
+          <Loader2 className="h-2.5 w-2.5 shrink-0 animate-spin" />
+          <span>{t("waitingForConnection")}</span>
+        </div>
+      )}
       <Reorder.Group
         as="div"
         axis="y"

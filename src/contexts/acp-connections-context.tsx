@@ -7242,7 +7242,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const pending = new Map<string, Set<string>>()
     let disposed = false
-    const timer = setInterval(() => {
+    const runKeepaliveProbe = () => {
       const currentActiveKey = storeRef.current.activeKey
       const currentOpenTabKeys = heldOpenKeys()
       const seen = new Set<string>()
@@ -7276,11 +7276,27 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
             if (contexts.size === 0) pending.delete(connectionId)
           })
       }
-    }, CONNECTION_KEEPALIVE_INTERVAL_MS)
+    }
+    const timer = setInterval(
+      runKeepaliveProbe,
+      CONNECTION_KEEPALIVE_INTERVAL_MS
+    )
+    // Browsers throttle or freeze `setInterval` while hidden / locked. Run an
+    // immediate keepalive + liveness check the instant the user returns to the
+    // tab or regains network connectivity instead of waiting up to 30s.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") runKeepaliveProbe()
+    }
+    document.addEventListener("visibilitychange", onVisible)
+    window.addEventListener("pageshow", runKeepaliveProbe)
+    window.addEventListener("online", runKeepaliveProbe)
 
     return () => {
       disposed = true
       clearInterval(timer)
+      document.removeEventListener("visibilitychange", onVisible)
+      window.removeEventListener("pageshow", runKeepaliveProbe)
+      window.removeEventListener("online", runKeepaliveProbe)
     }
   }, [heldOpenKeys, isConnectionLiveOnBackend, markConnectionGone])
 

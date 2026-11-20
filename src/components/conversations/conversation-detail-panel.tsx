@@ -601,8 +601,24 @@ const ConversationTabView = memo(function ConversationTabView({
   // it every reconnect passes sessionId=undefined → backend takes session/new
   // → DB.external_id is overwritten on the next prompt → original sid
   // orphaned, agent loses prior context.
+  // Narrow primitive selector for this conversation's sidebar summary
+  // `external_id`. When already known in the workspace store (clicking a
+  // sidebar item or switching tabs), we can start `acp_connect` /
+  // `find_connection` in parallel with `get_conversation_detail` instead of
+  // serializing behind the full transcript fetch. `runtimeExternalId` and
+  // `detail?.summary.external_id` still take precedence so post-fork session
+  // updates never regress to a stale sidebar summary.
+  const summaryExternalId = useAppWorkspaceStore((s) =>
+    dbConversationId != null
+      ? (s.conversations.find((c) => c.id === dbConversationId)?.external_id ??
+        null)
+      : null
+  )
   const externalId =
-    runtimeExternalId ?? detail?.summary.external_id ?? undefined
+    runtimeExternalId ??
+    detail?.summary.external_id ??
+    summaryExternalId ??
+    undefined
   // For persisted conversations opened from the sidebar, wait until the
   // session's external_id has been resolved before auto-connecting.
   // Otherwise the auto-connect effect fires with sessionId=undefined and
@@ -610,13 +626,17 @@ const ConversationTabView = memo(function ConversationTabView({
   // context. cline doesn't support session resume, so it connects
   // immediately regardless.
   //
-  // `detailLoading` must already be true on the render a tab turns active,
-  // since the auto-connect effect reads this gate from that very render: a
-  // restored tab that was hidden has a runtime session but no detail, and its
-  // fetch starts only in that render's effects. `useConversationDetail`
-  // reports the fetch it is about to start as loading for exactly this.
+  // When `externalId` is already available from the runtime store or the
+  // workspace sidebar summary, do NOT block on `detailLoading` — connect in
+  // parallel with the transcript fetch to eliminate a full serial RTT.
+  // When `externalId` is not yet known (e.g. cold page refresh before sidebar
+  // summaries land, or a conversation without a bound external_id yet), still
+  // hold auto-connect until `detailLoading` settles.
   const awaitingHistoricalSessionId =
-    hasPersistedConversation && selectedAgent !== "cline" && detailLoading
+    hasPersistedConversation &&
+    selectedAgent !== "cline" &&
+    detailLoading &&
+    !externalId
   // Install status of the currently selected agent. An agent can be enabled and
   // platform-available yet have no CLI/SDK installed; selecting one can never
   // connect. Rather than firing a doomed (and racy) auto-connect whose only
@@ -746,29 +766,31 @@ const ConversationTabView = memo(function ConversationTabView({
   const effectiveConfigOptions = connIsForOtherAgent
     ? (getCachedSelectors(selectedAgent)?.configOptions ?? null)
     : conn.configOptions
-  // The live connection is ready for THIS tab only when it's connected AND its
-  // cwd matches the tab's intended working dir. A just-retargeted chat draft (or
-  // any mid-reconnect) can briefly read a stale "connected" for the PREVIOUS cwd;
-  // sending then would deliver the prompt to the wrong agent/workspace. Every
-  // direct send gates on this (handleSend), mirroring the flush effect's guard.
-  // No-op for normal conversations, whose connected cwd always equals intended.
-  // A connection still bound to a different agent is never "ready" for the
-  // selected one — it would otherwise let a send reach the previous agent.
-  const connectionReady = isConnectionReady(
-    connStatus,
-    conn.connectedWorkingDir,
-    workingDirForConnection,
-    conn.agentType,
-    selectedAgent
-  )
+  // The live connection is ready for THIS tab only when it's connected, its
+  // cwd + agent match the tab's intended workspace/agent, AND backend session
+  // initialization (`selectors_ready`) has completed. A just-retargeted chat
+  // draft (or any mid-reconnect) can briefly read a stale "connected" for the
+  // PREVIOUS cwd, and an inline send before `selectors_ready` races session
+  // init. Both direct `handleSend` and the queue auto-flush gate on this single
+  // variable so they can never drift apart.
+  const connectionReady =
+    isConnectionReady(
+      connStatus,
+      conn.connectedWorkingDir,
+      workingDirForConnection,
+      conn.agentType,
+      selectedAgent
+    ) && !selectorsLoading
   // Read by the queue auto-flush's deferred timer, which must not act on a
   // readiness reading captured a tick ago.
   const connectionReadyRef = useRef(connectionReady)
   useEffect(() => {
     connectionReadyRef.current = connectionReady
   }, [connectionReady])
-  // Present "connecting" to the composer while connected-but-not-ready, so it
-  // disables its send affordance instead of inviting a submit handleSend rejects.
+  // Present "connecting" to the composer while connected-but-not-ready (or
+  // still resolving a historical session's external_id before connect starts),
+  // so it routes submits into the auto-flush queue instead of inviting a
+  // direct submit handleSend rejects.
   // While the live connection still belongs to a different agent, present the
   // selected agent's real state: "disconnected" when it isn't installed (the
   // install banner explains why), otherwise "connecting" (the switch is in
@@ -777,9 +799,11 @@ const ConversationTabView = memo(function ConversationTabView({
     ? selectedAgentNotInstalled
       ? "disconnected"
       : "connecting"
-    : connStatus === "connected" && !connectionReady
+    : awaitingHistoricalSessionId
       ? "connecting"
-      : connStatus
+      : connStatus === "connected" && !connectionReady
+        ? "connecting"
+        : connStatus
   const connectionModes = useMemo(
     () => effectiveModes?.available_modes ?? [],
     [effectiveModes]
@@ -936,10 +960,11 @@ const ConversationTabView = memo(function ConversationTabView({
         // on a bounce, returns it to the FRONT (vs a direct send → tail).
         //
         // `adoptSendTimeMode` items were queued before this tab could know its
-        // modes (an "ask about this selection" prompt parked on a brand-new
-        // draft), so they take the mode in effect NOW. A plain `modeId === null`
-        // is left alone — that is the answer / plan-notes retry paths saying
-        // "don't touch the agent's mode", which is a different intent.
+        // modes (an "ask about this selection" prompt or a draft submitted
+        // while connecting), so they take the mode in effect NOW. A plain
+        // `modeId === null` is left alone — that is the answer / plan-notes
+        // retry paths saying "don't touch the agent's mode", which is a
+        // different intent.
         handleSendRef.current(
           next.draft,
           next.adoptSendTimeMode ? selectedModeIdRef.current : next.modeId,
@@ -948,7 +973,7 @@ const ConversationTabView = memo(function ConversationTabView({
       }
     }, wait)
     return () => clearTimeout(timer)
-    // `connectionReady` subsumes connStatus, the connection's cwd and its agent,
+    // `connectionReady` subsumes connStatus, cwd, agent, and `!selectorsLoading`,
     // so it is the only connection dependency this effect needs.
   }, [connectionReady, runtimeSyncState, msgQueue.length, queueSteerInFlight])
 
@@ -1127,13 +1152,14 @@ const ConversationTabView = memo(function ConversationTabView({
         setAgentConnectError(tWelcome("enableAgentFirstPlaceholder"))
         return
       }
-      // Connected AND the connection's cwd matches this tab's working dir. Bare
-      // `connStatus === "connected"` is not enough: a chat draft mid-reconnect can
-      // read a stale "connected" for the old cwd, and an inline send then would
-      // deliver to the wrong workspace. Same predicate the flush effect uses.
+      // Connected AND the connection's cwd/agent match AND session init
+      // (`selectors_ready`) has completed. Same single predicate the flush
+      // effect uses. Submits while connecting/initializing are routed through
+      // `onEnqueue` by `ChatInput` / `MessageInput`.
       if (!connectionReady) return
 
       const fromQueueFlush = opts?.fromQueueFlush ?? false
+
       // Preserve FIFO: a direct send issued while the queue is non-empty joins
       // the tail rather than racing ahead of the queued items. Read the
       // queue length synchronously (it reflects a same-tick bounce requeue).
@@ -2326,7 +2352,7 @@ const ConversationTabView = memo(function ConversationTabView({
           />
         </>
       }
-      status={connStatus}
+      status={composerConnStatus}
       promptCapabilities={conn.promptCapabilities}
       defaultPath={workingDirForConnection}
       agentName={getAgentLabel(selectedAgent)}
@@ -2506,6 +2532,17 @@ const ConversationTabView = memo(function ConversationTabView({
                 draftStorageKey={draftStorageKey}
                 isActive={isActive}
                 showActiveFlow={showActiveFlow}
+                queue={msgQueue}
+                onEnqueue={mqEnqueue}
+                onQueueReorder={mqReorder}
+                onQueueEdit={handleQueueEdit}
+                onQueueDelete={mqRemove}
+                editingItemId={mqEditingItemId}
+                editingDraftText={editingQueueDraftText}
+                editingDraftBlocks={editingQueueDraftBlocks}
+                isEditingQueueItem={mqEditingItemId != null}
+                onSaveQueueEdit={handleSaveQueueEdit}
+                onCancelQueueEdit={handleQueueCancelEdit}
                 onAddFeedback={
                   feedback.featureEnabled ? feedback.openDialog : undefined
                 }

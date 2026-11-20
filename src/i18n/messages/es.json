@@ -3539,7 +3539,8 @@
       "chatInput": {
         "connecting": "Conectando...",
         "agentResponding": "{agent} está respondiendo...",
-        "sendMessage": "Enviar un mensaje..."
+        "sendMessage": "Enviar un mensaje...",
+        "connectingQueueHint": "Conectando… escribe ahora y pulsa Enter para poner en cola"
       },
       "messageInput": {
         "askAnything": "Pregunta lo que sea...",
@@ -3621,7 +3622,8 @@
         "editItem": "Editar",
         "deleteItem": "Eliminar",
         "steerItemNow": "Insertar en el turno actual",
-        "steerItemAsNote": "Enviar como nota para la próxima comprobación"
+        "steerItemAsNote": "Enviar como nota para la próxima comprobación",
+        "waitingForConnection": "Conectando… se enviará automáticamente cuando esté listo"
       },
       "welcomeInputPanel": {
         "agentsSettingsPath": "Ajustes > Agentes",

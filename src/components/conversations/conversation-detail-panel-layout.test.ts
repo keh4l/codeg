@@ -675,10 +675,11 @@ describe("ConversationDetailPanel session-load failure surface", () => {
   it("resolves the connect session id from the runtime store, not from detail", () => {
     // `runtimeExternalId` is fed by BOTH sources (the effect above writes the
     // DB value into it; the connSessionId effect writes the live session), so
-    // it is always the more recently established of the two. `detail` is only
-    // the cold-open fallback.
-    expect(source).toContain(
-      "runtimeExternalId ?? detail?.summary.external_id ?? undefined"
+    // it is always the more recently established of the two. `detail` and
+    // `summaryExternalId` (for parallel connect before detail lands) are only
+    // cold-open fallbacks.
+    expect(source).toMatch(
+      /runtimeExternalId \?\?\s+detail\?\.summary\.external_id \?\?\s+summaryExternalId \?\?\s+undefined/
     )
     // The regression this guards, and it is not cosmetic. A fork re-points
     // THIS row at S2 and inserts a sibling row holding S1. The panel learns S2

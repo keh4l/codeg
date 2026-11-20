@@ -505,3 +505,76 @@ describe("WebTransport opened without any credential", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })
+
+describe("WebTransport heartbeat and wake verification", () => {
+  it("sends periodic ping frames and stays connected when pong arrives", async () => {
+    const { t, ws } = connectReady()
+
+    // 20s → periodic ping fires.
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(ws.sent).toContain(JSON.stringify({ action: "ping" }))
+    expect(t.getConnectionSnapshot()).toBe("connected")
+
+    // Server answers pong before the 5s timeout → connection stays healthy.
+    ws.onmessage?.({ data: JSON.stringify({ type: "pong" }) })
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(t.getConnectionSnapshot()).toBe("connected")
+    expect(fetchMock).not.toHaveBeenCalled()
+    t.destroy()
+  })
+
+  it("tears down a half-open socket when pong times out and probes health immediately", async () => {
+    const { t, ws } = connectReady()
+    fetchMock.mockResolvedValue(ok200())
+
+    // 20s ping + 5s without any reply → zombie socket torn down & probed.
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(ws.sent).toContain(JSON.stringify({ action: "ping" }))
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    expect(t.getConnectionSnapshot()).toBe("reconnecting")
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost/api/health",
+      expect.objectContaining({ method: "POST" })
+    )
+    const ws2 = lastWs()
+    expect(ws2).not.toBe(ws)
+    ws2.open()
+    ws2.ready()
+    expect(t.getConnectionSnapshot()).toBe("connected")
+    t.destroy()
+  })
+
+  it("verifyConnection() pings an open socket and detects half-open links on wake", async () => {
+    const { t, ws } = connectReady()
+    fetchMock.mockResolvedValue(ok200())
+
+    // Simulate returning from sleep while the socket still looks connected.
+    t.verifyConnection()
+    expect(ws.sent).toContain(JSON.stringify({ action: "ping" }))
+    expect(t.getConnectionSnapshot()).toBe("connected")
+
+    // No pong within 5s → proactively torn down and probed.
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(t.getConnectionSnapshot()).toBe("reconnecting")
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    t.destroy()
+  })
+
+  it("verifyConnection() immediately probes when already reconnecting and ignores unauthorized", async () => {
+    const { t, ws } = connectReady()
+    fetchMock.mockResolvedValue(ok200())
+
+    ws.drop()
+    t.verifyConnection()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    t.markUnauthorized()
+    fetchMock.mockClear()
+    t.verifyConnection()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetchMock).not.toHaveBeenCalled()
+    t.destroy()
+  })
+})

@@ -196,6 +196,11 @@ interface MessageInputProps {
   onFocus?: () => void
   className?: string
   isPrompting?: boolean
+  /** When true, submitting parks the draft via `onEnqueue` (with
+   *  `adoptSendTimeMode: true`) instead of calling `onSend` immediately. Used
+   *  while a connection or session-init handshake is still completing so the
+   *  user can type and hit Enter without waiting. */
+  queueOnSubmit?: boolean
   onCancel?: () => void
   modes?: SessionModeInfo[]
   configOptions?: SessionConfigOptionInfo[]
@@ -233,7 +238,11 @@ interface MessageInputProps {
    *  non-tiled session keeps the plain default border. Independent of
    *  `isActive` (which still drives auto-focus/connect). */
   showActiveFlow?: boolean
-  onEnqueue?: (draft: PromptDraft, modeId: string | null) => void
+  onEnqueue?: (
+    draft: PromptDraft,
+    modeId: string | null,
+    opts?: { adoptSendTimeMode?: boolean }
+  ) => void
   /** Id of the queue item being edited — the stable key for (re)hydration, so
    *  switching between two items with identical display text still reloads. */
   editingItemId?: string | null
@@ -352,6 +361,7 @@ export function MessageInput({
   onFocus,
   className,
   isPrompting = false,
+  queueOnSubmit = false,
   onCancel,
   modes,
   configOptions,
@@ -1663,7 +1673,8 @@ export function MessageInput({
     // The editor stays editable while `disabled` (the agent is busy) so the user
     // can keep typing, but a plain send is blocked — only enqueue / queue-edit
     // save go through. Mirrors the legacy textarea's keydown guard.
-    if (disabled && !isPrompting && !isEditingQueueItem) return
+    if (disabled && !isPrompting && !queueOnSubmit && !isEditingQueueItem)
+      return
     // An image whose web/remote upload hasn't settled has no server-side uri
     // yet — the transport would strip its base64 and the backend would have
     // nothing to hydrate. Block ALL three branches below (send / enqueue /
@@ -1701,6 +1712,19 @@ export function MessageInput({
       return
     }
 
+    // Connecting / session-init mode: park the draft in the queue so it
+    // auto-flushes once the connection + selectors finish initializing.
+    if (queueOnSubmit && onEnqueue) {
+      onEnqueue(draft, showModeSelector ? effectiveModeId : null, {
+        adoptSendTimeMode: true,
+      })
+      if (effectiveDraftStorageKey) {
+        clearMessageInputDraftV2(effectiveDraftStorageKey)
+      }
+      resetComposer()
+      return
+    }
+
     // Prompting with no queue to park the draft in (a canvas card). The backend
     // runs one prompt per turn and turns a second one away, so sending here
     // only ever bounced — after this composer had cleared itself for it, which
@@ -1725,6 +1749,7 @@ export function MessageInput({
     isEditingQueueItem,
     takeOriginal,
     isPrompting,
+    queueOnSubmit,
     onSaveQueueEdit,
     onEnqueue,
     onSend,
@@ -2076,7 +2101,7 @@ export function MessageInput({
         }
         size="icon"
         className="h-8 w-8"
-        title={t("send")}
+        title={queueOnSubmit ? t("queueMessage") : t("send")}
       >
         <Send className="size-4" />
       </Button>
