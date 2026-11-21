@@ -63,6 +63,8 @@ pub mod harness_skills;
 pub mod harness_updates;
 /// Image generation for agents (keh4l build); see `crate::image_gen`.
 pub mod image_gen;
+/// The pushed-delegation-results switch (keh4l build).
+pub mod delegation_push;
 /// Folder commands set to run on the desktop's own machine ("Run on this
 /// computer"), even from a remote-desktop window. Desktop-only by design.
 #[cfg(feature = "tauri-runtime")]

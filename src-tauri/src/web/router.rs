@@ -479,6 +479,15 @@ pub fn build_router_with_srn(
             "/get_sent_originals",
             post(handlers::translation::get_sent_originals),
         )
+        // keh4l build: wake the parent when a delegation finishes.
+        .route(
+            "/get_delegation_push_settings",
+            post(handlers::delegation_push::get_delegation_push_settings),
+        )
+        .route(
+            "/set_delegation_push_settings",
+            post(handlers::delegation_push::set_delegation_push_settings),
+        )
         .route(
             "/get_image_gen_settings",
             post(handlers::image_gen::get_image_gen_settings),

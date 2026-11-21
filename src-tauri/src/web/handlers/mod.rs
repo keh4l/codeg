@@ -35,6 +35,8 @@ pub mod harness_skills;
 pub mod harness_updates;
 pub mod skills;
 pub mod image_gen;
+// keh4l build
+pub mod delegation_push;
 pub mod logging;
 pub mod mcp;
 pub mod mcp_service;

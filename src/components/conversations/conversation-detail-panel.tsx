@@ -128,6 +128,7 @@ import {
 import { useShallow } from "zustand/react/shallow"
 import { useConversationDetail } from "@/hooks/use-conversation-detail"
 import { useOutOfTurnContentNotice } from "@/hooks/use-out-of-turn-content-notice"
+import { useDelegationResultsLive } from "@/hooks/use-delegation-results-live"
 import {
   buildSteerPayload,
   extractUserImagesFromDraft,
@@ -1028,6 +1029,13 @@ const ConversationTabView = memo(function ConversationTabView({
       },
       [conn.connectionId, effectiveConversationId, appendViewerUserTurn]
     )
+  )
+
+  // keh4l build: delegation results Codeg hands back to this agent.
+  useDelegationResultsLive(
+    conn.connectionId,
+    effectiveConversationId,
+    appendViewerUserTurn
   )
 
   // A turn the agent runs on its own renders nowhere live; offer a re-read.

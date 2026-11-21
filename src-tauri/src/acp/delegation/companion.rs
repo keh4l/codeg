@@ -220,6 +220,10 @@ pub struct CompanionFeatures {
     /// `create_assistant` / `update_assistant` (keh4l build): setting up the
     /// person's @-mentionable assistants (see `crate::assistant_tools`).
     pub assistants: bool,
+    /// keh4l build: the parent pushes results back when delegations finish
+    /// (`crate::acp::delegation::delivery`), so the delegation tools'
+    /// descriptions say to end the turn instead of polling.
+    pub push: bool,
 }
 
 impl CompanionFeatures {
@@ -247,6 +251,7 @@ impl CompanionFeatures {
                 computer_clipboard: false,
                 image: false,
                 assistants: false,
+                push: false,
             };
         };
         let mut f = Self {
@@ -265,6 +270,7 @@ impl CompanionFeatures {
             computer_clipboard: false,
             image: false,
             assistants: false,
+            push: false,
         };
         for tok in s.split(',').map(str::trim).filter(|t| !t.is_empty()) {
             match tok {
@@ -283,6 +289,7 @@ impl CompanionFeatures {
                 "computer_clipboard" => f.computer_clipboard = true,
                 "image" => f.image = true,
                 "assistants" => f.assistants = true,
+                "push" => f.push = true,
                 _ => {}
             }
         }
@@ -991,7 +998,7 @@ async fn build_tools_call_spawn_inner(
                 id,
                 Some(external_handle),
                 round_trip,
-                render_task_report,
+                super::fork_tools::task_report_renderer(&ctx),
             )
             .await
         }
@@ -1086,7 +1093,7 @@ async fn build_tools_call_spawn_inner(
                 id,
                 Some(external_handle),
                 round_trip,
-                render_task_report,
+                super::fork_tools::task_report_renderer(&ctx),
             )
             .await
         }
@@ -4596,6 +4603,7 @@ mod tests {
             computer_clipboard: false,
             image: false,
             assistants: false,
+            push: false,
         })
     }
 
@@ -5231,6 +5239,7 @@ mod tests {
         computer_clipboard: false,
         image: false,
         assistants: false,
+        push: false,
     };
     const BOTH: CompanionFeatures = CompanionFeatures {
         delegation: true,
@@ -5248,6 +5257,7 @@ mod tests {
         computer_clipboard: false,
         image: false,
         assistants: false,
+        push: false,
     };
     const ASK_ONLY: CompanionFeatures = CompanionFeatures {
         delegation: false,
@@ -5265,6 +5275,7 @@ mod tests {
         computer_clipboard: false,
         image: false,
         assistants: false,
+        push: false,
     };
     const SESSIONS_ONLY: CompanionFeatures = CompanionFeatures {
         delegation: false,
@@ -5282,6 +5293,7 @@ mod tests {
         computer_clipboard: false,
         image: false,
         assistants: false,
+        push: false,
     };
 
     fn list_tool_names(action: LineAction) -> Vec<String> {
@@ -5775,6 +5787,7 @@ mod tests {
         computer_clipboard: false,
         image: false,
         assistants: false,
+        push: false,
     };
     const TASKBOARD_ONLY: CompanionFeatures = CompanionFeatures {
         delegation: false,
@@ -5792,6 +5805,7 @@ mod tests {
         computer_clipboard: false,
         image: false,
         assistants: false,
+        push: false,
     };
 
     /// The two authoring groups gate independently: enabling one must not
@@ -6678,6 +6692,7 @@ mod tests {
         computer_clipboard: false,
         image: false,
         assistants: false,
+        push: false,
     };
 
     /// The browser group with `browser_eval` on top, which is the only way

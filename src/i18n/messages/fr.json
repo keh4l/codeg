@@ -924,7 +924,10 @@
           "invalidAgentOptions": "Les options de l’agent sont incomplètes. Rouvrez l’assistant et choisissez chaque option.",
           "notFound": "Cet assistant n’existe plus."
         }
-      }
+      },
+      "pushResults": "Réveiller l’agent principal quand un sous-agent termine",
+      "pushResultsHint": "Quand un sous-agent termine (ou s’arrête sur une erreur), son résultat revient à l’agent principal : s’il est inactif, il commence un nouveau tour pour continuer ; s’il est occupé, il le reçoit dans son tour en cours (Claude Code, Codex) ou à la fin de celui-ci ; si vous envoyez un message, il part avec. Après un tour de l’agent en échec, ou après 20 réveils d’affilée, les résultats attendent votre prochain message. Arrêter l’agent principal arrête aussi ses sous-agents. Désactivé : l’agent principal doit les consulter lui-même, comme avant. S’applique aux sessions démarrées après le changement.",
+      "pushSaveFailed": "Enregistrement impossible : {detail}"
     },
     "actions": {
       "saveSystemInstructions": "Enregistrer les instructions système",
@@ -4417,7 +4420,9 @@
         "awaiting": "Un sous-agent attend votre réponse",
         "groupDelegations": "Délégations",
         "background": "Arrière-plan",
-        "delegatedFallback": "Sous-agent délégué"
+        "delegatedFallback": "Sous-agent délégué",
+        "autoContinue": "reprend quand ils ont fini",
+        "heldForNext": "les résultats partiront avec votre prochain message"
       },
       "remoteControl": {
         "title": "Contrôle à distance activé",
@@ -4434,6 +4439,23 @@
       "proposedPlan": {
         "title": "Plan proposé",
         "planning": "Planification…"
+      },
+      "delegationResults": {
+        "heading": {
+          "wake": "Résultats des sous-tâches rendus",
+          "steer": "Résultats des sous-tâches ajoutés à ce tour",
+          "attached": "Résultats des sous-tâches envoyés avec votre message"
+        },
+        "status": {
+          "completed": "terminée",
+          "failed": "échouée",
+          "canceled": "annulée",
+          "interrupted": "interrompue (reprise possible)"
+        },
+        "more": " (+{count} autres)",
+        "openSession": "Ouvrir la session",
+        "footnote": "Codeg a envoyé ceci à l’agent principal de lui-même — ce n’est pas quelque chose que vous avez dit. L’agent a reçu les résultats complets.",
+        "attached": "{count, plural, one {# résultat de sous-tâche joint} other {# résultats de sous-tâches joints}}"
       }
     },
     "diffPreview": {

@@ -75,6 +75,9 @@ use crate::acp::delegation::types::{
 use crate::acp::types::DelegationResultSummary;
 use crate::models::AgentType;
 
+// keh4l build: pushing terminal results to the parent (see the module).
+mod fork_delivery;
+
 /// Default per-parent byte budget for cached completed-task result text. The
 /// completed-cache lets `get_delegation_status` / `cancel_delegation` return a
 /// finished task's result after the lifecycle resolved it; once a parent's
@@ -268,6 +271,9 @@ struct RunningTask {
     child_connection_id: String,
     child_conversation_id: i32,
     parent_connection_id: String,
+    /// keh4l build: the parent CONVERSATION, which results are delivered to
+    /// (`fork_delivery`) — a reconnect gives it a new connection id.
+    parent_conversation_id: i32,
     parent_tool_use_id: String,
     /// Target agent — surfaced in status reports.
     agent_type: AgentType,
@@ -1589,6 +1595,9 @@ pub struct DelegationBroker {
     /// [`BLOCK_RESURFACE_INTERVAL`] in production. A field only so tests can
     /// shrink it; nothing outside tests ever sets it.
     block_resurface: Duration,
+    /// keh4l build: where terminal results are pushed to the parent
+    /// (`fork_delivery`). Unset in tests that don't install one.
+    delivery: Arc<std::sync::OnceLock<Arc<dyn crate::acp::delegation::delivery::DeliverySink>>>,
 }
 
 impl DelegationBroker {
@@ -1646,6 +1655,7 @@ impl DelegationBroker {
             config: Arc::new(Mutex::new(DelegationConfig::default())),
             result_notify: Arc::new(Notify::new()),
             block_resurface: BLOCK_RESURFACE_INTERVAL,
+            delivery: Arc::default(),
         }
     }
 
@@ -3012,6 +3022,7 @@ impl DelegationBroker {
                             child_connection_id: child_connection_id.clone(),
                             child_conversation_id,
                             parent_connection_id: req.parent_connection_id.clone(),
+                            parent_conversation_id: req.parent_conversation_id,
                             parent_tool_use_id: req.parent_tool_use_id.clone(),
                             agent_type: req.agent_type,
                             assistant: identity.clone(),
@@ -3232,6 +3243,7 @@ impl DelegationBroker {
                         &outcome,
                     );
                     completed.progress = progress;
+                    self.announce_finished(call_id, &task, &completed);
                     inner.insert_completed(call_id, completed);
                     Some((task, duration_ms))
                 }
@@ -3497,7 +3509,9 @@ impl DelegationBroker {
                 );
                 Vec::new()
             } else {
-                drain_and_record_canceled(&mut inner, keys, &reason)
+                let drained = drain_and_record_canceled(&mut inner, keys, &reason);
+                self.announce_drained(&drained, &inner, fork_delivery::CHILD_FAILED);
+                drained
             }
         };
         for (task, duration_ms) in drained {
@@ -3590,7 +3604,9 @@ impl DelegationBroker {
             if keep_consumed {
                 // Turn cancel: connection stays alive → keep each canceled
                 // result queryable.
-                drain_and_record_canceled(&mut inner, keys, "parent canceled")
+                let drained = drain_and_record_canceled(&mut inner, keys, "parent canceled");
+                self.announce_drained(&drained, &inner, fork_delivery::USER_CANCELED);
+                drained
             } else {
                 // Connection teardown: just remove the running tasks and drop the
                 // whole completed-cache for this parent. No completed entry to
@@ -3960,6 +3976,7 @@ impl DelegationBroker {
             };
             out.push(report);
         }
+        self.note_reports_consumed(&out);
         out
     }
 
@@ -4002,6 +4019,7 @@ impl DelegationBroker {
         parent_conversation_id: Option<i32>,
         task_id: &str,
     ) -> DelegationTaskReport {
+        self.note_task_consumed(task_id);
         let drained = {
             let mut inner = self.pending.inner.lock().await;
             if let Some(c) = inner.completed.get(task_id) {
@@ -4106,6 +4124,7 @@ impl DelegationBroker {
         )
     )]
     pub async fn resume_delegation(&self, req: ResumeDelegationRequest) -> DelegationTaskReport {
+        self.note_task_consumed(&req.task_id);
         // Same parent-cancel coverage contract as `start_delegation`: register
         // the in-flight setup FIRST so a parent cancel landing anywhere from
         // here to park reaches it; deregistered on every exit path.
@@ -4700,6 +4719,7 @@ impl DelegationBroker {
                             child_connection_id: child_connection_id.clone(),
                             child_conversation_id: ctx.child_conversation_id,
                             parent_connection_id: req.parent_connection_id.clone(),
+                            parent_conversation_id: req.parent_conversation_id,
                             parent_tool_use_id: parent_tool_use_id.clone(),
                             agent_type: ctx.agent_type,
                             assistant: identity.clone(),

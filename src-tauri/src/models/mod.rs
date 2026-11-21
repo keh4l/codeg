@@ -5,6 +5,7 @@ pub mod background;
 pub mod canvas;
 pub mod chat_channel;
 pub mod conversation;
+pub mod delegation_results;
 pub mod folder;
 pub mod message;
 pub mod model_provider;

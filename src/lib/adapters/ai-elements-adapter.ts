@@ -8,6 +8,8 @@ import type {
   ToolCallStatus,
   PlanEntryInfo,
   ImageData,
+  DelegationResultsMode,
+  DelegationResultsTask,
 } from "@/lib/types"
 import {
   isAgentLikeToolName,
@@ -216,6 +218,17 @@ export type AdaptedContentPart =
    * one muted line closing the round, never as a reply.
    */
   | { type: "turn-error"; message: string }
+  /**
+   * keh4l build: finished delegations handed back to the parent agent
+   * (`delegation_results` block) — a row of its own in a `system` turn, a tag
+   * under the user's bubble when they rode along with the message.
+   */
+  | {
+      type: "delegation-results"
+      id: string
+      mode: DelegationResultsMode
+      tasks: DelegationResultsTask[]
+    }
 
 export interface UserResourceDisplay {
   name: string
@@ -1590,6 +1603,14 @@ function adaptContentBlock(
     case "turn_error":
       return { type: "turn-error", message: block.message }
 
+    case "delegation_results":
+      return {
+        type: "delegation-results",
+        id: block.id,
+        mode: block.mode,
+        tasks: block.tasks,
+      }
+
     default:
       return null
   }
@@ -2059,6 +2080,8 @@ export function isTurnAnswerPart(part: AdaptedContentPart): boolean {
     case "image-job":
     case "turn-error":
       return true
+    case "delegation-results":
+      return false
     case "reasoning":
     case "tool-call":
     case "tool-result":

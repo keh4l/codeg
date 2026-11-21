@@ -307,6 +307,45 @@ export type ContentBlock =
    * persistence/export switches over `ContentBlock` never receive it.
    */
   | { type: "plan"; entries: PlanEntryInfo[] }
+  /**
+   * keh4l build: finished delegations handed back to this (parent) agent.
+   * Mirror of Rust `ContentBlock::DelegationResults`: alone in a `system` turn
+   * when Codeg woke the agent with them (or steered them into its turn), last
+   * in a `user` turn when they rode along with the user's message.
+   */
+  | {
+      type: "delegation_results"
+      id: string
+      mode: DelegationResultsMode
+      tasks: DelegationResultsTask[]
+    }
+
+/** keh4l build: how a batch of delegation results reached the parent agent. */
+export type DelegationResultsMode = "wake" | "steer" | "attached"
+
+/** keh4l build: one task of a delivered batch — a bounded preview of its
+ *  result; the whole text stays in the child conversation. */
+export interface DelegationResultsTask {
+  task_id: string
+  agent_type: string
+  assistant?: string | null
+  /** `completed` / `failed` / `canceled`. */
+  status: string
+  duration_ms: number
+  preview?: string | null
+  error_code?: string | null
+  child_conversation_id: number
+  resumable?: boolean
+  worktree?: DelegationWorktreeInfo | null
+}
+
+/** keh4l build: the worktree a delegated task ran in. */
+export interface DelegationWorktreeInfo {
+  path: string
+  branch: string
+  base_sha: string
+  changes?: string | null
+}
 
 export type TurnRole = "user" | "assistant" | "system"
 
@@ -3586,6 +3625,28 @@ export type AcpEvent =
       type: "delegation_child_running"
       child_connection_id: string
       running: boolean
+    }
+  /**
+   * keh4l build: finished delegations were handed to this connection's agent
+   * (`acp::delegation::delivery`). `id` is the frame's nonce, repeated by the
+   * transcript's `delegation_results` block; `message_id` names the user
+   * message they rode along with (`attached`).
+   */
+  | {
+      type: "delegation_results_delivered"
+      id: string
+      mode: DelegationResultsMode
+      tasks: DelegationResultsTask[]
+      message_id?: string | null
+    }
+  /**
+   * keh4l build: whether Codeg holds this connection's finished delegations
+   * for the next prompt instead of waking the agent with them (its turn
+   * failed or was stopped, or it was woken too many times in a row).
+   */
+  | {
+      type: "delegation_push_held"
+      held: boolean
     }
   /**
    * The user's submitted prompt, broadcast on the connection stream so OTHER

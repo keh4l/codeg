@@ -924,7 +924,10 @@
           "invalidAgentOptions": "エージェントのオプションが揃っていません。アシスタントを開き直して、すべての項目を選んでください。",
           "notFound": "このアシスタントはもう存在しません。"
         }
-      }
+      },
+      "pushResults": "サブエージェントが終わったらメインエージェントを起こす",
+      "pushResultsHint": "サブエージェントが終わった（またはエラーで止まった）とき、結果をメインエージェントに返します。待機中なら新しいターンを始めて続け、作業中なら今のターンに差し込むか（Claude Code、Codex）そのターンの終わりに渡し、あなたがメッセージを送ればそれと一緒に渡します。メインのターンがエラーで終わったあとや、20 回続けて自動で続けたあとは、次のメッセージまで待ちます。停止するとサブエージェントも止まります。オフにすると、これまでどおりメインエージェントが自分で確認します。変更後に開始したセッションに適用されます。",
+      "pushSaveFailed": "保存できませんでした：{detail}"
     },
     "actions": {
       "saveSystemInstructions": "システム指示を保存",
@@ -4417,7 +4420,9 @@
         "awaiting": "対応待ちのサブエージェントがあります",
         "groupDelegations": "委任",
         "background": "バックグラウンド",
-        "delegatedFallback": "委任したサブエージェント"
+        "delegatedFallback": "委任したサブエージェント",
+        "autoContinue": "完了すると自動で続行",
+        "heldForNext": "結果は次のメッセージと一緒に渡します"
       },
       "remoteControl": {
         "title": "リモートコントロール有効",
@@ -4434,6 +4439,23 @@
       "proposedPlan": {
         "title": "提案された計画",
         "planning": "計画中…"
+      },
+      "delegationResults": {
+        "heading": {
+          "wake": "サブタスクの結果を返しました",
+          "steer": "サブタスクの結果をこのターンに追加しました",
+          "attached": "サブタスクの結果をメッセージと一緒に渡しました"
+        },
+        "status": {
+          "completed": "完了",
+          "failed": "失敗",
+          "canceled": "キャンセル",
+          "interrupted": "中断（再開可）"
+        },
+        "more": "（ほか {count} 件）",
+        "openSession": "セッションを開く",
+        "footnote": "この行は Codeg がメインエージェントに自動で送ったもので、あなたの発言ではありません。エージェントには結果の全文が渡っています。",
+        "attached": "サブタスクの結果 {count} 件を添付"
       }
     },
     "diffPreview": {

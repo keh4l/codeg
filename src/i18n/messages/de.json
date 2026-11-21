@@ -924,7 +924,10 @@
           "invalidAgentOptions": "Die Optionen des Agenten sind unvollständig. Öffne den Assistenten erneut und wähle alle Optionen.",
           "notFound": "Dieser Assistent existiert nicht mehr."
         }
-      }
+      },
+      "pushResults": "Hauptagenten wecken, wenn ein Subagent fertig ist",
+      "pushResultsHint": "Wenn ein Subagent fertig ist (oder mit einem Fehler stoppt), geht sein Ergebnis an den Hauptagenten zurück: Ist er untätig, beginnt er einen neuen Zug und macht weiter; ist er beschäftigt, bekommt er es im laufenden Zug (Claude Code, Codex) oder an dessen Ende; schickst du eine Nachricht, geht es mit ihr mit. Nach einem fehlgeschlagenen Zug des Agenten oder nach 20 Weckrufen in Folge warten die Ergebnisse auf deine nächste Nachricht. Stoppen des Hauptagenten stoppt auch seine Subagenten. Aus: Der Hauptagent muss selbst nachsehen, wie bisher. Gilt für Sitzungen, die nach der Änderung gestartet werden.",
+      "pushSaveFailed": "Speichern fehlgeschlagen: {detail}"
     },
     "actions": {
       "saveSystemInstructions": "Systemanweisungen speichern",
@@ -4417,7 +4420,9 @@
         "awaiting": "Ein Sub-Agent wartet auf dich",
         "groupDelegations": "Delegierungen",
         "background": "Hintergrund",
-        "delegatedFallback": "Delegierter Sub-Agent"
+        "delegatedFallback": "Delegierter Sub-Agent",
+        "autoContinue": "geht weiter, wenn sie fertig sind",
+        "heldForNext": "Ergebnisse gehen mit deiner nächsten Nachricht mit"
       },
       "remoteControl": {
         "title": "Fernsteuerung aktiv",
@@ -4434,6 +4439,23 @@
       "proposedPlan": {
         "title": "Vorgeschlagener Plan",
         "planning": "Wird geplant…"
+      },
+      "delegationResults": {
+        "heading": {
+          "wake": "Ergebnisse der Teilaufgaben zurückgegeben",
+          "steer": "Ergebnisse der Teilaufgaben in diesen Zug eingefügt",
+          "attached": "Ergebnisse der Teilaufgaben mit deiner Nachricht gesendet"
+        },
+        "status": {
+          "completed": "fertig",
+          "failed": "fehlgeschlagen",
+          "canceled": "abgebrochen",
+          "interrupted": "unterbrochen (fortsetzbar)"
+        },
+        "more": " (+{count} weitere)",
+        "openSession": "Sitzung öffnen",
+        "footnote": "Das hat Codeg von sich aus an den Hauptagenten geschickt – es ist nichts, was du gesagt hast. Der Agent hat die vollständigen Ergebnisse erhalten.",
+        "attached": "{count, plural, one {# Teilaufgaben-Ergebnis} other {# Teilaufgaben-Ergebnisse}} angehängt"
       }
     },
     "diffPreview": {

@@ -1,0 +1,29 @@
+//! keh4l build: HTTP mirror of `commands::delegation_push`.
+
+use std::sync::Arc;
+
+use axum::{extract::Extension, Json};
+use serde::Deserialize;
+
+use crate::acp::delegation::delivery::{self, DelegationPushSettings};
+use crate::app_error::AppCommandError;
+use crate::app_state::AppState;
+
+pub async fn get_delegation_push_settings() -> Result<Json<DelegationPushSettings>, AppCommandError>
+{
+    Ok(Json(delivery::get_settings()))
+}
+
+#[derive(Deserialize)]
+pub struct SetDelegationPushSettingsParams {
+    pub settings: DelegationPushSettings,
+}
+
+pub async fn set_delegation_push_settings(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<SetDelegationPushSettingsParams>,
+) -> Result<Json<DelegationPushSettings>, AppCommandError> {
+    let saved =
+        delivery::set_settings_core(&state.db.conn, &state.emitter, params.settings).await?;
+    Ok(Json(saved))
+}

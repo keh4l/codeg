@@ -40,12 +40,14 @@
 pub mod assistants;
 pub mod broker;
 pub mod companion;
+pub mod delivery;
 pub mod depth;
 pub mod event_emitter;
 pub mod fork_tools;
 pub mod listener;
 pub mod live_reply;
 pub mod meta_writer;
+pub mod notice;
 pub mod parent_watcher;
 pub mod service;
 pub mod spawner;

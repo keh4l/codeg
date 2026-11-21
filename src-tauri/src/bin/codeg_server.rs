@@ -466,6 +466,7 @@ async fn async_main(
     // keh4l build: `create_assistant` / `update_assistant` — the switch, and
     // what they probe agents and save with.
     codeg_lib::assistant_tools::apply_persisted_settings(&state.db.conn).await;
+    codeg_lib::acp::delegation::delivery::apply_persisted_settings(&state.db.conn).await;
     codeg_lib::assistant_tools::install(codeg_lib::assistant_tools::Runtime {
         db: Arc::new(codeg_lib::db::AppDatabase {
             conn: state.db.conn.clone(),
@@ -611,6 +612,18 @@ async fn async_main(
     // broker is supplied so TurnComplete on a delegation child resolves the
     // parent's pending `delegate_to_agent` tool_use_id and emits
     // `DelegationCompleted`.
+    // keh4l build: finished delegations go back to their parent by
+    // themselves (`acp::delegation::delivery`).
+    tokio::spawn(codeg_lib::acp::delegation::delivery::start(
+        codeg_lib::acp::delegation::delivery::Runtime {
+            db: Arc::new(codeg_lib::db::AppDatabase {
+                conn: state.db.conn.clone(),
+            }),
+            manager: Arc::new(state.connection_manager.clone_ref()),
+            broker: state.delegation_broker.clone(),
+            bus: state.acp_event_bus.clone(),
+        },
+    ));
     tokio::spawn(codeg_lib::lifecycle_subscriber_task(
         state.db.conn.clone(),
         state.connection_manager.clone_ref(),

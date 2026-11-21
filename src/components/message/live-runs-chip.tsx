@@ -46,6 +46,11 @@ import {
 import type { AdaptedToolCallPart } from "@/lib/adapters/ai-elements-adapter"
 import { blockingPrompts } from "@/lib/blocking-prompts"
 import { formatElapsedLabel } from "@/lib/format-elapsed"
+import {
+  isDelegationPushHeld,
+  subscribeDelegationResultsLive,
+} from "@/lib/delegation-results-live"
+import { useDelegationPushEnabled } from "@/hooks/use-delegation-push-enabled"
 import type {
   LiveDelegationRun,
   LiveRuns,
@@ -65,6 +70,9 @@ export interface LiveRunsChipProps {
   onStopAsyncTask?: (taskId: string) => Promise<boolean>
   /** The agent's display name, for the row of a turn it started on its own. */
   agentName?: string
+  /** keh4l build: the parent's turn is over — what happens to its running
+   *  delegations' results is then worth saying on the chip. */
+  parentIdle?: boolean
 }
 
 const NO_IDS: ReadonlySet<string> = new Set()
@@ -74,6 +82,7 @@ export function LiveRunsChip({
   interactive,
   onStopAsyncTask,
   agentName,
+  parentIdle,
 }: LiveRunsChipProps) {
   const t = useTranslations("Folder.chat.liveRuns")
   const [open, setOpen] = useState(false)
@@ -102,6 +111,7 @@ export function LiveRunsChip({
     [onStopAsyncTask]
   )
   const awaiting = useDelegationsAwaitingUser(runs.delegations)
+  const pushTail = useDelegationPushTail(runs.delegations, parentIdle ?? false)
   const label = t("count", { count: runs.count })
 
   return (
@@ -120,6 +130,9 @@ export function LiveRunsChip({
           <span className="tabular-nums underline-offset-2 group-hover/runs:underline group-data-[state=open]/runs:underline">
             {label}
           </span>
+          {pushTail ? (
+            <span className="text-muted-foreground">· {pushTail}</span>
+          ) : null}
           {awaiting ? (
             <span
               aria-hidden="true"
@@ -457,4 +470,25 @@ function useElapsedSince(startedAt: number | null): string | null {
     return () => clearInterval(timer)
   }, [startedAt])
   return startedAt == null ? null : formatElapsedLabel(now - startedAt, t)
+}
+
+/** keh4l build: what becomes of the running delegations' results once the
+ *  parent's turn is over — they wake it, or they wait for the next message
+ *  (`acp::delegation::delivery`). Null while its turn runs, or with none. */
+function useDelegationPushTail(
+  delegations: LiveRunsList["delegations"],
+  parentIdle: boolean
+): string | null {
+  const t = useTranslations("Folder.chat.liveRuns")
+  const pushEnabled = useDelegationPushEnabled()
+  const parentConnectionId =
+    delegations.find((run) => run.binding)?.binding?.parentConnectionId ?? null
+  const held = useSyncExternalStore(
+    subscribeDelegationResultsLive,
+    () => isDelegationPushHeld(parentConnectionId),
+    () => false
+  )
+  if (!parentIdle || delegations.length === 0) return null
+  if (held) return t("heldForNext")
+  return pushEnabled ? t("autoContinue") : null
 }

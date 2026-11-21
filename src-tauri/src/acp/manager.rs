@@ -1474,6 +1474,7 @@ impl ConnectionManager {
             delegation,
             client_message_id,
             Vec::new(),
+            crate::acp::delegation::delivery::PromptOrigin::User,
         )
         .await
     }
@@ -1503,6 +1504,38 @@ impl ConnectionManager {
             delegation,
             None,
             internal_suffix,
+            crate::acp::delegation::delivery::PromptOrigin::User,
+        )
+        .await
+    }
+
+    /// keh4l build: start a turn on the idle `conn_id` whose prompt is
+    /// nothing but finished delegations' results (`acp::delegation::delivery`).
+    /// Not the user's message: no `UserMessage` / `UserPromptSent`, no title
+    /// seed, and none of the results queued for a user prompt are attached.
+    pub async fn send_delegation_wake(
+        &self,
+        db: &AppDatabase,
+        conn_id: &str,
+        conversation_id: i32,
+        notice: crate::acp::delegation::notice::RenderedNotice,
+    ) -> Result<Option<i32>, AcpError> {
+        let blocks = vec![PromptInputBlock::Text {
+            text: notice.text.clone(),
+        }];
+        self.send_prompt_linked_full(
+            db,
+            conn_id,
+            blocks,
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            crate::acp::delegation::delivery::PromptOrigin::DelegationWake {
+                conversation_id,
+                notice,
+            },
         )
         .await
     }
@@ -1517,7 +1550,8 @@ impl ConnectionManager {
         conversation_id: Option<i32>,
         delegation: Option<crate::acp::delegation::spawner::DelegationLink>,
         client_message_id: Option<String>,
-        internal_suffix: Vec<PromptInputBlock>,
+        mut internal_suffix: Vec<PromptInputBlock>,
+        origin: crate::acp::delegation::delivery::PromptOrigin,
     ) -> Result<Option<i32>, AcpError> {
         // Reject an empty prompt up front, BEFORE any side effects: linking /
         // creating the conversation row, flipping it to InProgress, or emitting
@@ -1533,7 +1567,9 @@ impl ConnectionManager {
         // Scrub the reserved separator HERE, before the conversation row, the
         // optimistic broadcast, and the ledger all take their copy of `blocks`,
         // so every persisted / displayed / on-the-wire copy is byte-identical.
-        if strip_route_separator_from_prompt(&mut blocks) {
+        // (keh4l build: except a delegation wake, whose only block is Codeg's
+        // own results frame.)
+        if origin.is_user() && strip_route_separator_from_prompt(&mut blocks) {
             tracing::debug!(
                 "[ACP][{conn_id}] removed the reserved routing separator from an outgoing prompt"
             );
@@ -1613,6 +1649,7 @@ impl ConnectionManager {
             );
             return Err(AcpError::TurnInProgress);
         }
+        origin.check_target(bound_conversation_id)?;
 
         // A conversation the user moved to another folder must not run a turn
         // on a connection started in the folder it left — on the already-linked
@@ -1926,7 +1963,7 @@ impl ConnectionManager {
         // (`delegation.is_none()`): delegation / sub-agent prompts are not user
         // messages. Emitted after the send succeeds (below) so a prompt that
         // never reached the agent produces no "user message" notification.
-        let user_prompt_preview = if delegation.is_none() {
+        let user_prompt_preview = if delegation.is_none() && origin.is_user() {
             user_prompt_text_preview(&blocks)
         } else {
             None
@@ -1935,7 +1972,7 @@ impl ConnectionManager {
         // "Untitled" while the agent is still working. Native ACP titles
         // (session_info_update) replace this later via refresh_auto_title.
         // Delegation children are already seeded at row create.
-        let first_prompt_title = if delegation.is_none() {
+        let first_prompt_title = if delegation.is_none() && origin.is_user() {
             delegation_child_title_seed(&blocks)
         } else {
             None
@@ -1953,7 +1990,7 @@ impl ConnectionManager {
         // `message_id` prefers the sender's client-supplied id (exact echo
         // dedup), falling back to a connection-scoped id for non-UI senders.
         let user_message: Option<(String, Vec<crate::acp::UserMessageBlock>)> =
-            if delegation.is_none() && conversation_id_for_status.is_some() {
+            if delegation.is_none() && origin.is_user() && conversation_id_for_status.is_some() {
                 let user_blocks = crate::acp::user_blocks_from_prompt(&blocks);
                 if user_blocks.is_empty() {
                     None
@@ -1986,11 +2023,28 @@ impl ConnectionManager {
         // for a prompt that never reached the agent, so without this the
         // lifecycle subscriber's PendingReview write also never fires and the
         // row would be stuck until a follow-up `send_prompt_linked` re-flipped it.
+        // keh4l build: finished delegations' results queued for this
+        // conversation ride along with the prompt (`acp::delegation::delivery`).
+        let attached_results = crate::acp::delegation::delivery::attach_to_prompt(
+            &origin,
+            delegation.is_none(),
+            conversation_id_for_status,
+            &mut internal_suffix,
+        )
+        .await;
+        let attached_to_message = user_message.as_ref().map(|(id, _)| id.clone());
+        if let Some(event) = origin.delivered_event() {
+            emit_with_state(&state_arc, &emitter, event).await;
+        }
         match self
             .send_prompt_inner(conn_id, blocks, user_message, internal_suffix)
             .await
         {
             Ok(()) => {
+                if let Some(attached) = &attached_results {
+                    emit_with_state(&state_arc, &emitter, attached.event(attached_to_message))
+                        .await;
+                }
                 // The prompt reached the agent: surface it to the chat-channel
                 // "user message" event feed. Notification-only — never gates the
                 // send result.
@@ -2032,6 +2086,9 @@ impl ConnectionManager {
                 Ok(conversation_id_for_status)
             }
             Err(send_err) => {
+                if let Some(attached) = attached_results {
+                    attached.restore();
+                }
                 if let Some(cid) = conversation_id_for_status {
                     match conversation_service::update_status(
                         &db.conn,

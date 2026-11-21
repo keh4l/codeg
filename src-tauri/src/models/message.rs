@@ -223,6 +223,18 @@ pub enum ContentBlock {
     TurnError {
         message: String,
     },
+    /// keh4l build: finished delegations handed back to this (parent) agent —
+    /// what a transcript shows where Codeg's internal results frame was. Alone
+    /// in a `System` turn when the frame was the whole prompt (a wake, or a
+    /// steer into a running turn); last in a `User` turn when it rode along
+    /// with the user's message. See `crate::acp::delegation::notice`.
+    DelegationResults {
+        /// The frame's nonce: the same id the live
+        /// `AcpEvent::DelegationResultsDelivered` carried.
+        id: String,
+        mode: crate::models::delegation_results::DelegationResultsMode,
+        tasks: Vec<crate::models::delegation_results::DelegationResultsTask>,
+    },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

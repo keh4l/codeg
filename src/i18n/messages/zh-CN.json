@@ -924,7 +924,10 @@
           "invalidAgentOptions": "智能体的选项没有选齐。请重新打开助手，把每一项都选上。",
           "notFound": "这个助手已经不存在了。"
         }
-      }
+      },
+      "pushResults": "子智能体完成后叫醒主智能体",
+      "pushResultsHint": "子智能体做完（或中途出错停下）时，把结果送回主智能体：主智能体空闲就自动开一轮接着做；正在忙就插进当前这一轮（Claude Code、Codex），或等这一轮结束；你正好发消息时随你的消息一起带过去。主智能体那一轮出错结束、或连续自动继续了 20 次之后，改为等你下一条消息再带过去。你点停止会把子智能体一起停掉。关掉后和以前一样，只能由主智能体自己去查。只对之后启动的会话生效。",
+      "pushSaveFailed": "保存失败：{detail}"
     },
     "actions": {
       "dragSort": "拖拽排序",
@@ -4417,7 +4420,9 @@
         "awaiting": "有子智能体在等你处理",
         "groupDelegations": "委派",
         "background": "后台",
-        "delegatedFallback": "委派的子智能体"
+        "delegatedFallback": "委派的子智能体",
+        "autoContinue": "完成后自动继续",
+        "heldForNext": "结果会随你下一条消息交给主智能体"
       },
       "remoteControl": {
         "title": "远程控制已开启",
@@ -4434,6 +4439,23 @@
       "proposedPlan": {
         "title": "计划提案",
         "planning": "规划中…"
+      },
+      "delegationResults": {
+        "heading": {
+          "wake": "子任务结果已交回",
+          "steer": "子任务结果已插入这一轮",
+          "attached": "子任务结果随你的消息交回"
+        },
+        "status": {
+          "completed": "完成",
+          "failed": "失败",
+          "canceled": "已取消",
+          "interrupted": "中断（可继续）"
+        },
+        "more": "（另 {count} 个）",
+        "openSession": "查看会话",
+        "footnote": "这一行是 Codeg 自动发给主智能体的，不是你说的话。主智能体拿到的是完整结果。",
+        "attached": "附带 {count} 个子任务结果"
       }
     },
     "diffPreview": {

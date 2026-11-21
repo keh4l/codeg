@@ -491,6 +491,9 @@ impl AgentParser for RouteSanitized {
 
     fn get_conversation(&self, conversation_id: &str) -> Result<ConversationDetail, ParseError> {
         let mut detail = self.0.get_conversation(conversation_id)?;
+        // keh4l build: delegation results handed back to this agent become
+        // blocks of their own before the strip below sees their turns.
+        crate::acp::delegation::notice::lift_results_from_turns(&mut detail.turns);
         let before = detail.turns.len();
         detail.turns.retain_mut(|turn| {
             if !matches!(turn.role, TurnRole::User) {

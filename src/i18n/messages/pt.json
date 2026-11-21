@@ -924,7 +924,10 @@
           "invalidAgentOptions": "As opções do agente estão incompletas. Abra o assistente de novo e escolha todas.",
           "notFound": "Este assistente não existe mais."
         }
-      }
+      },
+      "pushResults": "Acordar o agente principal quando um subagente terminar",
+      "pushResultsHint": "Quando um subagente termina (ou para por um erro), o resultado volta ao agente principal: se estiver ocioso, ele começa um novo turno para continuar; se estiver ocupado, recebe no turno atual (Claude Code, Codex) ou ao fim dele; se você enviar uma mensagem, vai junto. Depois de um turno do agente com falha, ou de 20 despertares seguidos, os resultados esperam sua próxima mensagem. Parar o agente principal também para os subagentes. Desligado: o agente principal precisa consultá-los por conta própria, como antes. Vale para sessões iniciadas após a mudança.",
+      "pushSaveFailed": "Não foi possível salvar: {detail}"
     },
     "actions": {
       "saveSystemInstructions": "Salvar instruções do sistema",
@@ -4417,7 +4420,9 @@
         "awaiting": "Um subagente está aguardando você",
         "groupDelegations": "Delegações",
         "background": "Segundo plano",
-        "delegatedFallback": "Subagente delegado"
+        "delegatedFallback": "Subagente delegado",
+        "autoContinue": "continua quando terminarem",
+        "heldForNext": "os resultados vão com sua próxima mensagem"
       },
       "remoteControl": {
         "title": "Controle remoto ativado",
@@ -4434,6 +4439,23 @@
       "proposedPlan": {
         "title": "Plano proposto",
         "planning": "A planear…"
+      },
+      "delegationResults": {
+        "heading": {
+          "wake": "Resultados das subtarefas devolvidos",
+          "steer": "Resultados das subtarefas adicionados a este turno",
+          "attached": "Resultados das subtarefas enviados com sua mensagem"
+        },
+        "status": {
+          "completed": "concluída",
+          "failed": "falhou",
+          "canceled": "cancelada",
+          "interrupted": "interrompida (pode retomar)"
+        },
+        "more": " (+{count})",
+        "openSession": "Abrir sessão",
+        "footnote": "O Codeg enviou isto ao agente principal por conta própria — não é algo que você disse. O agente recebeu os resultados completos.",
+        "attached": "{count, plural, one {# resultado de subtarefa anexado} other {# resultados de subtarefas anexados}}"
       }
     },
     "diffPreview": {

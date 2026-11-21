@@ -42,6 +42,12 @@ import {
 import { TurnStats } from "./turn-stats"
 import { LiveTurnStats } from "./live-turn-stats"
 import { LiveRunsChip, type LiveRunsList } from "./live-runs-chip"
+import {
+  DelegationResultsAttached,
+  DelegationResultsRows,
+  isDelegationResultsGroup,
+  withoutDelegationResults,
+} from "./delegation-results-row"
 import { SlideSlot } from "./slide-slot"
 import { ModelLabelProvider } from "./model-label-context"
 import { TranslationProvider, useSentOriginal } from "./translation-context"
@@ -1447,6 +1453,10 @@ const HistoricalMessageGroup = memo(function HistoricalMessageGroup({
     if (isTurnErrorGroup(group)) {
       return <ContentPartsRenderer parts={group.parts} role="system" />
     }
+    // keh4l build: delegation results Codeg handed back to the agent.
+    if (isDelegationResultsGroup(group)) {
+      return <DelegationResultsRows parts={group.parts} />
+    }
     return <CollapsibleSystemMessage parts={group.parts} />
   }
 
@@ -1471,7 +1481,13 @@ const HistoricalMessageGroup = memo(function HistoricalMessageGroup({
           <UserImageAttachments images={group.images} className="self-end" />
         ) : null}
         {group.role === "user" ? (
-          <UserMessageRow parts={group.parts} />
+          <>
+            <UserMessageRow parts={withoutDelegationResults(group.parts)} />
+            <DelegationResultsAttached
+              parts={group.parts}
+              sourceTurns={sourceTurns}
+            />
+          </>
         ) : (
           <MessageContent>
             <CompletedTurnContent
@@ -1607,6 +1623,7 @@ function HeldLiveActivityBar({
             interactive={show}
             onStopAsyncTask={onStopAsyncTask}
             agentName={agentName}
+            parentIdle={!shown.message}
           />
         ) : null
       }

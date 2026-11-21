@@ -518,6 +518,28 @@ fn content_block_size(block: &crate::models::message::ContentBlock) -> usize {
         CB::Text { text } | CB::Thinking { text } => 32 + json_str_len(text),
         // `{"type":"turn_error","message":…}`
         CB::TurnError { message } => 40 + json_str_len(message),
+        // keh4l build: a handful of short fields per task, the preview the
+        // only long one.
+        CB::DelegationResults { id, mode: _, tasks } => {
+            96 + json_str_len(id)
+                + tasks
+                    .iter()
+                    .map(|t| {
+                        320 + json_str_len(&t.task_id)
+                            + json_str_len(&t.agent_type)
+                            + opt_str_size(&t.assistant)
+                            + json_str_len(&t.status)
+                            + opt_str_size(&t.preview)
+                            + opt_str_size(&t.error_code)
+                            + t.worktree.as_ref().map_or(0, |w| {
+                                96 + json_str_len(&w.path)
+                                    + json_str_len(&w.branch)
+                                    + json_str_len(&w.base_sha)
+                                    + opt_str_size(&w.changes)
+                            })
+                    })
+                    .sum::<usize>()
+        }
         CB::Image {
             data,
             mime_type,

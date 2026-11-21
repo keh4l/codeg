@@ -16,6 +16,9 @@
 //!   `crate::image_gen` in the parent.
 //! - **Assistants.** `create_assistant` / `update_assistant`, served by
 //!   `crate::assistant_tools` in the parent.
+//! - **Pushed results.** With the `push` feature the parent hands finished
+//!   delegations back by itself (`crate::acp::delegation::delivery`), so the
+//!   delegation tools' descriptions and acks say to end the turn, not poll.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -24,7 +27,8 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use super::companion::{
-    err, register_and_spawn, render_ask_result, CompanionContext, InflightCalls, LineAction,
+    err, register_and_spawn, render_ask_result, render_task_report, CompanionContext,
+    InflightCalls, LineAction,
 };
 use super::transport::{
     client_message_round_trip, BrokerAskCollectRequest, BrokerAssistantToolRequest,
@@ -142,6 +146,9 @@ fn collect_wait(arguments: &Value, cap: Option<u64>) -> Option<u64> {
 /// Add this build's tools to `tools/list`, and say in the waiting tools'
 /// descriptions how long one call waits in this session.
 pub(super) async fn extend_tool_list(ctx: &CompanionContext, tools: &mut Value) {
+    if ctx.features.push {
+        note_push(tools);
+    }
     if let Some(cap) = ctx.wait_cap_ms {
         note_wait_cap(tools, cap);
     }
@@ -168,6 +175,62 @@ pub(super) async fn extend_tool_list(ctx: &CompanionContext, tools: &mut Value) 
         }
         list.push(tool);
     }
+}
+
+/// Appended to `delegate_to_agent`'s description when results are pushed.
+const PUSH_DELEGATE_NOTE: &str = " RESULTS COME BACK TO YOU IN THIS SESSION: when a delegated \
+     task finishes, Codeg hands its result to you by itself — into the turn you are running, or \
+     as a new turn once you have ended yours. So after delegating, carry on with any other work; \
+     if there is none, end your turn instead of waiting, and do not poll get_delegation_status.";
+
+/// Appended to `get_delegation_status`'s description when results are pushed.
+const PUSH_STATUS_NOTE: &str = " In this session you rarely need this tool: finished results \
+     are handed back to you automatically. Call it only when the next step of the turn you are \
+     in cannot go on without a result, and then wait once (wait_ms) rather than polling.";
+
+/// Appended to the running ack of `delegate_to_agent` / `resume_delegation`.
+const PUSH_ACK_NOTE: &str = " When it finishes, its result is handed back to you \
+     automatically: if you have nothing else to do, end your turn now and Codeg will wake you \
+     with it. Don't poll for it.";
+
+fn note_push(tools: &mut Value) {
+    let Some(list) = tools.as_array_mut() else {
+        return;
+    };
+    for tool in list {
+        let note = match tool.get("name").and_then(Value::as_str) {
+            Some("delegate_to_agent") => PUSH_DELEGATE_NOTE,
+            Some("get_delegation_status") => PUSH_STATUS_NOTE,
+            _ => continue,
+        };
+        if let Some(Value::String(description)) = tool.get_mut("description") {
+            description.push_str(note);
+        }
+    }
+}
+
+/// How `delegate_to_agent` / `resume_delegation` results are rendered here.
+pub(super) fn task_report_renderer(ctx: &CompanionContext) -> fn(&Value) -> Value {
+    if ctx.features.push {
+        render_pushed_task_report
+    } else {
+        render_task_report
+    }
+}
+
+/// [`render_task_report`], with a running ack telling the agent the result
+/// will be handed back.
+fn render_pushed_task_report(report: &Value) -> Value {
+    let mut rendered = render_task_report(report);
+    let running = report.get("status").and_then(Value::as_str) == Some("running");
+    if running {
+        if let Some(Value::String(text)) = rendered.pointer_mut("/content/0/text") {
+            if text.contains("task_id=") {
+                text.push_str(PUSH_ACK_NOTE);
+            }
+        }
+    }
+    rendered
 }
 
 fn note_wait_cap(tools: &mut Value, cap_ms: u64) {
@@ -549,6 +612,30 @@ pub(crate) fn render_image_jobs(outcome: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pushed_sessions_are_told_not_to_poll() {
+        let mut tools = json!([
+            { "name": "delegate_to_agent", "description": "Delegate." },
+            { "name": "get_delegation_status", "description": "Status." },
+            { "name": "cancel_delegation", "description": "Cancel." },
+        ]);
+        note_push(&mut tools);
+        assert!(tools[0]["description"].as_str().unwrap().ends_with(PUSH_DELEGATE_NOTE));
+        assert!(tools[1]["description"].as_str().unwrap().ends_with(PUSH_STATUS_NOTE));
+        assert_eq!(tools[2]["description"], "Cancel.");
+
+        let ack = json!({
+            "status": "running",
+            "task_id": "t1",
+            "message": "Delegation successful. task_id=t1. Call get_delegation_status.",
+        });
+        let rendered = render_pushed_task_report(&ack);
+        assert!(rendered["content"][0]["text"].as_str().unwrap().ends_with(PUSH_ACK_NOTE));
+        // A terminal report is left as it was.
+        let done = json!({ "status": "completed", "task_id": "t1", "text": "ok" });
+        assert_eq!(render_pushed_task_report(&done), render_task_report(&done));
+    }
 
     #[test]
     fn status_wait_is_clamped_to_the_cap() {

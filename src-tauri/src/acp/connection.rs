@@ -8331,6 +8331,10 @@ struct CompanionFeatureFlags {
     /// `create_assistant` / `update_assistant` (keh4l build): switched on,
     /// and withheld where delegation is (see where it is set).
     assistants: bool,
+    /// keh4l build: results are pushed back to this session when its
+    /// delegations finish (`acp::delegation::delivery`), so the delegation
+    /// tools' descriptions say not to poll. Only alongside `delegation`.
+    push: bool,
 }
 
 /// The `--features` value for a companion launch, or `None` when no group is
@@ -8388,6 +8392,9 @@ fn companion_features_arg(flags: CompanionFeatureFlags) -> Option<String> {
     }
     if flags.assistants {
         features.push("assistants");
+    }
+    if flags.delegation && flags.push {
+        features.push("push");
     }
     if features.is_empty() {
         return None;
@@ -8526,6 +8533,7 @@ where
         // instructions. So an agent that hosts its own tools, kept from
         // delegating, is kept from writing one too.
         assistants: crate::assistant_tools::is_enabled() && host_tools.hosts_channels(),
+        push: delegation_enabled && crate::acp::delegation::delivery::push_enabled(),
     };
     // `None` (no feature enabled) short-circuits BEFORE the binary lookup, the
     // token registration and the server append: there is no companion to launch,
@@ -8594,6 +8602,12 @@ where
     }
     server = server.args(args);
     servers.push(McpServer::Stdio(server));
+    // keh4l build: what this session's tool descriptions promise decides
+    // whether its results are pushed.
+    crate::acp::delegation::delivery::note_companion_launch(
+        parent_connection_id,
+        flags.delegation && flags.push,
+    );
     Some(CompanionInjection {
         token,
         feedback_available: feedback_enabled,
@@ -15927,13 +15941,17 @@ async fn run_conversation_loop(
                                         },
                                     )
                                     .await;
-                                    // Non-`end_turn`, so cascade-cancel like
-                                    // every other turn-failure exit: the parent
-                                    // will never consume an in-flight delegation
-                                    // result. Turn-scoped — the connection is
-                                    // still alive.
-                                    if let Some(inj) = delegation_injection {
-                                        inj.broker.cancel_by_parent_turn(conn_id).await;
+                                    // keh4l build: a rejected prompt is not the
+                                    // user stopping the parent, so its
+                                    // delegations keep running and their results
+                                    // reach it with the next prompt
+                                    // (`delivery::turn_end_cancels_children`).
+                                    if crate::acp::delegation::delivery::turn_end_cancels_children(
+                                        reason_str,
+                                    ) {
+                                        if let Some(inj) = delegation_injection {
+                                            inj.broker.cancel_by_parent_turn(conn_id).await;
+                                        }
                                     }
                                     break;
                                 }
@@ -16104,7 +16122,13 @@ async fn run_conversation_loop(
                             // idempotent drain also lets the cleanup-guard
                             // cascade at run_connection exit run without
                             // race-double-drain.
-                            if reason_str != "end_turn" {
+                            //
+                            // keh4l build: only for the user stopping it
+                            // (`cancelled`). A turn that failed leaves them
+                            // running — their results reach the parent with the
+                            // next prompt (`acp::delegation::delivery`).
+                            if crate::acp::delegation::delivery::turn_end_cancels_children(reason_str)
+                            {
                                 if let Some(inj) = delegation_injection {
                                     inj.broker.cancel_by_parent_turn(conn_id).await;
                                 }
@@ -47253,13 +47277,17 @@ mod tests {
                 computer_clipboard: true,
                 image: false,
                 assistants: true,
+                push: true,
             }),
             Some(
                 "delegation,feedback,ask,sessions,tasks,result,automations,taskboard,browser,\
-                 browser_eval,computer,computer_launch,computer_clipboard,assistants"
+                 browser_eval,computer,computer_launch,computer_clipboard,assistants,push"
                     .to_string()
             )
         );
+        // keh4l build: `push` is a promise about the delegation tools, so it
+        // never goes out without them.
+        assert_eq!(only(|f| f.push = true), None);
         assert_eq!(only(|f| f.computer_clipboard = true), None);
         // keh4l build: the assistant tools alone still get a companion.
         assert_eq!(

@@ -924,7 +924,10 @@
           "invalidAgentOptions": "The agent's options aren't complete. Reopen the assistant and pick every option.",
           "notFound": "This assistant no longer exists."
         }
-      }
+      },
+      "pushResults": "Wake the main agent when a subagent finishes",
+      "pushResultsHint": "When a subagent finishes (or stops on an error), its result goes back to the main agent: an idle agent starts a new turn to carry on, a busy one gets it in its current turn (Claude Code, Codex) or when that turn ends, and it rides along with your message if you send one. After the agent's turn fails, or after 20 wakes in a row, results wait for your next message. Stopping the main agent stops its subagents too. Off: the main agent has to check on them itself, as before. Applies to sessions started after the change.",
+      "pushSaveFailed": "Couldn't save: {detail}"
     },
     "actions": {
       "dragSort": "Drag to reorder",
@@ -4417,7 +4420,9 @@
         "awaiting": "A sub-agent is waiting for you",
         "groupDelegations": "Delegations",
         "background": "Background",
-        "delegatedFallback": "Delegated sub-agent"
+        "delegatedFallback": "Delegated sub-agent",
+        "autoContinue": "continues when they finish",
+        "heldForNext": "results go with your next message"
       },
       "remoteControl": {
         "title": "Remote Control is on",
@@ -4434,6 +4439,23 @@
       "proposedPlan": {
         "title": "Proposed plan",
         "planning": "Planning…"
+      },
+      "delegationResults": {
+        "heading": {
+          "wake": "Subtask results handed back",
+          "steer": "Subtask results added to this turn",
+          "attached": "Subtask results sent with your message"
+        },
+        "status": {
+          "completed": "done",
+          "failed": "failed",
+          "canceled": "canceled",
+          "interrupted": "interrupted (can resume)"
+        },
+        "more": " (+{count} more)",
+        "openSession": "Open session",
+        "footnote": "Codeg sent this to the main agent on its own — it isn't something you said. The agent got the full results.",
+        "attached": "{count, plural, one {# subtask result} other {# subtask results}} attached"
       }
     },
     "diffPreview": {

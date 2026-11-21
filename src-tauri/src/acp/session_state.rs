@@ -1958,8 +1958,12 @@ impl SessionState {
             | AcpEvent::TurnRetrying { .. }
             | AcpEvent::NativeSessionTitle { .. }
             | AcpEvent::TranscriptRolledOver { .. }
-            | AcpEvent::UserPromptSent { .. } => {
+            | AcpEvent::UserPromptSent { .. }
+            | AcpEvent::DelegationResultsDelivered { .. }
+            | AcpEvent::DelegationPushHeld { .. } => {
                 // 这些事件不直接修改 SessionState 的可见字段。
+                // DelegationResultsDelivered（keh4l 定制版）只给前端插一行，
+                // 重载后由解析出的 DelegationResults 块还原。
                 // UserPromptSent 是纯通知事件，仅供 chat-channel 推送消费。
                 // TurnRetrying 与 Claude 的 api_retry 一样是前端瞬态提示（重试横幅），
                 // 不进快照——回合边界会清除它。

@@ -48,6 +48,7 @@ import { DELEGATION_SETTINGS_CHANGED_EVENT } from "@/lib/types"
 import type { AgentDelegationDefaults, AgentType } from "@/lib/types"
 import { AssistantsPanel } from "./assistants-panel"
 import { DelegationAgentDefaultsPanel } from "./delegation-agent-defaults"
+import { DelegationPushSettingRow } from "./delegation-push-setting"
 
 type DelegationTab = "general" | "agentDefaults" | "assistants"
 
@@ -343,6 +344,7 @@ export function DelegationSettingsSection() {
                 </span>
               </p>
             )}
+            <DelegationPushSettingRow disabled={loading || !enabled} />
             <SettingRow
               icon={Gauge}
               title={t("depthLimit")}

@@ -1283,6 +1283,8 @@ mod tauri_app {
                         )
                         .await;
                         crate::assistant_tools::apply_persisted_settings(&db_for_init).await;
+                        crate::acp::delegation::delivery::apply_persisted_settings(&db_for_init)
+                            .await;
                         // The generative-UI skill's central copy, and the move
                         // from 0.35.0's `json-render`: here, before any command
                         // runs, so the move can never undo a change made on
@@ -1401,6 +1403,18 @@ mod tauri_app {
                         .state::<std::sync::Arc<crate::acp::InternalEventBus>>()
                         .inner()
                         .clone();
+                    // keh4l build: finished delegations go back to their
+                    // parent by themselves (`acp::delegation::delivery`).
+                    tauri::async_runtime::spawn(crate::acp::delegation::delivery::start(
+                        crate::acp::delegation::delivery::Runtime {
+                            db: std::sync::Arc::new(db::AppDatabase {
+                                conn: db_conn.clone(),
+                            }),
+                            manager: std::sync::Arc::new(cm.clone_ref()),
+                            broker: broker_for_lifecycle.clone(),
+                            bus: bus.clone(),
+                        },
+                    ));
                     tauri::async_runtime::spawn(crate::acp::lifecycle_subscriber_task(
                         db_conn,
                         cm,
@@ -1922,6 +1936,8 @@ mod tauri_app {
                 translation_commands::clear_translation_cache,
                 translation_commands::save_sent_original,
                 translation_commands::get_sent_originals,
+                crate::commands::delegation_push::get_delegation_push_settings,
+                crate::commands::delegation_push::set_delegation_push_settings,
                 crate::commands::image_gen::get_image_gen_settings,
                 crate::commands::image_gen::save_image_gen_settings,
                 crate::commands::image_gen::test_image_gen_service,

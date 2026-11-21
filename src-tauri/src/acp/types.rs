@@ -867,6 +867,25 @@ pub enum AcpEvent {
         child_connection_id: String,
         running: bool,
     },
+    /// keh4l build: finished delegations were handed to this (parent)
+    /// connection's agent — see `acp::delegation::delivery`. `id` is the
+    /// results frame's nonce, which the transcript's
+    /// `ContentBlock::DelegationResults` repeats, so a client dedups the live
+    /// row against the persisted one. `message_id` names the user message the
+    /// results rode along with (`attached`); a wake or a steer has none.
+    /// Notification-only: it mutates no `SessionState` field.
+    DelegationResultsDelivered {
+        id: String,
+        mode: crate::models::delegation_results::DelegationResultsMode,
+        tasks: Vec<crate::models::delegation_results::DelegationResultsTask>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_id: Option<String>,
+    },
+    /// keh4l build: whether Codeg holds this (parent) connection's finished
+    /// delegations for the next prompt instead of waking it with them — after
+    /// its turn failed or was stopped, or after too many wakes in a row (see
+    /// `acp::delegation::delivery`). Notification-only.
+    DelegationPushHeld { held: bool },
     /// A human submitted a prompt from the Codeg conversation UI (desktop or
     /// web). Synthetic, notification-only event: it mutates no `SessionState`
     /// field and exists purely to drive the chat-channel "user message" push.
