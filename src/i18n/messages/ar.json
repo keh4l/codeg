@@ -3966,11 +3966,41 @@
             "unknown": "مهمة غير معروفة",
             "assistant_not_found": "المساعد غير موجود",
             "assistants_unsupported": "يلزم إعادة التشغيل",
-            "assistant_support_unknown": "لا استجابة"
+            "assistant_support_unknown": "لا استجابة",
+            "isolation_unavailable": "لا يمكن إنشاء شجرة عمل",
+            "worktree_failed": "فشلت شجرة العمل",
+            "invalid_launch_option": "الخيار غير متاح",
+            "task_running": "ما زالت تعمل",
+            "not_latest_round": "ليست أحدث جولة",
+            "session_unavailable": "الجلسة غير متاحة",
+            "continuation_conflict": "سبق أن تابعتها"
           }
         },
         "unknownAssistant": "المساعد #{id}",
-        "deletedAssistant": "(محذوف)"
+        "deletedAssistant": "(محذوف)",
+        "launch": {
+          "round": "الجولة {round}",
+          "roundHint": "الجولة {round}: أعطى الوكيل الرئيسي هذا الوكيل الفرعي عملًا إضافيًا في الجلسة نفسها",
+          "followUpHeader": "الجولة {round} · عمل إضافي من الوكيل الرئيسي",
+          "worktree": "شجرة العمل",
+          "model": "النموذج",
+          "options": "الخيارات",
+          "from": "من {sha}",
+          "pending": "قيد الإنشاء…",
+          "gone": "أُزيلت",
+          "open": "فتح",
+          "openFailed": "تعذّر فتح شجرة العمل: {detail}",
+          "remove": "إزالة شجرة العمل",
+          "removeRunning": "ما زال الوكيل الفرعي يعمل فيها",
+          "removed": "أُزيلت شجرة العمل",
+          "removeFailed": "تعذّرت إزالة شجرة العمل: {detail}",
+          "removeTitle": "إزالة شجرة العمل هذه؟",
+          "removeDescription": "سيُحذف {path} من القرص. تعود المحادثات المصنفة تحته إلى مجلد المشروع.",
+          "removeUncommitted": "في {path} ‏{count} تغيير غير مُودَع سيضيع. تعود المحادثات المصنفة تحته إلى مجلد المشروع.",
+          "deleteBranch": "احذف الفرع {branch} أيضًا",
+          "cancel": "إلغاء"
+        },
+        "continued": "متابعة"
       },
       "contentParts": {
         "offset": "الإزاحة: {offset}",
@@ -10304,5 +10334,9 @@
       "rateLimited": "طلب SRN من Codeg الانتظار قبل إعادة المحاولة.",
       "server": "ردّ SRN بخطأ."
     }
+  },
+  "DelegationWorktree": {
+    "deleteWithConversation": "أزل شجرة العمل أيضًا ({path})",
+    "deleteWithConversationUncommitted": "أزل شجرة العمل أيضًا ({path}) — فيها {count} تغيير غير مُودَع"
   }
 }

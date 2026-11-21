@@ -1743,6 +1743,9 @@ pub async fn get_folder_conversation_core(
         .await
         .unwrap_or_default();
     inject_delegation_meta(&mut turns, &children);
+    // keh4l build: continued rounds and per-task launch facts, from the task
+    // ledger.
+    crate::acp::delegation::ledger::inject_ledger_meta(conn, &mut turns).await;
     // Same best-effort contract: a failed read costs the approval chips, never
     // the detail load.
     let approvals = tool_approval_service::list_by_conversation(conn, conversation_id)

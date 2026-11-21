@@ -338,6 +338,8 @@ impl CompanionFeatures {
             | "get_delegation_status"
             | "cancel_delegation"
             | "resume_delegation" => self.delegation,
+            // keh4l build.
+            "continue_delegation" => self.delegation,
             // Collects the answer to an `ask_user_question` that returned
             // before the user answered (see `crate::acp::tool_wait_cap`).
             "get_question_answer" => self.ask,
@@ -4653,8 +4655,9 @@ mod tests {
         let resp = unwrap_respond(dispatch_for_test(line).await);
         let result = resp.result.unwrap();
         let tools = result["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 4);
+        assert_eq!(tools.len(), 5); // keh4l build: + continue_delegation
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert!(names.contains(&"continue_delegation"));
         assert!(names.contains(&"delegate_to_agent"));
         assert!(names.contains(&"get_delegation_status"));
         assert!(names.contains(&"cancel_delegation"));
@@ -5334,7 +5337,7 @@ mod tests {
             dispatch_for_test(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#).await,
         );
         assert!(!names.contains(&"check_user_feedback".to_string()));
-        assert_eq!(names.len(), 4);
+        assert_eq!(names.len(), 5); // keh4l build: + continue_delegation
     }
 
     #[tokio::test]
@@ -5343,7 +5346,7 @@ mod tests {
             dispatch_with_features(BOTH, r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#).await,
         );
         assert!(names.contains(&"check_user_feedback".to_string()));
-        assert_eq!(names.len(), 5);
+        assert_eq!(names.len(), 6); // keh4l build: + continue_delegation
     }
 
     #[tokio::test]
@@ -8377,7 +8380,15 @@ mod tests {
             BrokerMessage::Ping => Some(json!({"ok": true})),
             _ => None,
         });
-        let delegate = delegate_schema(&ctx_on(&sock)).await;
+        let mut delegate = delegate_schema(&ctx_on(&sock)).await;
+        // keh4l build: `isolation` / `model` / `config` ride on top
+        // (`fork_tools::extend_delegate_schema`).
+        for key in ["isolation", "model", "config"] {
+            delegate["inputSchema"]["properties"]
+                .as_object_mut()
+                .unwrap()
+                .remove(key);
+        }
         assert_eq!(delegate, embedded_delegate_schema());
         assert_eq!(
             delegate["inputSchema"]["required"],

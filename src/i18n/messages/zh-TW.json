@@ -3966,11 +3966,41 @@
             "unknown": "未知任務",
             "assistant_not_found": "助手不存在",
             "assistants_unsupported": "需要重新啟動",
-            "assistant_support_unknown": "未回應"
+            "assistant_support_unknown": "未回應",
+            "isolation_unavailable": "無法建立 worktree",
+            "worktree_failed": "worktree 建立失敗",
+            "invalid_launch_option": "選項不可用",
+            "task_running": "仍在執行",
+            "not_latest_round": "不是最新一輪",
+            "session_unavailable": "會話不可用",
+            "continuation_conflict": "已被追加過"
           }
         },
         "unknownAssistant": "助手 #{id}",
-        "deletedAssistant": "（已刪除）"
+        "deletedAssistant": "（已刪除）",
+        "launch": {
+          "round": "第 {round} 輪",
+          "roundHint": "第 {round} 輪：主智能體在同一個會話裡給這個子智能體追加的任務",
+          "followUpHeader": "第 {round} 輪 · 主智能體追加",
+          "worktree": "Worktree",
+          "model": "模型",
+          "options": "選項",
+          "from": "基於 {sha}",
+          "pending": "正在建立…",
+          "gone": "已刪除",
+          "open": "開啟",
+          "openFailed": "開啟 worktree 失敗：{detail}",
+          "remove": "刪除 worktree",
+          "removeRunning": "子智能體還在裡面工作",
+          "removed": "已刪除 worktree",
+          "removeFailed": "刪除 worktree 失敗：{detail}",
+          "removeTitle": "刪除這個 worktree？",
+          "removeDescription": "會從磁碟上刪除 {path}。歸在它下面的會話會移回專案資料夾。",
+          "removeUncommitted": "{path} 裡有 {count} 處未提交的變更，刪除後會遺失。歸在它下面的會話會移回專案資料夾。",
+          "deleteBranch": "同時刪除分支 {branch}",
+          "cancel": "取消"
+        },
+        "continued": "追加"
       },
       "contentParts": {
         "offset": "位移：{offset}",
@@ -10304,5 +10334,9 @@
       "rateLimited": "SRN 要求 Codeg 稍後再試。",
       "server": "SRN 回傳了錯誤。"
     }
+  },
+  "DelegationWorktree": {
+    "deleteWithConversation": "同時刪除它的 worktree（{path}）",
+    "deleteWithConversationUncommitted": "同時刪除它的 worktree（{path}）——裡面有 {count} 處未提交的變更"
   }
 }

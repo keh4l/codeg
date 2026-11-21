@@ -177,6 +177,21 @@ export function ErrorLabel({ code }: { code?: string }) {
       return <>{t("assistants_unsupported")}</>
     case "assistant_support_unknown":
       return <>{t("assistant_support_unknown")}</>
+    // keh4l build: worktree isolation, per-call options, continuations.
+    case "isolation_unavailable":
+      return <>{t("isolation_unavailable")}</>
+    case "worktree_failed":
+      return <>{t("worktree_failed")}</>
+    case "invalid_launch_option":
+      return <>{t("invalid_launch_option")}</>
+    case "task_running":
+      return <>{t("task_running")}</>
+    case "not_latest_round":
+      return <>{t("not_latest_round")}</>
+    case "session_unavailable":
+      return <>{t("session_unavailable")}</>
+    case "continuation_conflict":
+      return <>{t("continuation_conflict")}</>
     default:
       return <>{t("default")}</>
   }

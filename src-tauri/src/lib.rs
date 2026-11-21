@@ -1413,6 +1413,9 @@ mod tauri_app {
                             manager: std::sync::Arc::new(cm.clone_ref()),
                             broker: broker_for_lifecycle.clone(),
                             bus: bus.clone(),
+                            emitter: crate::web::event_bridge::EventEmitter::from_app(
+                                app.handle(),
+                            ),
                         },
                     ));
                     tauri::async_runtime::spawn(crate::acp::lifecycle_subscriber_task(
@@ -1938,6 +1941,9 @@ mod tauri_app {
                 translation_commands::get_sent_originals,
                 crate::commands::delegation_push::get_delegation_push_settings,
                 crate::commands::delegation_push::set_delegation_push_settings,
+                crate::commands::delegation_worktree::get_delegation_worktree,
+                crate::commands::delegation_worktree::delegation_worktree_for_conversation,
+                crate::commands::delegation_worktree::remove_delegation_worktree,
                 crate::commands::image_gen::get_image_gen_settings,
                 crate::commands::image_gen::save_image_gen_settings,
                 crate::commands::image_gen::test_image_gen_service,

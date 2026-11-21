@@ -3966,11 +3966,41 @@
             "unknown": "unknown task",
             "assistant_not_found": "assistant not found",
             "assistants_unsupported": "needs restart",
-            "assistant_support_unknown": "no answer"
+            "assistant_support_unknown": "no answer",
+            "isolation_unavailable": "No worktree possible",
+            "worktree_failed": "Worktree failed",
+            "invalid_launch_option": "Option unavailable",
+            "task_running": "Still running",
+            "not_latest_round": "Not the latest round",
+            "session_unavailable": "Session unavailable",
+            "continuation_conflict": "Already continued"
           }
         },
         "unknownAssistant": "Assistant #{id}",
-        "deletedAssistant": "(deleted)"
+        "deletedAssistant": "(deleted)",
+        "launch": {
+          "round": "Round {round}",
+          "roundHint": "Round {round}: the main agent sent this sub-agent more work in the same session",
+          "followUpHeader": "Round {round} · follow-up from the main agent",
+          "worktree": "Worktree",
+          "model": "Model",
+          "options": "Options",
+          "from": "from {sha}",
+          "pending": "Being created…",
+          "gone": "Removed",
+          "open": "Open",
+          "openFailed": "Couldn't open the worktree: {detail}",
+          "remove": "Remove worktree",
+          "removeRunning": "The sub-agent is still working there",
+          "removed": "Worktree removed",
+          "removeFailed": "Couldn't remove the worktree: {detail}",
+          "removeTitle": "Remove this worktree?",
+          "removeDescription": "{path} is deleted from disk. Conversations filed under it move back to the project folder.",
+          "removeUncommitted": "{path} has {count} uncommitted change(s) that will be lost. Conversations filed under it move back to the project folder.",
+          "deleteBranch": "Also delete branch {branch}",
+          "cancel": "Cancel"
+        },
+        "continued": "Continued"
       },
       "contentParts": {
         "offset": "Offset: {offset}",
@@ -10304,5 +10334,9 @@
       "rateLimited": "SRN asked Codeg to wait before trying again.",
       "server": "SRN answered with an error."
     }
+  },
+  "DelegationWorktree": {
+    "deleteWithConversation": "Also remove its worktree ({path})",
+    "deleteWithConversationUncommitted": "Also remove its worktree ({path}) — it has {count} uncommitted change(s)"
   }
 }

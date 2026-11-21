@@ -489,6 +489,18 @@ pub fn build_router_with_srn(
             post(handlers::delegation_push::set_delegation_push_settings),
         )
         .route(
+            "/get_delegation_worktree",
+            post(handlers::delegation_worktree::get_delegation_worktree),
+        )
+        .route(
+            "/delegation_worktree_for_conversation",
+            post(handlers::delegation_worktree::delegation_worktree_for_conversation),
+        )
+        .route(
+            "/remove_delegation_worktree",
+            post(handlers::delegation_worktree::remove_delegation_worktree),
+        )
+        .route(
             "/get_image_gen_settings",
             post(handlers::image_gen::get_image_gen_settings),
         )

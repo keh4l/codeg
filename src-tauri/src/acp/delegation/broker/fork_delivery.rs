@@ -25,6 +25,7 @@ fn terminal_event(
     task: &RunningTask,
     completed: &CompletedTask,
     cause: TerminalCause,
+    worktree: Option<crate::models::delegation_results::DelegationWorktreeInfo>,
 ) -> TerminalEvent {
     let resumable = cause == TerminalCause::ChildFailed
         || completed
@@ -50,7 +51,7 @@ fn terminal_event(
             message,
             resumable,
             child_conversation_id: completed.child_conversation_id,
-            worktree: None,
+            worktree,
         },
         cause,
     }
@@ -80,7 +81,8 @@ impl DelegationBroker {
         } else {
             TerminalCause::Finished
         };
-        sink.on_terminal(terminal_event(task_id, task, completed, cause));
+        let worktree = self.fork_task(task_id).and_then(|info| info.worktree);
+        sink.on_terminal(terminal_event(task_id, task, completed, cause, worktree));
     }
 
     /// Tasks just drained into `completed` (pending lock held).
@@ -95,7 +97,14 @@ impl DelegationBroker {
         };
         for (task, _) in drained {
             if let Some(completed) = inner.completed.get(&task.task_id) {
-                sink.on_terminal(terminal_event(&task.task_id, task, completed, cause));
+                let worktree = self.fork_task(&task.task_id).and_then(|info| info.worktree);
+                sink.on_terminal(terminal_event(
+                    &task.task_id,
+                    task,
+                    completed,
+                    cause,
+                    worktree,
+                ));
             }
         }
     }
@@ -212,6 +221,7 @@ mod tests {
                 requested_working_dir: None,
                 external_handle: None,
                 assistant: None,
+                fork: Default::default(),
             })
             .await
             .task_id

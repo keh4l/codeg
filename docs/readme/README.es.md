@@ -54,6 +54,10 @@
     <td width="50%" valign="top">🧭 <strong>Ajustes agrupados</strong><br/>La navegación de Ajustes se agrupa bajo cinco títulos; las páginas con muchas opciones reúnen las relacionadas en una sola tarjeta, todas las páginas tienen título y en el móvil un desplegable ya no aplasta su descripción.</td>
   </tr>
   <tr>
+    <td width="50%" valign="top">↩️ <strong>Los subagentes despiertan al agente principal al terminar</strong><br/>Cuando un subagente delegado termina, su resultado vuelve solo al agente principal: si está libre, empieza un turno nuevo y sigue; si está ocupado, lo recibe en el turno en curso; y si justo estás enviando un mensaje, va con él. El agente principal puede cerrar su turno nada más repartir el trabajo, sin quedarse esperando para consultar los resultados.</td>
+    <td width="50%" valign="top">🌿 <strong>Los subagentes trabajan en su propio worktree</strong><br/>El agente principal puede hacer que un subagente cambie código en un worktree y una rama de git aparte, así que varios en paralelo no se estorban; cada delegación puede indicar su propio modelo y nivel de razonamiento, y a un subagente que ya terminó se le puede encargar más trabajo en la misma sesión.</td>
+  </tr>
+  <tr>
     <td colspan="2" valign="top">🔄 <strong>Al día con el original</strong><br/>Los cambios del proyecto original se incorporan con regularidad; lo que no aparece aquí funciona igual que en la versión oficial. Kiro CLI integrado, lo primero que añadió esta versión, forma parte de la versión oficial desde la 0.36.0. Los resúmenes del razonamiento de Claude Code usan desde la 0.41.3-1 el interruptor de la versión oficial: «Mostrar resúmenes del razonamiento de Claude» en Ajustes → Agentes → Claude Code, desactivado por defecto. Desde la 0.46.0-1, el siguiente mensaje sugerido se rellena como en la versión oficial: con Tab en el ordenador y con el botón de la bombilla junto a Enviar en el móvil.</td>
   </tr>
 </table>
@@ -132,7 +136,7 @@
 - Cuánto espera un agente por una llamada a una herramienta MCP varía: ZCode, 30 segundos; Cursor, Kimi y DeepSeek, 60 segundos; Codex, 5 minutos; Claude Code, OpenCode, Qoder, CodeBuddy y Grok, prácticamente sin límite. En la versión oficial, `get_delegation_status` (esperar el resultado de una tarea delegada) puede esperar mucho en una sola llamada y `ask_user_question` (una pregunta para ti) espera hasta que respondas; pasado el plazo, el agente da la llamada por fallida y sigue, así que la pregunta cuenta como sin responder.
 - Esta versión da a estas herramientas un límite por agente, por debajo de su plazo: por ejemplo 20 segundos en ZCode, 45 en Cursor y 4 minutos en Codex; los agentes sin límite no tienen tope, como en la versión oficial. Si se llega al tope sin resultado, la llamada vuelve y le dice al agente cómo seguir esperando.
 - Preguntas: si para entonces no has respondido, la tarjeta de la pregunta sigue donde está y el agente sigue esperando con una herramienta nueva, `get_question_answer`; cuando respondes, la respuesta aparece en la tarjeta original.
-- Tareas delegadas: cada llamada a `get_delegation_status` espera como mucho hasta el tope y devuelve el estado actual de las tareas. La generación de imágenes funciona igual; consulta la sección anterior.
+- Tareas delegadas: cada llamada a `get_delegation_status` espera como mucho hasta el tope y devuelve el estado actual de las tareas. Con «Despertar al agente principal cuando termine un subagente» activado, el agente principal normalmente ya no necesita esperar: los resultados le llegan solos; consulta «Los subagentes despiertan al agente principal al terminar». La generación de imágenes funciona igual; consulta la sección anterior.
 - Mientras espera, el agente recibe un aviso de progreso cada 10 segundos, con lo que los agentes que alargan su plazo con el progreso, como CommandCode, pueden esperar más.
 
 </details>
@@ -182,7 +186,7 @@
 - Cuando mencionas un agente con @ en un mensaje, el agente principal le pasa el trabajo con `delegate_to_agent` y este lo hace en su propia subsesión. En la versión oficial, `resume_delegation` solo recupera subtareas canceladas o cortadas por un cierre inesperado; si el turno del subagente termina con un error (red caída, cuota o límite de uso alcanzado, sesión caducada, el proveedor rechazó la solicitud, presupuesto de tokens agotado…), queda como «fallida» y el agente principal solo puede abrir otra subsesión y empezar de cero, perdiendo el contexto del trabajo a medias.
 - Esta versión trata también esos fallos como interrupciones: el resultado de la subtarea indica que su sesión y el trabajo parcial se conservan y que `resume_delegation` la continúa una vez resuelta la causa. El agente principal sigue entonces en la subsesión original con el mismo task_id, y la tarjeta original del subagente en la conversación vuelve a mostrar su progreso.
 - Cómo usarlo: cuando vuelva la red, recargues la cuota o vuelvas a iniciar sesión, pide al agente principal que deje continuar al subagente.
-- Una tarea que falló antes de tener sesión (por ejemplo, porque el agente no pudo arrancar) no tiene nada que continuar y hay que delegarla de nuevo; a una subtarea que terminó con normalidad tampoco se le puede añadir trabajo así: el trabajo adicional sigue yendo en una delegación nueva.
+- Una tarea que falló antes de tener sesión (por ejemplo, porque el agente no pudo arrancar) no tiene nada que continuar y hay que delegarla de nuevo. Para añadir trabajo a una subtarea que ya terminó se usa `continue_delegation`; consulta «Los subagentes trabajan en su propio worktree».
 
 </details>
 
@@ -205,6 +209,36 @@
 - La navegación se agrupa bajo cinco títulos (Básico, Agentes, Contenido, Control, Conexiones y mantenimiento); las páginas y su orden son los de la versión oficial.
 - Apariencia, General, Sistema, Control de versiones y Traducción reúnen los ajustes relacionados en una tarjeta con el nombre del grupo encima, y un ajuste con un solo interruptor o desplegable ocupa una fila: nombre y descripción a la izquierda, control a la derecha. Apariencia pasa de doce tarjetas a tres grupos; en Control de versiones, «Añadir cuenta» pasa a la cabecera de cada sección.
 - Cada página empieza con un título y una descripción de una línea; el interruptor del proxy es como los demás; en el móvil, un desplegable o botón que no cabe pasa debajo de su descripción; en una ventana ancha del navegador, las páginas de formulario limitan su ancho y se centran.
+
+</details>
+
+<details>
+<summary><strong>Los subagentes despiertan al agente principal al terminar</strong>: detalles</summary>
+<br/>
+
+- En la versión oficial, una vez que el agente principal envía un subagente, solo se entera del resultado consultándolo él mismo con `get_delegation_status`: o se queda bloqueado esperando, o consulta cada cierto tiempo. En cuanto cierra su turno, nadie le avisa cuando el subagente termina; tiene que esperar a que le envíes otro mensaje recordándole que lo consulte.
+- Esta versión devuelve el resultado al agente principal cuando un subagente termina (o se detiene a medio camino por un error):
+  - Agente principal libre: tras 2 segundos (los que terminan a la vez se juntan en uno), empieza solo un turno nuevo y el agente principal sigue a partir de los resultados;
+  - Agente principal en mitad de un turno: Claude Code y Codex los reciben dentro de ese turno; los demás agentes los reciben en un turno nuevo que empieza solo cuando termina ese;
+  - Justo estás enviando un mensaje: los resultados van con él.
+- La conversación muestra una fila «Resultados de subtareas devueltos» con cada subagente, si terminó o falló y cuánto tardó; al desplegarla ves un resumen de cada resultado y «Abrir sesión». Los que fueron con tu mensaje aparecen debajo de él como «N resultados de subtareas adjuntos». Esa fila la envía codeg al agente principal: no se reenvía a los canales de chat como si la hubieras escrito tú ni se usa para poner título a la sesión.
+- Los resultados que el agente principal ya obtuvo por su cuenta con `get_delegation_status` o `cancel_delegation` no se vuelven a enviar; las subtareas canceladas por el agente principal o por ti no se envían.
+- Al pulsar Detener se paran el agente principal y los subagentes que tiene en marcha, como en la versión oficial; los resultados que ya habían terminado pero aún no se habían entregado van con tu siguiente mensaje. Cuando el turno del agente principal termina con un error (límite de uso, red caída…), la versión oficial cancela también sus subagentes; esta versión los deja terminar. En ese caso, y tras 20 continuaciones automáticas seguidas, ya no empieza solo un turno nuevo: los resultados esperan a tu siguiente mensaje, y así lo indica una nota junto a «N en curso».
+- El interruptor es «Despertar al agente principal cuando termine un subagente» en Ajustes → Colaboración → Colaboración multiagente → General, activado por defecto, y se aplica a las sesiones que empiecen después; apagado, funciona como en la versión oficial: el agente principal tiene que consultarlo por su cuenta.
+
+</details>
+
+<details>
+<summary><strong>Los subagentes trabajan en su propio worktree</strong>: detalles</summary>
+<br/>
+
+- En la versión oficial todos los subagentes trabajan en la carpeta de trabajo del agente principal, así que dos subagentes enviados a la vez a cambiar código tocan los mismos archivos; el modelo se fija de antemano en el asistente @ o en Ajustes y el agente principal no puede elegirlo según la tarea; y si, una vez terminado, hay que cambiar algo más, toca abrir una sesión nueva y explicarlo todo otra vez.
+- Esta versión añade tres parámetros a `delegate_to_agent`:
+  - `isolation: "worktree"`: el subagente trabaja en un worktree de git nuevo, en la rama `delegate/<id>`, creado desde el commit en el que está el agente principal; los cambios sin confirmar del agente principal no están en él, y la respuesta a la delegación lo advierte. El worktree va en la «Ubicación del worktree» de «Tareas pendientes» (junto al repositorio si no está configurada), en una carpeta llamada `<repo>-delegate-<id>`. Cuando el subagente termina, su resultado indica la ruta, la rama y qué cambió; el agente principal lo revisa y lo fusiona con git, o te lo deja a ti. Solo funciona en un repositorio git con al menos un commit.
+  - `model` y `config`: un modelo y unas opciones solo para esta delegación (como `{"reasoning_effort": "high"}`), aplicados sobre los valores por defecto del asistente @ o de Ajustes; las opciones que no se indican quedan como estaban. Cuando el subagente arranca, se comprueban contra las opciones que ofrece de verdad: si alguna no coincide, no se le deja empezar y se le dice al agente principal qué hay disponible; las opciones que no tiene en absoluto se ignoran, y la respuesta lo indica.
+- Herramienta nueva, `continue_delegation`: encarga más trabajo a una subtarea que ya terminó (completada, fallida o cancelada), en su subsesión original, conservando el contexto, la carpeta de trabajo, el modelo y las opciones; el resultado también vuelve al agente principal. Cada encargo es una ronda nueva con un task_id nuevo. Reparto con `resume_delegation`: resume sigue lo que se cortó a medias; continue pide más cuando ya está hecho.
+- La fila de la delegación muestra tras el título etiquetas con el modelo, la rama y «Ronda N»; al desplegarla ves el modelo, las opciones y el estado del worktree (de qué commit salió, cuántos archivos cambiaron). «Abrir» abre el worktree en el espacio de trabajo (ahí se revisan los cambios, se hace commit y se fusiona) y «Eliminar worktree» lo borra, también con su rama si quieres.
+- Los worktrees no se borran solos. Al eliminar una subsesión que usó uno, el cuadro de confirmación añade «Eliminar también su worktree»; si dentro hay cambios sin confirmar, viene desmarcado por defecto e indica cuántos.
 
 </details>
 

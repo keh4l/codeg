@@ -13,6 +13,15 @@ import {
   delegationStepStatus,
 } from "@/components/message/delegation-status-badge"
 import { DelegationStatusRow } from "@/components/message/delegation-status-row"
+import {
+  DelegationLaunchChips,
+  DelegationLaunchDetail,
+} from "@/components/message/activity/rows/delegation-launch"
+import {
+  hasLaunchDetail,
+  isContinuationCall,
+  parseDelegationLaunch,
+} from "@/lib/delegation-launch"
 import { useSessionViewerHost } from "@/components/message/session-viewer-host-context"
 import { SubAgentSessionDialog } from "@/components/message/sub-agent-session-dialog"
 import {
@@ -93,6 +102,12 @@ export const DelegationRow = memo(function DelegationRow({
       state: part.state,
       meta: part.meta ?? null,
       laterReport: latest?.report ?? null,
+      // keh4l build: a `continue_delegation` round's card (drawn as this one)
+      // finds its live binding by the task id its ack names — its own call id
+      // is rarely the one the broker could bind.
+      taskIdHint: isContinuationCall(part.input)
+        ? delegateCallTaskId(part)
+        : undefined,
     }),
     [part, latest]
   )
@@ -196,6 +211,11 @@ function DelegationStepRow({
   const [dialogOpen, setDialogOpen] = useState(false)
   const status = delegationStepStatus(model.status)
   const working = status === "running" || status === "awaiting"
+  // keh4l build: model / options / worktree / round of this task.
+  const launch = useMemo(
+    () => parseDelegationLaunch(source.input, source.meta, source.output),
+    [source.input, source.meta, source.output]
+  )
   // While it works, its own connection is the freshest source; the reports
   // its checks returned cover the rest (and, once it is done, say how it
   // ended).
@@ -258,7 +278,11 @@ function DelegationStepRow({
             ) : null}
           </>
         }
-        expandable={(taskLine !== null && (taskCut || open)) || !!reason}
+        expandable={
+          (taskLine !== null && (taskCut || open)) ||
+          !!reason ||
+          hasLaunchDetail(launch)
+        }
         expanded={open}
         onExpandedChange={setOpen}
         trailing={
@@ -311,6 +335,13 @@ function DelegationStepRow({
                 </p>
               </div>
             ) : null}
+            {hasLaunchDetail(launch) ? (
+              <DelegationLaunchDetail
+                facts={launch}
+                taskId={model.taskId}
+                running={working}
+              />
+            ) : null}
           </DetailBox>
         )}
       >
@@ -331,6 +362,7 @@ function DelegationStepRow({
               #{model.taskId.slice(0, 8)}
             </span>
           ) : null}
+          <DelegationLaunchChips facts={launch} />
           {progress && progress.steps > 0 ? (
             // Pulled in by the space after its dot, so the dot sits centred
             // between the id and the count.

@@ -3966,11 +3966,41 @@
             "unknown": "tarefa desconhecida",
             "assistant_not_found": "assistente não encontrado",
             "assistants_unsupported": "requer reinício",
-            "assistant_support_unknown": "sem resposta"
+            "assistant_support_unknown": "sem resposta",
+            "isolation_unavailable": "Worktree indisponível",
+            "worktree_failed": "Falha no worktree",
+            "invalid_launch_option": "Opção indisponível",
+            "task_running": "Ainda em execução",
+            "not_latest_round": "Não é a última rodada",
+            "session_unavailable": "Sessão indisponível",
+            "continuation_conflict": "Já continuada"
           }
         },
         "unknownAssistant": "Assistente #{id}",
-        "deletedAssistant": "(excluído)"
+        "deletedAssistant": "(excluído)",
+        "launch": {
+          "round": "Rodada {round}",
+          "roundHint": "Rodada {round}: o agente principal deu mais trabalho a este subagente na mesma sessão",
+          "followUpHeader": "Rodada {round} · trabalho extra do agente principal",
+          "worktree": "Worktree",
+          "model": "Modelo",
+          "options": "Opções",
+          "from": "de {sha}",
+          "pending": "Criando…",
+          "gone": "Removido",
+          "open": "Abrir",
+          "openFailed": "Não foi possível abrir o worktree: {detail}",
+          "remove": "Remover worktree",
+          "removeRunning": "O subagente ainda está trabalhando lá",
+          "removed": "Worktree removido",
+          "removeFailed": "Não foi possível remover o worktree: {detail}",
+          "removeTitle": "Remover este worktree?",
+          "removeDescription": "{path} é apagado do disco. As conversas arquivadas nele voltam para a pasta do projeto.",
+          "removeUncommitted": "{path} tem {count} alteração(ões) sem commit que serão perdidas. As conversas arquivadas nele voltam para a pasta do projeto.",
+          "deleteBranch": "Também excluir o branch {branch}",
+          "cancel": "Cancelar"
+        },
+        "continued": "Continuação"
       },
       "contentParts": {
         "offset": "Deslocamento: {offset}",
@@ -10304,5 +10334,9 @@
       "rateLimited": "O SRN pediu que o Codeg espere antes de tentar novamente.",
       "server": "O SRN respondeu com um erro."
     }
+  },
+  "DelegationWorktree": {
+    "deleteWithConversation": "Também remover o worktree ({path})",
+    "deleteWithConversationUncommitted": "Também remover o worktree ({path}) — tem {count} alteração(ões) sem commit"
   }
 }

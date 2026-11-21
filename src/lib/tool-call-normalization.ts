@@ -150,6 +150,9 @@ const EXACT_TOOL_NAME_ALIASES: Record<string, string> = {
   get_delegation_status: "get_delegation_status",
   cancel_delegation: "cancel_delegation",
   resume_delegation: "resume_delegation",
+  // keh4l build: a continuation is another round of a delegation, drawn on
+  // the same card (`src/lib/delegation-launch.ts` reads its round).
+  continue_delegation: "delegate_to_agent",
   // codeg-mcp workbench companions (session lookup, work-task reporting, chat
   // authoring). Listed explicitly because the freeform `^task(\b|[_\s:-])` rule
   // below would otherwise collapse `task_progress` / `task_complete` into the
@@ -659,6 +662,8 @@ function normalizeUncached(toolName: string): string {
     return "get_delegation_status"
   if (/[^a-z0-9]cancel_delegation$/.test(canonical)) return "cancel_delegation"
   if (/[^a-z0-9]resume_delegation$/.test(canonical)) return "resume_delegation"
+  if (/[^a-z0-9]continue_delegation$/.test(canonical))
+    return "delegate_to_agent"
   if (/[^a-z0-9]create_goal$/.test(canonical)) return "create_goal"
   if (/[^a-z0-9]update_goal$/.test(canonical)) return "update_goal"
 

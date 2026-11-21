@@ -622,6 +622,7 @@ async fn async_main(
             manager: Arc::new(state.connection_manager.clone_ref()),
             broker: state.delegation_broker.clone(),
             bus: state.acp_event_bus.clone(),
+            emitter: state.emitter.clone(),
         },
     ));
     tokio::spawn(codeg_lib::lifecycle_subscriber_task(

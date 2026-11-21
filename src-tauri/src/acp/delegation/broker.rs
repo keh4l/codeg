@@ -75,8 +75,12 @@ use crate::acp::delegation::types::{
 use crate::acp::types::DelegationResultSummary;
 use crate::models::AgentType;
 
-// keh4l build: pushing terminal results to the parent (see the module).
+// keh4l build: pushing terminal results to the parent, per-call launch
+// options / worktrees / the task ledger, and `continue_delegation` (see each).
+mod continuation;
 mod fork_delivery;
+mod fork_launch;
+pub use continuation::ContinueDelegationRequest;
 
 /// Default per-parent byte budget for cached completed-task result text. The
 /// completed-cache lets `get_delegation_status` / `cancel_delegation` return a
@@ -454,6 +458,9 @@ struct PendingInner {
     /// would silently stomp the first's `RunningTask`. Unlike `setups` this is
     /// a plain claim with no early-terminal gating semantics.
     resuming: HashSet<String>,
+    /// keh4l build: writes to the task ledger, in this lock's order
+    /// (`fork_launch::LedgerFeed`).
+    fork_ledger: fork_launch::LedgerFeed,
 }
 
 /// One in-flight `handle_request` setup tracked for parent-cancel coverage.
@@ -622,6 +629,7 @@ impl PendingInner {
     /// this insert under one lock, then notifies long-poll waiters AFTER
     /// releasing the lock.
     fn insert_completed(&mut self, call_id: &str, task: CompletedTask) {
+        self.fork_ledger.finished(call_id, &task); // keh4l build: the task ledger
         let parent = task.parent_connection_id.clone();
         let task_bytes = task.text.as_ref().map_or(0, |t| t.len());
         self.completed.insert(call_id.to_string(), task);
@@ -1598,6 +1606,11 @@ pub struct DelegationBroker {
     /// keh4l build: where terminal results are pushed to the parent
     /// (`fork_delivery`). Unset in tests that don't install one.
     delivery: Arc<std::sync::OnceLock<Arc<dyn crate::acp::delegation::delivery::DeliverySink>>>,
+    /// keh4l build: the durable task record (`fork_launch`). Unset in tests
+    /// that don't install one.
+    ledger: Arc<std::sync::OnceLock<Arc<dyn crate::acp::delegation::ledger::DelegationLedger>>>,
+    /// keh4l build: launch facts per task (`fork_launch::ForkTaskInfo`).
+    fork_tasks: Arc<std::sync::Mutex<fork_launch::ForkTasks>>,
 }
 
 impl DelegationBroker {
@@ -1656,6 +1669,8 @@ impl DelegationBroker {
             result_notify: Arc::new(Notify::new()),
             block_resurface: BLOCK_RESURFACE_INTERVAL,
             delivery: Arc::default(),
+            ledger: Arc::default(),
+            fork_tasks: Arc::default(),
         }
     }
 
@@ -2535,9 +2550,12 @@ impl DelegationBroker {
         // Every report this call returns — the ack, a setup failure, a
         // setup-window terminal — names the assistant the task runs as.
         let identity = req.assistant.as_ref().map(DelegationAssistant::identity);
-        self.start_delegation_inner(req)
+        let mut report = self
+            .start_delegation_inner(req)
             .await
-            .with_assistant(identity.as_ref())
+            .with_assistant(identity.as_ref());
+        self.fork_annotate_ack(&mut report);
+        report
     }
 
     async fn start_delegation_inner(&self, mut req: DelegationRequest) -> DelegationTaskReport {
@@ -2751,20 +2769,32 @@ impl DelegationBroker {
                 None,
             );
         }
+        // keh4l build: per-call options laid over these, and the worktree.
+        let mut fork_launch = match self
+            .fork_prepare_launch(&mut req, preferred_mode_id, preferred_config_values)
+            .await
+        {
+            Ok(launch) => launch,
+            Err(report) => {
+                self.drop_inflight(inflight_id).await;
+                return *report;
+            }
+        };
         let child_connection_id = match self
             .spawner
             .spawn(
                 &req.parent_connection_id,
                 req.agent_type,
                 req.working_dir.clone(),
-                preferred_mode_id,
-                preferred_config_values,
+                fork_launch.mode_id.clone(),
+                fork_launch.config.clone(),
             )
             .await
         {
             Ok(id) => id,
             Err(e) => {
                 self.drop_inflight(inflight_id).await;
+                self.fork_abandon_launch(&fork_launch).await;
                 return report_err(
                     req.agent_type,
                     DelegationError::SpawnFailed(e.to_string()),
@@ -2780,6 +2810,7 @@ impl DelegationBroker {
         // agent process starts up.
         if self.take_inflight_cancel(inflight_id).await {
             let _ = self.spawner.disconnect(&child_connection_id).await;
+            self.fork_abandon_launch(&fork_launch).await;
             return report_err(
                 req.agent_type,
                 DelegationError::Canceled {
@@ -2788,9 +2819,20 @@ impl DelegationBroker {
                 None,
             );
         }
+        // keh4l build: the child holds what the call asked for, or it stops.
+        if let Err(report) = self
+            .fork_check_launch(&child_connection_id, req.agent_type, &mut fork_launch)
+            .await
+        {
+            self.drop_inflight(inflight_id).await;
+            let _ = self.spawner.disconnect(&child_connection_id).await;
+            self.fork_abandon_launch(&fork_launch).await;
+            return *report;
+        }
 
         // --- Send linked prompt ------------------------------------------------
         let call_id = uuid::Uuid::new_v4().to_string();
+        self.fork_remember_launch(&call_id, &fork_launch);
         // Bounded task label used by the started event and every meta write —
         // the frontend card's fallback when the parent tool call's `raw_input`
         // never carried the arguments (Cursor's identity-less announcements).
@@ -2856,6 +2898,7 @@ impl DelegationBroker {
                     inner.deregister_inflight(inflight_id);
                 }
                 let _ = self.spawner.disconnect(&child_connection_id).await;
+                self.fork_abandon_launch(&fork_launch).await;
                 return report_err(
                     req.agent_type,
                     DelegationError::SpawnFailed(e.to_string()),
@@ -2944,6 +2987,10 @@ impl DelegationBroker {
         let setup_duration_ms = started_at.elapsed().as_millis() as u64;
         let disposition = {
             let mut inner = self.pending.inner.lock().await;
+            // keh4l build: the task's ledger row, ahead of its end.
+            inner
+                .fork_ledger
+                .started(&call_id, &req, child_conversation_id, &fork_launch);
             // Each buffered child terminal carries (arrival_stamp, outcome).
             let child_terminal: Option<(u64, DelegationOutcome)> =
                 if let Some((stamp, outcome)) = inner.take_early_complete(&call_id) {
@@ -3354,6 +3401,7 @@ impl DelegationBroker {
         if is_synthetic_parent_tool_use_id(parent_tool_use_id) {
             return;
         }
+        let meta = self.fork_decorate_meta(meta);
         self.meta_writer
             .write_meta(parent_connection_id, parent_tool_use_id, meta)
             .await;
@@ -3977,6 +4025,8 @@ impl DelegationBroker {
             out.push(report);
         }
         self.note_reports_consumed(&out);
+        self.fork_fill_unknown(parent_conversation_id, &mut out).await;
+        self.fork_annotate_reports(&mut out).await;
         out
     }
 
@@ -4343,14 +4393,29 @@ impl DelegationBroker {
         // cache still remembers the cancel: the user may have driven the child
         // session onward in the meantime, and resuming over that would be a new
         // iteration in disguise.
-        let Some(ctx) = self
+        // keh4l build: a continued round resumes in its first round's
+        // session, on its own card.
+        let target = match self
+            .fork_resume_target(req.parent_conversation_id, &req.task_id)
+            .await
+        {
+            Ok(target) => target,
+            Err(report) => {
+                self.drop_inflight(inflight_id).await;
+                return *report;
+            }
+        };
+        let Some(mut ctx) = self
             .status_lookup
-            .find_resume_context_by_call_id(&req.task_id)
+            .find_resume_context_by_call_id(&target.lookup_id)
             .await
         else {
             self.drop_inflight(inflight_id).await;
             return unknown_report(&req.task_id);
         };
+        if target.parent_tool_use_id.is_some() {
+            ctx.parent_tool_use_id = target.parent_tool_use_id;
+        }
         // Every report from here on names the assistant the child ran as (an
         // `Unknown` one excepted — see `with_assistant`).
         let identity = ctx.assistant.identity();
@@ -4477,6 +4542,9 @@ impl DelegationBroker {
         // exists at its chain position, resume adds no node.
         let (preferred_mode_id, preferred_config_values) =
             launch_preferences(assistant, cfg.agent_defaults.get(&ctx.agent_type));
+        let (preferred_mode_id, preferred_config_values) = self
+            .fork_resume_launch(&req.task_id, preferred_mode_id, preferred_config_values)
+            .await;
         // Checkpoint #1: a parent cancel during the gates — nothing spawned yet.
         if self.take_inflight_cancel(inflight_id).await {
             return report_from_outcome(
@@ -4654,6 +4722,7 @@ impl DelegationBroker {
         let disposition = {
             let mut inner = self.pending.inner.lock().await;
             inner.remove_completed(&call_id);
+            inner.fork_ledger.resumed(&call_id); // keh4l build: the task ledger
             let child_terminal: Option<(u64, DelegationOutcome)> =
                 if let Some((stamp, outcome)) = inner.take_early_complete(&call_id) {
                     Some((stamp, outcome))
@@ -5149,6 +5218,7 @@ mod tests {
             requested_working_dir: None,
             external_handle: None,
             assistant: None,
+            fork: Default::default(),
         }
     }
 

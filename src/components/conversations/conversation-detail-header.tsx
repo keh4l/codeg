@@ -68,6 +68,10 @@ import {
 import { SessionDetailsDialog } from "./session-details-dialog"
 import { ConversationHeaderTags } from "./conversation-tag-picker"
 import { useIsMobile } from "@/hooks/use-mobile"
+import {
+  DeleteConversationWorktreeOption,
+  removeChosenDelegationWorktree,
+} from "./delete-conversation-worktree-option"
 
 // Phones only (fork-only, keh4l/codeg#10). Loaded on demand: desktop never
 // renders it, and it reads the ACP connection store, which the header itself
@@ -250,6 +254,8 @@ export const ConversationDetailHeader = memo(function ConversationDetailHeader({
     if (deleteTarget == null) return
     try {
       await deleteConversation(deleteTarget.id)
+      // keh4l build: and the delegation worktree, when the user said so.
+      void removeChosenDelegationWorktree(deleteTarget.id)
       // The deleted conversation is gone — close its tab and refresh the list.
       // Not recorded for reopen: there is no longer a conversation to reopen.
       closeTab(deleteTarget.tabId, { recordForReopen: false })
@@ -443,6 +449,10 @@ export const ConversationDetailHeader = memo(function ConversationDetailHeader({
               })}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <DeleteConversationWorktreeOption
+            conversationId={deleteTarget?.id}
+            open={deleteTarget != null}
+          />
           <AlertDialogFooter>
             <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
             <AlertDialogAction onClick={handleDeleteConfirm}>

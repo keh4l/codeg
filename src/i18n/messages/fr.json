@@ -3966,11 +3966,41 @@
             "unknown": "tâche inconnue",
             "assistant_not_found": "assistant introuvable",
             "assistants_unsupported": "redémarrage requis",
-            "assistant_support_unknown": "pas de réponse"
+            "assistant_support_unknown": "pas de réponse",
+            "isolation_unavailable": "Worktree impossible",
+            "worktree_failed": "Échec du worktree",
+            "invalid_launch_option": "Option indisponible",
+            "task_running": "Encore en cours",
+            "not_latest_round": "Pas le dernier tour",
+            "session_unavailable": "Session indisponible",
+            "continuation_conflict": "Déjà poursuivie"
           }
         },
         "unknownAssistant": "Assistant #{id}",
-        "deletedAssistant": "(supprimé)"
+        "deletedAssistant": "(supprimé)",
+        "launch": {
+          "round": "Tour {round}",
+          "roundHint": "Tour {round} : l’agent principal a confié plus de travail à ce sous-agent dans la même session",
+          "followUpHeader": "Tour {round} · suite demandée par l’agent principal",
+          "worktree": "Worktree",
+          "model": "Modèle",
+          "options": "Options",
+          "from": "depuis {sha}",
+          "pending": "Création…",
+          "gone": "Supprimé",
+          "open": "Ouvrir",
+          "openFailed": "Impossible d’ouvrir le worktree : {detail}",
+          "remove": "Supprimer le worktree",
+          "removeRunning": "Le sous-agent y travaille encore",
+          "removed": "Worktree supprimé",
+          "removeFailed": "Impossible de supprimer le worktree : {detail}",
+          "removeTitle": "Supprimer ce worktree ?",
+          "removeDescription": "{path} est effacé du disque. Les conversations rangées dessous reviennent dans le dossier du projet.",
+          "removeUncommitted": "{path} contient {count} modification(s) non commitée(s) qui seront perdues. Les conversations rangées dessous reviennent dans le dossier du projet.",
+          "deleteBranch": "Supprimer aussi la branche {branch}",
+          "cancel": "Annuler"
+        },
+        "continued": "Suite"
       },
       "contentParts": {
         "offset": "Décalage : {offset}",
@@ -10304,5 +10334,9 @@
       "rateLimited": "SRN a demandé à Codeg d'attendre avant de réessayer.",
       "server": "SRN a répondu par une erreur."
     }
+  },
+  "DelegationWorktree": {
+    "deleteWithConversation": "Supprimer aussi son worktree ({path})",
+    "deleteWithConversationUncommitted": "Supprimer aussi son worktree ({path}) — {count} modification(s) non commitée(s)"
   }
 }

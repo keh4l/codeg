@@ -83,6 +83,10 @@ import { AgentIcon } from "@/components/agent-icon"
 import { AssistantAvatar } from "@/components/assistants/assistant-avatar"
 import { useBranchChip, useResolvedTags } from "@/hooks/use-conversation-tags"
 import { useAssistant } from "@/stores/assistants-store"
+import {
+  DeleteConversationWorktreeOption,
+  removeChosenDelegationWorktree,
+} from "./delete-conversation-worktree-option"
 
 /**
  * Horizontal indent added per delegation-nesting level. Chosen so a child's
@@ -353,6 +357,8 @@ export const SidebarConversationCard = memo(function SidebarConversationCard({
       conversation.agent_type,
       conversation.folder_id
     )
+    // keh4l build: and the delegation worktree, when the user said so.
+    void removeChosenDelegationWorktree(conversation.id)
     setDeleteOpen(false)
   }, [
     conversation.id,
@@ -868,6 +874,10 @@ export const SidebarConversationCard = memo(function SidebarConversationCard({
               })}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <DeleteConversationWorktreeOption
+            conversationId={conversation.id}
+            open={deleteOpen}
+          />
           <AlertDialogFooter>
             <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
             <AlertDialogAction onClick={handleDeleteConfirm}>

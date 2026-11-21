@@ -31,6 +31,7 @@ import {
   DelegationIdentityAvatar,
   DelegationIdentityName,
 } from "@/components/message/delegation-identity"
+import { useContinuationTurnHeader } from "@/components/message/activity/rows/delegation-launch"
 import { LiveTranscriptView } from "@/components/message/live-transcript-view"
 import {
   Drawer,
@@ -67,6 +68,9 @@ export function SubAgentSessionDialog({
   kickoffTask,
 }: Props) {
   const t = useTranslations("Folder.chat.delegation")
+  // keh4l build: "Round 2 · follow-up from the main agent" over the prompts
+  // `continue_delegation` sent it.
+  const continuationTurnHeader = useContinuationTurnHeader()
   // The drawer is a state toggle, not a route: without a history entry behind
   // it, the back gesture unloads the whole page instead of closing the panel.
   useHistoryBackDismiss(open, () => onOpenChange(false))
@@ -101,6 +105,7 @@ export function SubAgentSessionDialog({
               connectionId={childConnectionId}
               agentType={identity.agentType}
               kickoffText={kickoffTask}
+              userTurnHeader={continuationTurnHeader}
             />
           </div>
         ) : null}

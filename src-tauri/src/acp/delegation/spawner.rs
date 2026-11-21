@@ -180,6 +180,21 @@ pub trait ConnectionSpawner: Send + Sync {
     /// outside the broker (user drives it in a tab — not resumable).
     async fn has_live_connection_for_conversation(&self, conversation_id: i32) -> bool;
 
+    /// keh4l build: the config options a spawned child reported, to check the
+    /// per-call `model` / `config` against. `None`: unknown (not checked).
+    async fn child_config_options(
+        &self,
+        _conn_id: &str,
+    ) -> Option<Vec<crate::acp::types::SessionConfigOptionInfo>> {
+        None
+    }
+
+    /// keh4l build: the agent session id a child connection holds, to make
+    /// sure a continuation loaded the session it asked for.
+    async fn child_session_id(&self, _conn_id: &str) -> Option<String> {
+        None
+    }
+
     /// Cancel any in-flight prompt on the child connection. Idempotent:
     /// calling on a connection with nothing in flight is a no-op success.
     async fn cancel(&self, conn_id: &str) -> Result<(), SpawnerError>;

@@ -3966,11 +3966,41 @@
             "unknown": "不明なタスク",
             "assistant_not_found": "アシスタントなし",
             "assistants_unsupported": "再起動が必要",
-            "assistant_support_unknown": "応答なし"
+            "assistant_support_unknown": "応答なし",
+            "isolation_unavailable": "ワークツリー不可",
+            "worktree_failed": "ワークツリー作成失敗",
+            "invalid_launch_option": "オプション利用不可",
+            "task_running": "実行中",
+            "not_latest_round": "最新ラウンドではない",
+            "session_unavailable": "セッション利用不可",
+            "continuation_conflict": "追加済み"
           }
         },
         "unknownAssistant": "アシスタント #{id}",
-        "deletedAssistant": "（削除済み）"
+        "deletedAssistant": "（削除済み）",
+        "launch": {
+          "round": "第 {round} ラウンド",
+          "roundHint": "第 {round} ラウンド：メインエージェントが同じセッションでこのサブエージェントに追加した作業",
+          "followUpHeader": "第 {round} ラウンド · メインエージェントからの追加",
+          "worktree": "ワークツリー",
+          "model": "モデル",
+          "options": "オプション",
+          "from": "{sha} から",
+          "pending": "作成中…",
+          "gone": "削除済み",
+          "open": "開く",
+          "openFailed": "ワークツリーを開けませんでした：{detail}",
+          "remove": "ワークツリーを削除",
+          "removeRunning": "サブエージェントがまだ作業中です",
+          "removed": "ワークツリーを削除しました",
+          "removeFailed": "ワークツリーを削除できませんでした：{detail}",
+          "removeTitle": "このワークツリーを削除しますか？",
+          "removeDescription": "{path} をディスクから削除します。ここに属する会話はプロジェクトフォルダーに戻ります。",
+          "removeUncommitted": "{path} には未コミットの変更が {count} 件あり、失われます。ここに属する会話はプロジェクトフォルダーに戻ります。",
+          "deleteBranch": "ブランチ {branch} も削除",
+          "cancel": "キャンセル"
+        },
+        "continued": "追加"
       },
       "contentParts": {
         "offset": "オフセット: {offset}",
@@ -10304,5 +10334,9 @@
       "rateLimited": "SRN から、しばらく待ってから再試行するよう求められました。",
       "server": "SRN がエラーを返しました。"
     }
+  },
+  "DelegationWorktree": {
+    "deleteWithConversation": "ワークツリーも削除（{path}）",
+    "deleteWithConversationUncommitted": "ワークツリーも削除（{path}）— 未コミットの変更が {count} 件あります"
   }
 }

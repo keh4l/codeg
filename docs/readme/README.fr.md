@@ -54,6 +54,10 @@
     <td width="50%" valign="top">🧭 <strong>Réglages regroupés</strong><br/>La navigation des Réglages est rangée sous cinq titres ; les pages chargées réunissent les options liées sur une seule carte, chaque page a un titre et, sur téléphone, un menu déroulant n'écrase plus sa description.</td>
   </tr>
   <tr>
+    <td width="50%" valign="top">↩️ <strong>Les sous-agents réveillent l'agent principal quand ils ont fini</strong><br/>Quand un sous-agent délégué a fini, son résultat revient tout seul à l'agent principal : s'il est libre, un nouveau tour démarre et il poursuit ; s'il est occupé, le résultat arrive dans le tour en cours ; et si vous êtes justement en train d'envoyer un message, il part avec. L'agent principal peut terminer son tour dès qu'il a distribué le travail, sans rester à attendre pour vérifier les résultats.</td>
+    <td width="50%" valign="top">🌿 <strong>Les sous-agents travaillent dans leur propre worktree</strong><br/>L'agent principal peut faire modifier le code par un sous-agent dans un worktree et une branche git à part, pour que plusieurs sous-agents en parallèle ne se gênent pas ; chaque délégation peut choisir son modèle et son niveau de raisonnement, et un sous-agent qui a fini peut recevoir du travail en plus dans la même session.</td>
+  </tr>
+  <tr>
     <td colspan="2" valign="top">🔄 <strong>Au plus près de l'original</strong><br/>Le projet d'origine est fusionné régulièrement ; ce qui n'est pas listé ici fonctionne comme dans la version officielle. Kiro CLI intégré, le premier ajout de cette version, fait partie de la version officielle depuis la 0.36.0. Les résumés de réflexion de Claude Code passent dès la 0.41.3-1 par l'interrupteur de la version officielle : « Afficher les résumés de réflexion de Claude » dans Réglages → Agents IA → Claude Code, désactivé par défaut. Depuis la 0.46.0-1, le message suivant suggéré se remplit comme dans la version officielle : Tab sur ordinateur, bouton ampoule à côté d’Envoyer sur téléphone.</td>
   </tr>
 </table>
@@ -132,7 +136,7 @@
 - Le temps qu'un agent attend un appel d'outil MCP varie : ZCode 30 secondes ; Cursor, Kimi et DeepSeek 60 secondes ; Codex 5 minutes ; Claude Code, OpenCode, Qoder, CodeBuddy et Grok pratiquement sans limite. Dans la version officielle, `get_delegation_status` (attendre le résultat d'une tâche déléguée) peut attendre longtemps en un seul appel et `ask_user_question` (une question pour vous) attend votre réponse ; passé le délai, l'agent considère l'appel comme échoué et continue, si bien que la question compte comme restée sans réponse.
 - Cette version donne à ces outils un plafond par agent, inférieur à son délai : par exemple 20 secondes sur ZCode, 45 secondes sur Cursor, 4 minutes sur Codex ; les agents sans limite n'ont pas de plafond, comme dans la version officielle. Plafond atteint sans résultat, l'appel revient et indique à l'agent comment continuer d'attendre.
 - Questions : si vous n'avez pas encore répondu, la carte de la question reste en place et l'agent continue d'attendre avec un nouvel outil, `get_question_answer` ; une fois votre réponse donnée, elle s'affiche dans la carte d'origine.
-- Tâches déléguées : un appel à `get_delegation_status` attend au plus jusqu'au plafond, puis renvoie l'état actuel des tâches. La génération d'images fonctionne de la même façon ; voir la section précédente.
+- Tâches déléguées : un appel à `get_delegation_status` attend au plus jusqu'au plafond, puis renvoie l'état actuel des tâches. Avec « Réveiller l’agent principal quand un sous-agent termine » activé, l'agent principal n'a en général plus besoin d'attendre : les résultats lui reviennent d'eux-mêmes ; voir « Les sous-agents réveillent l'agent principal quand ils ont fini ». La génération d'images fonctionne de la même façon ; voir la section précédente.
 - Pendant l'attente, l'agent reçoit un point d'avancement toutes les 10 secondes, ce qui permet aux agents qui prolongent leur délai selon l'avancement, comme CommandCode, d'attendre plus longtemps.
 
 </details>
@@ -182,7 +186,7 @@
 - Quand vous mentionnez un agent avec @ dans un message, l'agent principal lui confie le travail avec `delegate_to_agent`, et il le fait dans sa propre sous-session. Dans la version officielle, `resume_delegation` ne récupère que les sous-tâches annulées ou interrompues par un plantage ; si le tour du sous-agent se termine par une erreur (réseau coupé, quota ou limite de débit atteint, connexion expirée, requête refusée par le fournisseur, budget de tokens épuisé…), il est marqué « échoué », et l'agent principal ne peut qu'ouvrir une nouvelle sous-session et repartir de zéro, en perdant le contexte du travail à moitié fait.
 - Cette version traite aussi ces échecs comme des interruptions : le résultat de la sous-tâche indique que sa session et le travail partiel sont conservés et que `resume_delegation` la poursuit une fois la cause réglée. L'agent principal continue alors dans la sous-session d'origine, avec le même task_id, et la carte d'origine du sous-agent dans la conversation affiche de nouveau sa progression.
 - Pour s'en servir : une fois le réseau revenu, le quota rechargé ou la connexion renouvelée, demandez à l'agent principal de laisser le sous-agent continuer.
-- Une tâche qui a échoué avant d'avoir une session (l'agent n'a pas pu démarrer, par exemple) n'a rien à poursuivre et doit être déléguée à nouveau ; on ne peut pas non plus ajouter ainsi du travail à une sous-tâche terminée normalement : le travail supplémentaire passe toujours par une nouvelle délégation.
+- Une tâche qui a échoué avant d'avoir une session (l'agent n'a pas pu démarrer, par exemple) n'a rien à poursuivre et doit être déléguée à nouveau. Pour ajouter du travail à une sous-tâche terminée, on utilise `continue_delegation` ; voir « Les sous-agents travaillent dans leur propre worktree ».
 
 </details>
 
@@ -205,6 +209,36 @@
 - La navigation est regroupée sous cinq titres (Essentiel, Agents, Contenu, Contrôle, Connexions et maintenance) ; les pages et leur ordre sont ceux de la version officielle.
 - Apparence, Général, Système, Contrôle de version et Traduction réunissent les réglages liés sur une carte surmontée du nom du groupe, et un réglage à un seul interrupteur ou menu tient sur une ligne : nom et description à gauche, contrôle à droite. Apparence passe de douze cartes à trois groupes ; dans Contrôle de version, « Ajouter un compte » passe dans l'en-tête de chaque section.
 - Chaque page commence par un titre et une description d'une ligne ; l'interrupteur du proxy est comme les autres ; sur téléphone, un menu ou bouton qui ne tient pas passe sous sa description ; dans une large fenêtre de navigateur, les pages de formulaire sont limitées en largeur et centrées.
+
+</details>
+
+<details>
+<summary><strong>Les sous-agents réveillent l'agent principal quand ils ont fini</strong> : détails</summary>
+<br/>
+
+- Dans la version officielle, une fois un sous-agent envoyé, l'agent principal ne connaît le résultat qu'en allant le chercher lui-même avec `get_delegation_status` : soit il attend en bloquant, soit il vérifie de temps en temps. Dès qu'il termine son tour, personne ne le prévient quand le sous-agent a fini ; il faut que vous lui envoyiez un nouveau message pour qu'il pense à vérifier.
+- Cette version renvoie le résultat à l'agent principal quand un sous-agent a fini (ou s'arrête en route sur une erreur) :
+  - Agent principal libre : au bout de 2 secondes (ceux qui finissent en même temps sont regroupés), un nouveau tour démarre tout seul et l'agent principal poursuit à partir des résultats ;
+  - Agent principal en plein tour : Claude Code et Codex les reçoivent directement dans ce tour, les autres agents dans un nouveau tour qui démarre tout seul une fois celui-ci terminé ;
+  - Vous êtes justement en train d'envoyer un message : les résultats partent avec.
+- La conversation affiche une ligne « Résultats des sous-tâches rendus » qui indique chaque sous-agent, s'il a fini ou échoué et combien de temps il a pris ; dépliée, elle montre un résumé de chaque résultat et « Ouvrir la session ». Ceux qui sont partis avec votre message s'affichent dessous sous la forme « N résultats de sous-tâches joints ». Cette ligne est envoyée par codeg à l'agent principal : elle n'est pas relayée aux canaux de chat comme si vous l'aviez dite, et ne sert pas à nommer la session.
+- Les résultats que l'agent principal a déjà récupérés lui-même avec `get_delegation_status` ou `cancel_delegation` ne sont pas renvoyés ; les sous-tâches annulées par l'agent principal ou par vous ne sont pas envoyées.
+- Un clic sur Arrêter arrête l'agent principal avec ses sous-agents en cours, comme dans la version officielle ; les résultats terminés mais pas encore remis partent avec votre message suivant. Quand le tour de l'agent principal se termine par une erreur (limite de débit, réseau coupé…), la version officielle annule ses sous-agents avec lui ; cette version les laisse finir. Dans ce cas, et après 20 reprises automatiques d'affilée, aucun nouveau tour ne démarre tout seul : les résultats attendent votre message suivant, ce qu'indique une mention à côté de « N en cours ».
+- L'interrupteur est « Réveiller l’agent principal quand un sous-agent termine » dans Réglages → Collaboration → Collaboration multi-agent → Général, activé par défaut, et s'applique aux sessions lancées ensuite ; désactivé, c'est comme dans la version officielle : l'agent principal doit aller voir lui-même.
+
+</details>
+
+<details>
+<summary><strong>Les sous-agents travaillent dans leur propre worktree</strong> : détails</summary>
+<br/>
+
+- Dans la version officielle, tous les sous-agents travaillent dans le dossier de travail de l'agent principal : deux sous-agents envoyés en même temps pour modifier du code touchent aux mêmes fichiers ; le modèle est fixé d'avance dans l'assistant @ ou les Réglages, sans que l'agent principal puisse le choisir selon la tâche ; et pour retoucher quelque chose une fois le sous-agent terminé, il faut ouvrir une nouvelle session et tout réexpliquer.
+- Cette version ajoute trois paramètres à `delegate_to_agent` :
+  - `isolation: "worktree"` : le sous-agent travaille dans un nouveau worktree git, sur la branche `delegate/<id>`, créé à partir du commit où se trouve l'agent principal ; les modifications non commitées de l'agent principal n'y sont pas, et la réponse à la délégation le rappelle. Le worktree va là où pointe « Emplacement du worktree » dans les « Tâches à faire » (à côté du dépôt si rien n'est défini), dans un dossier nommé `<dépôt>-delegate-<id>`. Quand le sous-agent a fini, son résultat donne le chemin, la branche et ce qui a changé ; l'agent principal le relit puis fusionne avec git, ou vous le laisse. Ne fonctionne que dans un dépôt git qui a au moins un commit.
+  - `model` et `config` : un modèle et des options pour cette seule délégation (par exemple `{"reasoning_effort": "high"}`), appliqués par-dessus les valeurs par défaut de l'assistant @ ou des Réglages ; les options non précisées restent inchangées. Au démarrage du sous-agent, ils sont vérifiés par rapport aux options qu'il propose réellement : si l'une ne correspond pas, il n'est pas autorisé à commencer et l'agent principal apprend ce qui est disponible ; les options qu'il n'a pas du tout sont ignorées, et la réponse le signale.
+- Nouvel outil `continue_delegation` : donne du travail en plus à une sous-tâche terminée (achevée, échouée ou annulée), dans sa sous-session d'origine, en gardant le contexte, le dossier de travail, le modèle et les options ; le résultat revient lui aussi à l'agent principal. Chaque ajout compte comme un nouveau tour, avec un nouveau task_id. Partage des rôles avec `resume_delegation` : resume reprend un travail interrompu en route, continue en demande plus une fois qu'il est fini.
+- La ligne de la délégation porte après son titre des étiquettes pour le modèle, la branche et « Tour N » ; dépliée, elle montre le modèle, les options et l'état du worktree (le commit dont il part, le nombre de fichiers modifiés). « Ouvrir » ouvre le worktree dans l'espace de travail (relire les modifications, commiter et fusionner se font là), et « Supprimer le worktree » le supprime, branche comprise si vous le voulez.
+- Les worktrees ne sont pas supprimés automatiquement. Quand vous supprimez une sous-session qui en a utilisé un, la boîte de confirmation propose en plus « Supprimer aussi son worktree » ; s'il contient des modifications non commitées, la case est décochée par défaut et leur nombre est indiqué.
 
 </details>
 

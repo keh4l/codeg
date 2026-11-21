@@ -54,6 +54,10 @@
     <td width="50%" valign="top">🧭 <strong>Gruppierte Einstellungen</strong><br/>Die Navigation der Einstellungen steht unter fünf Überschriften; volle Seiten fassen zusammengehörige Optionen auf einer Karte zusammen, jede Seite hat einen Titel, und auf dem Handy drückt ein Auswahlfeld seine Beschreibung nicht mehr zu einem Streifen zusammen.</td>
   </tr>
   <tr>
+    <td width="50%" valign="top">↩️ <strong>Subagenten wecken den Hauptagenten, wenn sie fertig sind</strong><br/>Ist ein delegierter Subagent fertig, geht sein Ergebnis von selbst an den Hauptagenten zurück: Ist der frei, startet er einen neuen Durchgang und macht weiter; ist er beschäftigt, bekommt er es im laufenden Durchgang; und schickst du gerade eine Nachricht, geht es mit ihr. Der Hauptagent kann seinen Durchgang beenden, sobald er die Arbeit verteilt hat, statt auf die Ergebnisse zu warten.</td>
+    <td width="50%" valign="top">🌿 <strong>Subagenten arbeiten in ihrem eigenen Worktree</strong><br/>Der Hauptagent kann einen Subagenten Code in einem eigenen Git-Worktree und Branch ändern lassen, sodass sich mehrere parallel nicht in die Quere kommen; jede Delegation kann ihr eigenes Modell und Reasoning festlegen, und einem fertigen Subagenten lässt sich in derselben Sitzung weitere Arbeit geben.</td>
+  </tr>
+  <tr>
     <td colspan="2" valign="top">🔄 <strong>Nah am Upstream</strong><br/>Upstream wird regelmäßig hineingemergt; was hier nicht steht, funktioniert genau wie in der offiziellen Version. Das eingebaute Kiro CLI, das diese Version als Erstes hinzugefügt hat, ist seit 0.36.0 Teil der offiziellen Version. Die Zusammenfassungen von Claudes Denken nutzen seit 0.41.3-1 den Schalter der offiziellen Version: „Zusammenfassungen von Claudes Denken anzeigen“ unter Einstellungen → Agenten → Claude Code, standardmäßig aus. Seit 0.46.0-1 wird die vorgeschlagene nächste Nachricht wie in der offiziellen Version übernommen: am Computer mit Tab, am Handy mit der Glühbirnen-Schaltfläche neben „Senden“.</td>
   </tr>
 </table>
@@ -132,7 +136,7 @@
 - Wie lange ein Agent auf einen MCP-Tool-Aufruf wartet, ist verschieden: ZCode 30 Sekunden; Cursor, Kimi und DeepSeek 60 Sekunden; Codex 5 Minuten; Claude Code, OpenCode, Qoder, CodeBuddy und Grok praktisch unbegrenzt. Im offiziellen Build kann `get_delegation_status` (Warten auf das Ergebnis einer delegierten Aufgabe) in einem Aufruf lange warten, und `ask_user_question` (eine Frage an dich) wartet, bis du antwortest; nach Ablauf der Frist wertet der Agent den Aufruf als fehlgeschlagen und macht weiter, die Frage gilt also als unbeantwortet.
 - Dieser Build gibt diesen Tools je Agent eine Obergrenze unterhalb seiner Frist: etwa 20 Sekunden bei ZCode, 45 Sekunden bei Cursor, 4 Minuten bei Codex; Agenten ohne Frist bekommen keine, wie im offiziellen Build. Ist die Grenze ohne Ergebnis erreicht, kehrt der Aufruf zurück und sagt dem Agenten, wie er weiter wartet.
 - Fragen: Hast du bis dahin nicht geantwortet, bleibt die Fragekarte stehen, und der Agent wartet mit einem neuen Tool weiter, `get_question_answer`; sobald du antwortest, steht die Antwort in der ursprünglichen Fragekarte.
-- Delegierte Aufgaben: Ein Aufruf von `get_delegation_status` wartet höchstens bis zur Grenze und liefert dann den aktuellen Stand der Aufgaben. Bei der Bildgenerierung ist es genauso; siehe vorheriger Abschnitt.
+- Delegierte Aufgaben: Ein Aufruf von `get_delegation_status` wartet höchstens bis zur Grenze und liefert dann den aktuellen Stand der Aufgaben. Ist „Hauptagenten wecken, wenn ein Subagent fertig ist“ an, muss der Hauptagent meist gar nicht mehr warten, die Ergebnisse kommen von selbst; siehe „Subagenten wecken den Hauptagenten, wenn sie fertig sind“. Bei der Bildgenerierung ist es genauso; siehe vorheriger Abschnitt.
 - Während des Wartens bekommt der Agent alle 10 Sekunden eine Fortschrittsmeldung, sodass Agenten, die ihre Frist bei Fortschritt verlängern, etwa CommandCode, länger warten können.
 
 </details>
@@ -182,7 +186,7 @@
 - Wenn du in einer Nachricht einen Agenten mit @ erwähnst, übergibt ihm der Hauptagent die Arbeit mit `delegate_to_agent`, und er erledigt sie in seiner eigenen Untersitzung. Im offiziellen Build holt `resume_delegation` nur Teilaufgaben zurück, die abgebrochen oder durch einen Absturz unterbrochen wurden; endet der Durchgang des Subagenten mit einem Fehler (Netz weg, Kontingent oder Ratenlimit erreicht, Anmeldung abgelaufen, Anfrage vom Anbieter abgelehnt, Token-Budget aufgebraucht …), gilt er als „fehlgeschlagen“, und der Hauptagent kann nur eine neue Untersitzung öffnen und von vorn beginnen – der Kontext der halb fertigen Arbeit ist weg.
 - Dieser Build behandelt solche Fehler ebenfalls als Unterbrechung: Das Ergebnis der Teilaufgabe sagt, dass Sitzung und Zwischenstand erhalten sind und `resume_delegation` sie fortsetzt, sobald die Ursache behoben ist. Der Hauptagent macht dann in der ursprünglichen Untersitzung unter derselben task_id weiter, und die ursprüngliche Subagent-Karte in der Unterhaltung zeigt wieder ihren Fortschritt.
 - So geht's: Wenn das Netz wieder da ist, das Kontingent aufgefüllt oder die Anmeldung erneuert ist, bitte den Hauptagenten, den Subagenten weitermachen zu lassen.
-- Eine Aufgabe, die schon vor ihrer Sitzung scheiterte (etwa weil der Agent nicht starten konnte), hat nichts zum Fortsetzen und muss neu delegiert werden; einer normal abgeschlossenen Teilaufgabe lässt sich so auch keine neue Arbeit anhängen – Folgearbeit läuft weiter über eine neue Delegation.
+- Eine Aufgabe, die schon vor ihrer Sitzung scheiterte (etwa weil der Agent nicht starten konnte), hat nichts zum Fortsetzen und muss neu delegiert werden. Einer abgeschlossenen Teilaufgabe gibt man mit `continue_delegation` neue Arbeit; siehe „Subagenten arbeiten in ihrem eigenen Worktree“.
 
 </details>
 
@@ -205,6 +209,36 @@
 - Die Navigation ist unter fünf Überschriften gruppiert (Grundlagen, Agenten, Inhalte, Steuerung, Verbindungen & Wartung); Seiten und Reihenfolge entsprechen der offiziellen Version.
 - Darstellung, Allgemein, Systemeinstellungen, Versionskontrolle und Übersetzung fassen zusammengehörige Einstellungen auf einer Karte mit Gruppennamen darüber zusammen; eine Einstellung mit nur einem Schalter oder Auswahlfeld ist eine Zeile: Name und Beschreibung links, Bedienelement rechts. Darstellung wird von zwölf Karten zu drei Gruppen; in der Versionskontrolle wandert „Konto hinzufügen“ in die Kopfzeile des jeweiligen Abschnitts.
 - Jede Seite beginnt mit Titel und einzeiliger Beschreibung; der Proxy-Schalter ist ein Schalter wie überall; auf dem Handy rutscht ein Auswahlfeld oder Button, der nicht passt, unter die Beschreibung; in breiten Browserfenstern werden Formularseiten in der Breite begrenzt und zentriert.
+
+</details>
+
+<details>
+<summary><strong>Subagenten wecken den Hauptagenten, wenn sie fertig sind</strong> – Details</summary>
+<br/>
+
+- Im offiziellen Build kann der Hauptagent, nachdem er einen Subagenten losgeschickt hat, nur selbst mit `get_delegation_status` nachsehen: entweder blockierend warten oder ab und zu nachfragen. Sobald er seinen Durchgang beendet, sagt ihm niemand, dass der Subagent fertig ist – das erfährt er erst, wenn du ihn mit einer neuen Nachricht ans Nachsehen erinnerst.
+- Dieser Build gibt das Ergebnis an den Hauptagenten zurück, sobald ein Subagent fertig ist (oder unterwegs an einem Fehler stehen bleibt):
+  - Hauptagent frei: Nach 2 Sekunden (gleichzeitig fertige werden zu einer Meldung zusammengefasst) startet von selbst ein neuer Durchgang, und der Hauptagent macht mit den Ergebnissen weiter;
+  - Hauptagent mitten in einem Durchgang: Claude Code und Codex bekommen sie direkt in diesem Durchgang, andere Agenten in einem neuen, der nach dessen Ende von selbst startet;
+  - Du schickst gerade eine Nachricht: Die Ergebnisse gehen mit ihr.
+- In der Unterhaltung erscheint eine Zeile „Ergebnisse der Teilaufgaben zurückgegeben“ mit dem jeweiligen Subagenten, ob er fertig wurde oder fehlschlug und wie lange er brauchte; aufgeklappt zeigt sie eine Zusammenfassung jedes Ergebnisses und „Sitzung öffnen“. Was mit deiner Nachricht mitging, steht darunter als „N Teilaufgaben-Ergebnisse angehängt“. Diese Zeile schickt codeg an den Hauptagenten: Sie wird nicht als deine Worte an Chat-Kanäle weitergegeben und nicht für den Sitzungstitel verwendet.
+- Ergebnisse, die der Hauptagent schon selbst über `get_delegation_status` oder `cancel_delegation` abgeholt hat, werden nicht noch einmal geschickt; Teilaufgaben, die der Hauptagent oder du abgebrochen habt, gar nicht.
+- Ein Klick auf Stopp hält den Hauptagenten zusammen mit seinen laufenden Subagenten an, wie im offiziellen Build; Ergebnisse, die schon fertig, aber noch nicht zugestellt waren, gehen mit deiner nächsten Nachricht. Endet der Durchgang des Hauptagenten mit einem Fehler (Ratenlimit, Netz weg …), bricht der offizielle Build seine Subagenten mit ab; dieser Build lässt sie zu Ende arbeiten. In diesem Fall und nach 20 automatischen Fortsetzungen in Folge startet kein neuer Durchgang mehr von selbst: Die Ergebnisse warten auf deine nächste Nachricht, und ein Hinweis neben „N laufen“ sagt das.
+- Der Schalter ist „Hauptagenten wecken, wenn ein Subagent fertig ist“ unter Einstellungen → Zusammenarbeit → Multi-Agent-Zusammenarbeit → Allgemein, standardmäßig an, und gilt für Sitzungen, die danach starten; aus, ist es wie im offiziellen Build: Der Hauptagent muss selbst nachsehen.
+
+</details>
+
+<details>
+<summary><strong>Subagenten arbeiten in ihrem eigenen Worktree</strong> – Details</summary>
+<br/>
+
+- Im offiziellen Build arbeiten alle Subagenten im Arbeitsordner des Hauptagenten; schickt er zwei gleichzeitig los, um Code zu ändern, bearbeiten sie dieselben Dateien. Das Modell steht vorher im @-Assistenten oder in den Einstellungen fest, und der Hauptagent kann es nicht je Aufgabe wählen. Soll nach dem Ende eines Subagenten noch etwas geändert werden, braucht es eine neue Sitzung, in der alles noch einmal erklärt wird.
+- Dieser Build gibt `delegate_to_agent` drei weitere Parameter:
+  - `isolation: "worktree"`: Der Subagent arbeitet in einem neuen Git-Worktree auf dem Branch `delegate/<id>`, angelegt vom Commit, auf dem der Hauptagent gerade steht; nicht committete Änderungen des Hauptagenten sind nicht darin, darauf weist die Antwort auf die Delegation hin. Der Worktree liegt im „Worktree-Verzeichnis“ der „To-dos“ (ist keins gesetzt, neben dem Repository), in einem Ordner namens `<repo>-delegate-<id>`. Ist der Subagent fertig, nennt sein Ergebnis Pfad, Branch und was sich geändert hat; der Hauptagent prüft es und mergt mit Git oder überlässt es dir. Funktioniert nur in einem Git-Repository mit mindestens einem Commit.
+  - `model` und `config`: Modell und Optionen nur für diese Delegation (etwa `{"reasoning_effort": "high"}`), über die Standards aus dem @-Assistenten oder den Einstellungen gelegt; nicht angegebene Optionen bleiben, wie sie sind. Nach dem Start des Subagenten werden sie mit den Optionen abgeglichen, die er tatsächlich anbietet: Passt eine nicht, darf er nicht loslegen, und der Hauptagent erfährt, was zur Wahl steht; Optionen, die er gar nicht hat, werden ignoriert, und die Antwort sagt das.
+- Neues Tool `continue_delegation`: gibt einer beendeten (fertigen, fehlgeschlagenen oder abgebrochenen) Teilaufgabe neue Arbeit in ihrer ursprünglichen Untersitzung; Kontext, Arbeitsordner, Modell und Optionen bleiben, und das Ergebnis kommt ebenso zum Hauptagenten zurück. Jeder Nachtrag ist eine neue Runde mit neuer task_id. Abgrenzung zu `resume_delegation`: resume setzt fort, was mittendrin abgebrochen ist; continue legt nach, wenn es fertig ist.
+- Die Zeile der Delegation trägt hinter dem Titel Labels für Modell, Branch und „Runde N“; aufgeklappt zeigt sie Modell, Optionen und den Stand des Worktrees (von welchem Commit angelegt, wie viele Dateien geändert). „Öffnen“ öffnet den Worktree im Arbeitsbereich (Änderungen ansehen, committen und mergen geht dort), „Worktree entfernen“ entfernt ihn, auf Wunsch samt Branch.
+- Worktrees werden nicht automatisch entfernt. Beim Löschen einer Untersitzung, die einen benutzt hat, bietet die Rückfrage zusätzlich „Auch den Worktree entfernen“ an; sind darin nicht committete Änderungen, ist das standardmäßig nicht angehakt und nennt ihre Anzahl.
 
 </details>
 

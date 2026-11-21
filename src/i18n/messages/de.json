@@ -3966,11 +3966,41 @@
             "unknown": "unbekannte Aufgabe",
             "assistant_not_found": "Assistent nicht gefunden",
             "assistants_unsupported": "Neustart nötig",
-            "assistant_support_unknown": "keine Antwort"
+            "assistant_support_unknown": "keine Antwort",
+            "isolation_unavailable": "Kein Worktree möglich",
+            "worktree_failed": "Worktree fehlgeschlagen",
+            "invalid_launch_option": "Option nicht verfügbar",
+            "task_running": "Läuft noch",
+            "not_latest_round": "Nicht die neueste Runde",
+            "session_unavailable": "Sitzung nicht verfügbar",
+            "continuation_conflict": "Bereits fortgesetzt"
           }
         },
         "unknownAssistant": "Assistent #{id}",
-        "deletedAssistant": "(gelöscht)"
+        "deletedAssistant": "(gelöscht)",
+        "launch": {
+          "round": "Runde {round}",
+          "roundHint": "Runde {round}: Der Hauptagent hat diesem Subagenten in derselben Sitzung weitere Arbeit gegeben",
+          "followUpHeader": "Runde {round} · Nachtrag vom Hauptagenten",
+          "worktree": "Worktree",
+          "model": "Modell",
+          "options": "Optionen",
+          "from": "von {sha}",
+          "pending": "Wird erstellt…",
+          "gone": "Entfernt",
+          "open": "Öffnen",
+          "openFailed": "Worktree konnte nicht geöffnet werden: {detail}",
+          "remove": "Worktree entfernen",
+          "removeRunning": "Der Subagent arbeitet dort noch",
+          "removed": "Worktree entfernt",
+          "removeFailed": "Worktree konnte nicht entfernt werden: {detail}",
+          "removeTitle": "Diesen Worktree entfernen?",
+          "removeDescription": "{path} wird von der Festplatte gelöscht. Darunter abgelegte Unterhaltungen wandern zurück in den Projektordner.",
+          "removeUncommitted": "{path} hat {count} nicht committete Änderung(en), die verloren gehen. Darunter abgelegte Unterhaltungen wandern zurück in den Projektordner.",
+          "deleteBranch": "Auch Branch {branch} löschen",
+          "cancel": "Abbrechen"
+        },
+        "continued": "Fortsetzung"
       },
       "contentParts": {
         "offset": "Versatz: {offset}",
@@ -10304,5 +10334,9 @@
       "rateLimited": "SRN hat Codeg gebeten, vor einem neuen Versuch zu warten.",
       "server": "SRN hat mit einem Fehler geantwortet."
     }
+  },
+  "DelegationWorktree": {
+    "deleteWithConversation": "Auch den Worktree entfernen ({path})",
+    "deleteWithConversationUncommitted": "Auch den Worktree entfernen ({path}) – er hat {count} nicht committete Änderung(en)"
   }
 }

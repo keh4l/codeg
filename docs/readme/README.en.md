@@ -54,6 +54,10 @@
     <td width="50%" valign="top">🧭 <strong>Grouped Settings</strong><br/>The Settings nav sits under five headings; busy pages gather related options on one card, every page has a title, and on a phone a dropdown no longer squeezes its description into a sliver.</td>
   </tr>
   <tr>
+    <td width="50%" valign="top">↩️ <strong>Sub-agents wake the main agent when done</strong><br/>When a delegated sub-agent finishes, its result goes back to the main agent by itself: an idle main agent starts a new turn and carries on, a busy one gets it in the current turn, and if you are just sending a message, it goes along with that. The main agent can end its turn once it has handed out the work instead of waiting around to check for results.</td>
+    <td width="50%" valign="top">🌿 <strong>Sub-agents work in their own worktree</strong><br/>The main agent can have a sub-agent change code in a separate git worktree and branch, so several working side by side stay out of each other's way; each delegation can set its own model and reasoning effort, and a sub-agent that has finished can be given more work in the same session.</td>
+  </tr>
+  <tr>
     <td colspan="2" valign="top">🔄 <strong>Follows upstream</strong><br/>Upstream is merged in regularly; anything not listed here works exactly as in the official build. The built-in Kiro CLI, the first thing this build added, has been part of the official build since 0.36.0. Claude Code thinking summaries use the official build's switch from 0.41.3-1 on: “Show Claude's thinking summaries” in Settings → Agents → Claude Code, off by default. From 0.46.0-1 the suggested next message is filled in the official way: Tab on a computer, the lightbulb button beside Send on a phone.</td>
   </tr>
 </table>
@@ -132,7 +136,7 @@
 - How long an agent waits for one MCP tool call varies: ZCode 30 seconds; Cursor, Kimi and DeepSeek 60 seconds; Codex 5 minutes; Claude Code, OpenCode, Qoder, CodeBuddy and Grok practically without a limit. In the official build, `get_delegation_status` (waiting for a delegated task's result) can wait a long time in one call and `ask_user_question` (a question for you) waits until you answer; past the deadline the agent treats the call as failed and carries on, so the question counts as unanswered.
 - This build gives these tools a cap per agent, below its deadline: for example 20 seconds on ZCode, 45 seconds on Cursor, 4 minutes on Codex; agents without a limit get no cap, as in the official build. When the cap is reached without a result, the call returns and tells the agent how to keep waiting.
 - Questions: if you haven't answered by then, the question card stays where it is and the agent keeps waiting with a new tool, `get_question_answer`; once you answer, the answer shows in the original question card.
-- Delegated tasks: one `get_delegation_status` call waits at most up to the cap, then returns the tasks' current status. Image generation works the same way; see the previous section.
+- Delegated tasks: one `get_delegation_status` call waits at most up to the cap, then returns the tasks' current status. With “Wake the main agent when a subagent finishes” on, the main agent usually doesn't need to wait at all, as results come back by themselves; see “Sub-agents wake the main agent when done”. Image generation works the same way; see the previous section.
 - While waiting, the agent gets a progress update every 10 seconds, which lets agents that extend their deadline on progress, such as CommandCode, wait longer.
 
 </details>
@@ -182,7 +186,7 @@
 - When you @ an agent in a message, the main agent hands it the work with `delegate_to_agent`, and it works in its own sub-session. In the official build, `resume_delegation` only brings back sub-tasks that were canceled or cut off by a crash; a sub-agent whose turn ended in an error (network dropped, quota or rate limit hit, sign-in expired, the provider rejected the request, token budget used up…) is marked “failed”, and the main agent can only open a new sub-session and start over, losing the context of the half-done work.
 - This build treats those failures as interruptions too: the sub-task's result says its session and partial work are kept and that `resume_delegation` continues it once the cause is fixed. The main agent then carries on in the original sub-session under the same task_id, and the sub-agent's original card in the conversation follows its progress again.
 - To use it: once the network is back, the quota is topped up or you've signed in again, ask the main agent to let the sub-agent continue.
-- A task that failed before it had a session (the agent couldn't start, say) has nothing to continue and needs a new delegation; a sub-task that finished normally can't be given new work this way either — follow-up work still goes in a new delegation.
+- A task that failed before it had a session (the agent couldn't start, say) has nothing to continue and needs a new delegation. To give a sub-task that has finished more work, use `continue_delegation`; see “Sub-agents work in their own worktree”.
 
 </details>
 
@@ -205,6 +209,36 @@
 - The nav is grouped under five headings (Basics, Agents, Content, Control, Connections & upkeep); the pages and their order are the same as in the official build.
 - Appearance, General, System, Version Control and Translation put related settings on one card under a group name, and a setting with a single switch or dropdown is one row: name and description on the left, control on the right. Appearance goes from twelve cards to three groups; on Version Control, “Add account” moves to each section's heading.
 - Every page opens with a title and a one-line description; the proxy switch is a toggle like everywhere else; on a phone, a dropdown or button that doesn't fit moves below its description; in a wide browser window, form pages are capped in width and centered.
+
+</details>
+
+<details>
+<summary><strong>Sub-agents wake the main agent when done</strong>: details</summary>
+<br/>
+
+- In the official build, once the main agent has sent a sub-agent off, the only way it learns the result is to check with `get_delegation_status` itself: either blocking until it arrives or checking every so often. Once it ends its turn, nobody tells it when the sub-agent finishes; it waits until you send another message reminding it to check.
+- This build hands the result back to the main agent when a sub-agent finishes (or stops on an error partway):
+  - Main agent idle: after 2 seconds (results that arrive together are combined into one), a new turn starts by itself and the main agent carries on from the results;
+  - Main agent in the middle of a turn: Claude Code and Codex get the results within that turn; other agents get them in a new turn that starts by itself once that one ends;
+  - You are just sending a message: the results go along with it.
+- The conversation shows a “Subtask results handed back” row naming each sub-agent, whether it finished or failed, and how long it took; expand it for a summary of each result and “Open session”. Results that went with your message show under it as “N subtask results attached”. This row is codeg writing to the main agent: it isn't passed on to chat channels as if you had said it, and it isn't used to name the session.
+- Results the main agent already got itself with `get_delegation_status` or `cancel_delegation` aren't sent again; sub-tasks canceled by the main agent or by you aren't sent.
+- Clicking Stop stops the main agent and the sub-agents it has running, as in the official build; results that finished earlier but hadn't been delivered yet go with your next message. When the main agent's turn ends in an error (rate limit, network drop and so on), the official build cancels its sub-agents along with it; this build lets them finish. In that case, and after 20 automatic continuations in a row, no new turn starts by itself: the results wait for your next message, and a note beside “N running” says so.
+- The switch is “Wake the main agent when a subagent finishes” under Settings → Collaboration → Multi-Agent Collaboration → General, on by default; it applies to sessions started after you change it. Turned off, it works as in the official build: the main agent has to check for itself.
+
+</details>
+
+<details>
+<summary><strong>Sub-agents work in their own worktree</strong>: details</summary>
+<br/>
+
+- In the official build every sub-agent works in the main agent's working folder, so two sub-agents sent to change code at the same time edit the same files; the model has to be set beforehand in the @ assistant or in Settings, and the main agent can't pick one for the task; and once a sub-agent has finished, changing anything more means opening a new session and explaining it all again.
+- This build gives `delegate_to_agent` three new parameters:
+  - `isolation: "worktree"`: the sub-agent works in a new git worktree on branch `delegate/<id>`, created from the commit the main agent is on; the main agent's uncommitted changes aren't in it, which the reply to the delegation points out. The worktree goes in the “Worktree location” set for “To-dos” (next to the repository if that isn't set), in a folder named `<repo>-delegate-<id>`. When the sub-agent finishes, its result gives the path, the branch and what changed; the main agent reviews it and merges it with git, or leaves it to you. Works only in a git repository with at least one commit.
+  - `model` and `config`: a model and options for this delegation only (such as `{"reasoning_effort": "high"}`), on top of the defaults from the @ assistant or Settings; options not given stay as they are. Once the sub-agent starts they are checked against the options it actually offers: if one doesn't match, it isn't allowed to start and the main agent is told what is available; options it doesn't have at all are ignored, and the reply says so.
+- A new tool, `continue_delegation`, gives a sub-task that has ended (finished, failed or canceled) more work in its original sub-session, keeping its context, working folder, model and options; the result comes back to the main agent the same way. Each follow-up is a new round with a new task_id. How it differs from `resume_delegation`: resume picks up work that was cut off partway, continue asks for more once it's done.
+- The delegation row gets model, branch and “Round N” tags after its title; expand it to see the model, the options and the worktree's state (the commit it was created from, how many files changed). “Open” opens the worktree in the workspace, where you review the changes, commit and merge, and “Remove worktree” removes it, its branch too if you like.
+- Worktrees aren't removed automatically. When you delete a sub-session that used one, the confirmation adds “Also remove its worktree”; if it has uncommitted changes, that box is unticked by default and says how many.
 
 </details>
 

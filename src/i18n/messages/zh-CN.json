@@ -3966,11 +3966,41 @@
             "unknown": "未知任务",
             "assistant_not_found": "助手不存在",
             "assistants_unsupported": "需要重启",
-            "assistant_support_unknown": "未响应"
+            "assistant_support_unknown": "未响应",
+            "isolation_unavailable": "无法建 worktree",
+            "worktree_failed": "worktree 创建失败",
+            "invalid_launch_option": "选项不可用",
+            "task_running": "仍在运行",
+            "not_latest_round": "不是最新一轮",
+            "session_unavailable": "会话不可用",
+            "continuation_conflict": "已被追加过"
           }
         },
         "unknownAssistant": "助手 #{id}",
-        "deletedAssistant": "（已删除）"
+        "deletedAssistant": "（已删除）",
+        "launch": {
+          "round": "第 {round} 轮",
+          "roundHint": "第 {round} 轮：主智能体在同一个会话里给这个子智能体追加的任务",
+          "followUpHeader": "第 {round} 轮 · 主智能体追加",
+          "worktree": "Worktree",
+          "model": "模型",
+          "options": "选项",
+          "from": "基于 {sha}",
+          "pending": "正在创建…",
+          "gone": "已删除",
+          "open": "打开",
+          "openFailed": "打开 worktree 失败：{detail}",
+          "remove": "删除 worktree",
+          "removeRunning": "子智能体还在里面干活",
+          "removed": "已删除 worktree",
+          "removeFailed": "删除 worktree 失败：{detail}",
+          "removeTitle": "删除这个 worktree？",
+          "removeDescription": "会从磁盘上删除 {path}。归在它下面的会话会挪回项目文件夹。",
+          "removeUncommitted": "{path} 里有 {count} 处未提交的改动，删除后会丢失。归在它下面的会话会挪回项目文件夹。",
+          "deleteBranch": "同时删除分支 {branch}",
+          "cancel": "取消"
+        },
+        "continued": "追加"
       },
       "contentParts": {
         "offset": "偏移：{offset}",
@@ -10304,5 +10334,9 @@
       "rateLimited": "SRN 要求 Codeg 稍后再试。",
       "server": "SRN 返回了错误。"
     }
+  },
+  "DelegationWorktree": {
+    "deleteWithConversation": "同时删除它的 worktree（{path}）",
+    "deleteWithConversationUncommitted": "同时删除它的 worktree（{path}）——里面有 {count} 处未提交的改动"
   }
 }

@@ -43,7 +43,9 @@ pub mod companion;
 pub mod delivery;
 pub mod depth;
 pub mod event_emitter;
+pub mod fork_launch;
 pub mod fork_tools;
+pub mod ledger;
 pub mod listener;
 pub mod live_reply;
 pub mod meta_writer;
@@ -53,6 +55,7 @@ pub mod service;
 pub mod spawner;
 pub mod transport;
 pub mod types;
+pub mod worktree;
 
 /// Canonical titles written onto a parent tool call that was announced
 /// identity-less (Cursor's `"MCP: tool"` — see

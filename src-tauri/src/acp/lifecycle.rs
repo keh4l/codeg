@@ -491,7 +491,12 @@ async fn forward_turn_complete_to_broker(
         }
     };
     let call_id = match row.delegation_call_id.clone() {
-        Some(id) => id,
+        // keh4l build: a continued round runs under its own task id, which
+        // the row's `delegation_call_id` (the first round's) does not name.
+        Some(id) => broker
+            .running_call_id_for_child_conversation(conversation_id)
+            .await
+            .unwrap_or(id),
         None => return, // not a delegation child; nothing to do.
     };
     if row.parent_tool_use_id.is_none() {
@@ -4815,6 +4820,7 @@ mod tests {
             requested_working_dir: None,
             external_handle: None,
             assistant: None,
+            fork: Default::default(),
         }
     }
 

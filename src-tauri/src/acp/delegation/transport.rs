@@ -154,6 +154,19 @@ pub struct BrokerResumeTaskRequest {
     pub external_handle: Option<String>,
 }
 
+/// keh4l build: one `continue_delegation` call — more work for a finished
+/// delegated task, in the same child session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrokerContinueTaskRequest {
+    pub token: String,
+    pub task_id: String,
+    pub task: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_tool_use_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_handle: Option<String>,
+}
+
 /// Pull the pending live-feedback notes for the parent session. Backs the
 /// `check_user_feedback` MCP tool. Authenticated by the same per-launch
 /// `token`; the listener resolves the parent connection from it and scopes the
@@ -504,6 +517,8 @@ pub enum BrokerMessage {
     Status(BrokerStatusRequest),
     CancelTask(BrokerCancelTaskRequest),
     ResumeTask(BrokerResumeTaskRequest),
+    /// keh4l build: `continue_delegation`.
+    ContinueTask(BrokerContinueTaskRequest),
     Feedback(BrokerFeedbackRequest),
     CommitFeedback(BrokerCommitFeedbackRequest),
     Ask(BrokerAskRequest),

@@ -483,6 +483,10 @@ impl DelegationListener {
             }
             BrokerMessage::CancelTask(req) => report_response(self.process_cancel_task(req).await)?,
             BrokerMessage::ResumeTask(req) => report_response(self.process_resume_task(req).await)?,
+            // keh4l build: `continue_delegation`.
+            BrokerMessage::ContinueTask(req) => {
+                report_response(self.process_continue_task(req).await)?
+            }
             BrokerMessage::Feedback(req) => {
                 // at-least-once delivery: READ pending notes (no mutation),
                 // WRITE the response, and COMMIT them delivered ONLY on a
@@ -936,6 +940,34 @@ impl DelegationListener {
     /// is proven by the child row's `parent_id` matching the caller's current
     /// conversation, so a caller with no conversation has no claim to resume
     /// anything.
+    /// keh4l build: `continue_delegation` — scoped to the caller's parent
+    /// conversation like a resume.
+    async fn process_continue_task(
+        &self,
+        req: crate::acp::delegation::transport::BrokerContinueTaskRequest,
+    ) -> DelegationTaskReport {
+        let Some(entry) = self.tokens.lookup(&req.token).await else {
+            return unknown_report(&req.task_id);
+        };
+        let Some(parent_conversation_id) = self
+            .parent_lookup
+            .current_conversation_id(&entry.parent_connection_id)
+            .await
+        else {
+            return cancel("parent has no active conversation");
+        };
+        self.broker
+            .continue_delegation(crate::acp::delegation::broker::ContinueDelegationRequest {
+                parent_connection_id: entry.parent_connection_id,
+                parent_conversation_id,
+                parent_tool_use_id: req.parent_tool_use_id.filter(|id| !id.is_empty()),
+                task_id: req.task_id,
+                task: req.task,
+                external_handle: req.external_handle,
+            })
+            .await
+    }
+
     async fn process_resume_task(&self, req: BrokerResumeTaskRequest) -> DelegationTaskReport {
         let Some(entry) = self.tokens.lookup(&req.token).await else {
             return unknown_report(&req.task_id);
@@ -1441,6 +1473,13 @@ impl DelegationListener {
             .clone()
             .or_else(|| Some(entry.working_dir.to_string_lossy().to_string()));
 
+        // keh4l build: `isolation` / `model` / `config`.
+        let fork = match crate::acp::delegation::fork_launch::ForkDelegationExtras::from_args(
+            &req.input,
+        ) {
+            Ok(fork) => fork,
+            Err(message) => return report_failed("invalid_launch_option", &message),
+        };
         let delegation_req = DelegationRequest {
             parent_connection_id: req.parent_connection_id,
             parent_conversation_id,
@@ -1451,6 +1490,7 @@ impl DelegationListener {
             requested_working_dir,
             external_handle: req.external_handle,
             assistant,
+            fork,
         };
         self.broker.start_delegation(delegation_req).await
     }
@@ -2589,6 +2629,7 @@ mod tests {
                 requested_working_dir: None,
                 external_handle: None,
                 assistant: None,
+                fork: Default::default(),
             })
             .await;
         let task_id = ack.task_id.clone().expect("running task carries an id");
@@ -2744,6 +2785,7 @@ mod tests {
                         requested_working_dir: None,
                         external_handle: None,
                         assistant: None,
+                        fork: Default::default(),
                     })
                     .await
                     .task_id
@@ -2848,6 +2890,7 @@ mod tests {
                 requested_working_dir: None,
                 external_handle: None,
                 assistant: None,
+                fork: Default::default(),
             })
             .await;
         let task_id = ack.task_id.clone().unwrap();
@@ -2901,6 +2944,7 @@ mod tests {
                     requested_working_dir: None,
                     external_handle: Some("h-1".into()),
                     assistant: None,
+                    fork: Default::default(),
                 };
                 broker.handle_request(req).await
             })

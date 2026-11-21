@@ -325,8 +325,9 @@ impl DeliveryHub {
         });
     }
 
-    /// Take everything queued for `conversation_id` and render it.
-    fn take(
+    /// Take everything queued for `conversation_id` and render it, with what
+    /// each worktree task changed there.
+    async fn take(
         &self,
         conversation_id: i32,
         mode: DelegationResultsMode,
@@ -340,7 +341,16 @@ impl DeliveryHub {
             }
             std::mem::take(&mut slot.queue)
         };
-        let tasks = items.iter().map(|q| q.task.clone()).collect();
+        let mut tasks: Vec<NoticeTask> = items.iter().map(|q| q.task.clone()).collect();
+        for task in tasks.iter_mut() {
+            if let Some(wt) = task.worktree.as_mut() {
+                if wt.changes.is_none() {
+                    wt.changes =
+                        super::worktree::changes(std::path::Path::new(&wt.path), &wt.base_sha)
+                            .await;
+                }
+            }
+        }
         let notice = notice::render(mode, tasks, still_running)?;
         Some(TakenBatch {
             conversation_id,
@@ -382,8 +392,9 @@ impl DeliveryHub {
                 // Delivered when this turn ends (`on_turn_complete`).
                 return;
             }
-            let Some(batch) =
-                self.take(conversation_id, DelegationResultsMode::Steer, still_running)
+            let Some(batch) = self
+                .take(conversation_id, DelegationResultsMode::Steer, still_running)
+                .await
             else {
                 return;
             };
@@ -419,7 +430,9 @@ impl DeliveryHub {
                 return;
             }
         }
-        let Some(batch) = self.take(conversation_id, DelegationResultsMode::Wake, still_running)
+        let Some(batch) = self
+            .take(conversation_id, DelegationResultsMode::Wake, still_running)
+            .await
         else {
             return;
         };
@@ -497,6 +510,7 @@ impl DeliveryHub {
             DelegationResultsMode::Attached,
             still_running,
         )
+        .await
     }
 }
 
@@ -754,6 +768,7 @@ impl ParentDriver for ManagerParentDriver {
 /// What delivery needs from the process, handed over once at startup.
 pub struct Runtime {
     pub db: Arc<AppDatabase>,
+    pub emitter: EventEmitter,
     pub manager: Arc<ConnectionManager>,
     pub broker: Arc<DelegationBroker>,
     pub bus: Arc<InternalEventBus>,
@@ -764,6 +779,12 @@ pub struct Runtime {
 /// (the desktop setup runs outside one). Subscribes before returning, so no
 /// turn end is missed. A second call installs nothing and returns a no-op.
 pub fn start(runtime: Runtime) -> futures_util::future::BoxFuture<'static, ()> {
+    // The task ledger rides along: same database, installed once.
+    let ledger = Arc::new(super::ledger::DbLedger {
+        db: runtime.db.clone(),
+        emitter: runtime.emitter.clone(),
+    });
+    let ledger_broker = runtime.broker.clone();
     let driver = Arc::new(ManagerParentDriver {
         manager: runtime.manager,
         db: runtime.db,
@@ -779,6 +800,7 @@ pub fn start(runtime: Runtime) -> futures_util::future::BoxFuture<'static, ()> {
     let mut rx = runtime.bus.subscribe();
     Box::pin(async move {
         use tokio::sync::broadcast::error::RecvError;
+        ledger_broker.install_ledger(ledger).await;
         loop {
             let envelope = match rx.recv().await {
                 Ok(envelope) => envelope,

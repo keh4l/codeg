@@ -5071,6 +5071,21 @@ impl crate::acp::delegation::spawner::ConnectionSpawner for ConnectionManagerSpa
             .is_some()
     }
 
+    async fn child_config_options(
+        &self,
+        conn_id: &str,
+    ) -> Option<Vec<crate::acp::types::SessionConfigOptionInfo>> {
+        let state = self.manager.get_state(conn_id).await?;
+        let options = state.read().await.config_options.clone();
+        options
+    }
+
+    async fn child_session_id(&self, conn_id: &str) -> Option<String> {
+        let state = self.manager.get_state(conn_id).await?;
+        let id = state.read().await.external_id.clone();
+        id
+    }
+
     async fn cancel(
         &self,
         conn_id: &str,

@@ -32,7 +32,8 @@ use super::companion::{
 };
 use super::transport::{
     client_message_round_trip, BrokerAskCollectRequest, BrokerAssistantToolRequest,
-    BrokerImageGenerateRequest, BrokerImageModelsRequest, BrokerImageResultRequest, BrokerMessage,
+    BrokerContinueTaskRequest, BrokerImageGenerateRequest, BrokerImageModelsRequest,
+    BrokerImageResultRequest, BrokerMessage,
 };
 
 /// The schemas of the tools below, appended to the embedded upstream list.
@@ -149,6 +150,8 @@ pub(super) async fn extend_tool_list(ctx: &CompanionContext, tools: &mut Value) 
     if ctx.features.push {
         note_push(tools);
     }
+    extend_delegate_schema(tools);
+    note_continue(tools);
     if let Some(cap) = ctx.wait_cap_ms {
         note_wait_cap(tools, cap);
     }
@@ -192,6 +195,77 @@ const PUSH_STATUS_NOTE: &str = " In this session you rarely need this tool: fini
 const PUSH_ACK_NOTE: &str = " When it finishes, its result is handed back to you \
      automatically: if you have nothing else to do, end your turn now and Codeg will wake you \
      with it. Don't poll for it.";
+
+/// `delegate_to_agent`'s keh4l-only arguments
+/// (`crate::acp::delegation::fork_launch`).
+fn extend_delegate_schema(tools: &mut Value) {
+    let Some(list) = tools.as_array_mut() else {
+        return;
+    };
+    for tool in list {
+        if tool.get("name").and_then(Value::as_str) != Some("delegate_to_agent") {
+            continue;
+        }
+        let Some(props) = tool
+            .pointer_mut("/inputSchema/properties")
+            .and_then(Value::as_object_mut)
+        else {
+            continue;
+        };
+        props.insert(
+            "isolation".into(),
+            json!({
+                "type": "string",
+                "enum": ["shared", "worktree"],
+                "description": "Where the sub-agent works. \"shared\" (default): in working_dir, \
+                    the same files you work on. \"worktree\": in a new git worktree on its own \
+                    branch (delegate/<id>), made from the commit your checkout is on — your \
+                    UNCOMMITTED changes are not in it. Use it for parallel tasks that edit code, so \
+                    they never touch the same files. The result tells you the worktree's path and \
+                    branch: review its changes and merge the branch yourself with git, or leave \
+                    that to the user. Needs a git repository with at least one commit."
+            }),
+        );
+        props.insert(
+            "model".into(),
+            json!({
+                "type": "string",
+                "description": "The model this sub-agent runs on, for this task only — over \
+                    the assistant's or the user's default. Use a model id the target agent \
+                    offers; an unavailable one fails at once with the list to pick from. Omit to \
+                    use the default."
+            }),
+        );
+        props.insert(
+            "config".into(),
+            json!({
+                "type": "object",
+                "additionalProperties": { "type": "string" },
+                "description": "Other launch options for this task only, as option id → \
+                    value id, e.g. {\"reasoning_effort\": \"high\"}. Ids are the target \
+                    agent's own; a value it does not offer fails at once with the choices, an \
+                    option it does not have is ignored."
+            }),
+        );
+    }
+}
+
+/// `resume_delegation` points at `continue_delegation` for finished work.
+fn note_continue(tools: &mut Value) {
+    let Some(list) = tools.as_array_mut() else {
+        return;
+    };
+    for tool in list {
+        if tool.get("name").and_then(Value::as_str) != Some("resume_delegation") {
+            continue;
+        }
+        if let Some(Value::String(description)) = tool.get_mut("description") {
+            description.push_str(
+                " To give a task that already FINISHED (completed, failed or canceled) more work                  in its session, use continue_delegation instead.",
+            );
+        }
+    }
+}
 
 fn note_push(tools: &mut Value) {
     let Some(list) = tools.as_array_mut() else {
@@ -375,6 +449,42 @@ pub(super) async fn build_spawn(
             let round_trip =
                 Box::pin(async move { client_message_round_trip(&socket, &msg).await });
             register_and_spawn(inflight, id, None, round_trip, render_image_jobs).await
+        }
+        "continue_delegation" => {
+            let text = |key: &str| {
+                arguments
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+            };
+            let (Some(task_id), Some(task)) = (text("task_id"), text("task")) else {
+                return LineAction::Respond(err(
+                    id,
+                    -32602,
+                    "continue_delegation requires task_id (the round to continue) and task \
+                     (the follow-up instructions)",
+                ));
+            };
+            let external_handle = uuid::Uuid::new_v4().to_string();
+            let msg = BrokerMessage::ContinueTask(BrokerContinueTaskRequest {
+                token: ctx.token.clone(),
+                task_id,
+                task,
+                parent_tool_use_id: None,
+                external_handle: Some(external_handle.clone()),
+            });
+            let round_trip =
+                Box::pin(async move { client_message_round_trip(&socket, &msg).await });
+            register_and_spawn(
+                inflight,
+                id,
+                Some(external_handle),
+                round_trip,
+                task_report_renderer(ctx),
+            )
+            .await
         }
         "create_assistant" | "update_assistant" => {
             if let Some(problem) = assistant_call_problem(name, &arguments) {
@@ -621,8 +731,14 @@ mod tests {
             { "name": "cancel_delegation", "description": "Cancel." },
         ]);
         note_push(&mut tools);
-        assert!(tools[0]["description"].as_str().unwrap().ends_with(PUSH_DELEGATE_NOTE));
-        assert!(tools[1]["description"].as_str().unwrap().ends_with(PUSH_STATUS_NOTE));
+        assert!(tools[0]["description"]
+            .as_str()
+            .unwrap()
+            .ends_with(PUSH_DELEGATE_NOTE));
+        assert!(tools[1]["description"]
+            .as_str()
+            .unwrap()
+            .ends_with(PUSH_STATUS_NOTE));
         assert_eq!(tools[2]["description"], "Cancel.");
 
         let ack = json!({
@@ -631,7 +747,10 @@ mod tests {
             "message": "Delegation successful. task_id=t1. Call get_delegation_status.",
         });
         let rendered = render_pushed_task_report(&ack);
-        assert!(rendered["content"][0]["text"].as_str().unwrap().ends_with(PUSH_ACK_NOTE));
+        assert!(rendered["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .ends_with(PUSH_ACK_NOTE));
         // A terminal report is left as it was.
         let done = json!({ "status": "completed", "task_id": "t1", "text": "ok" });
         assert_eq!(render_pushed_task_report(&done), render_task_report(&done));
@@ -731,6 +850,7 @@ mod tests {
                 "image_get_result",
                 "create_assistant",
                 "update_assistant",
+                "continue_delegation",
             ]
         );
     }

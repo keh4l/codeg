@@ -190,6 +190,10 @@ pub struct DelegationRequest {
     /// ignored — and the child runs on the assistant's options and brief.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assistant: Option<DelegationAssistant>,
+    /// keh4l build: `isolation` / `model` / `config`
+    /// (`crate::acp::delegation::fork_launch`).
+    #[serde(default)]
+    pub fork: crate::acp::delegation::fork_launch::ForkDelegationExtras,
 }
 
 impl DelegationRequest {
