@@ -195,6 +195,13 @@ pub trait ConnectionSpawner: Send + Sync {
         None
     }
 
+    /// keh4l build: whether a child connection is still up (not gone, not
+    /// failed) — so a check waiting for its session gives up on a dead one.
+    /// `false` by default: a spawner that cannot tell is not waited on.
+    async fn child_alive(&self, _conn_id: &str) -> bool {
+        false
+    }
+
     /// Cancel any in-flight prompt on the child connection. Idempotent:
     /// calling on a connection with nothing in flight is a no-op success.
     async fn cancel(&self, conn_id: &str) -> Result<(), SpawnerError>;

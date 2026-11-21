@@ -316,21 +316,35 @@ fn find_unseparated(input: &str, from: usize) -> Option<Found> {
     while search_from < input.len() {
         let start = search_from + input[search_from..].find(BODY_PREFIX)?;
         let mut cursor = start;
-        let mut complete = true;
-        for _ in 0..3 {
+        let mut lines = 0;
+        while lines < 3 {
             match input[cursor..].find('\n') {
-                Some(nl) if cursor + nl - start <= SCAN_WINDOW => cursor += nl + 1,
-                _ => {
-                    complete = false;
-                    break;
+                Some(nl) if cursor + nl - start <= SCAN_WINDOW => {
+                    cursor += nl + 1;
+                    lines += 1;
                 }
+                _ => break,
             }
         }
-        if complete {
+        if lines == 3 {
             if let Some((id, payload)) = parse_body(&input[start..cursor]) {
                 return Some(Found {
                     start,
                     end: cursor,
+                    id,
+                    payload,
+                });
+            }
+        } else if lines == 2 && input.len() - start <= SCAN_WINDOW {
+            // Claude Code stores the prompt with the separators dropped AND
+            // the text trimmed, so a frame at the end of it has lost its last
+            // newline as well. Still the whole body, byte for byte, short of
+            // that one newline.
+            let candidate = format!("{}\n", &input[start..]);
+            if let Some((id, payload)) = parse_body(&candidate) {
+                return Some(Found {
+                    start,
+                    end: input.len(),
                     id,
                     payload,
                 });
@@ -630,5 +644,39 @@ mod tests {
         lift_results_from_turns(&mut turns);
         assert!(matches!(turns[0].role, TurnRole::Assistant));
         assert!(matches!(&turns[0].blocks[0], ContentBlock::Text { .. }));
+    }
+
+    #[test]
+    fn a_frame_stored_trimmed_and_without_separators_is_still_one() {
+        // What Claude Code writes to its transcript for a wake prompt: the
+        // separators gone and the trailing newline trimmed off.
+        let notice = render(
+            DelegationResultsMode::Wake,
+            vec![task("t-1", "done")],
+            vec![],
+        )
+        .unwrap();
+        let stored = notice.text.trim_matches(SEPARATOR).trim_end().to_string();
+        assert!(contains_frame(&stored));
+        let (rest, frames) = extract(&stored);
+        assert_eq!(rest, "");
+        assert_eq!(frames.len(), 1);
+        // And riding after a user message (attached).
+        let attached = render(
+            DelegationResultsMode::Attached,
+            vec![task("t-1", "done")],
+            vec![],
+        )
+        .unwrap();
+        let stored = format!(
+            "please go on\n{}",
+            attached.text.trim_matches(SEPARATOR).trim_end()
+        );
+        let (rest, frames) = extract(&stored);
+        assert_eq!(rest, "please go on");
+        assert_eq!(frames.len(), 1);
+        // A body cut anywhere else is not a frame.
+        let cut = &notice.text.trim_matches(SEPARATOR)[..notice.text.len() / 2];
+        assert!(!contains_frame(cut));
     }
 }

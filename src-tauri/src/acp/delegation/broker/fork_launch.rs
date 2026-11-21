@@ -29,6 +29,11 @@ pub(crate) struct ForkTaskInfo {
     pub notes: Vec<String>,
 }
 
+/// How long a launch check waits for the child's session.
+const SESSION_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+/// How long it waits for the options once the session is up.
+const OPTIONS_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Tasks whose launch facts are kept; the oldest go first.
 const KEPT: usize = 4096;
 
@@ -340,7 +345,7 @@ impl DelegationBroker {
         if requested.is_empty() {
             return Ok(());
         }
-        let Some(options) = self.spawner.child_config_options(child_connection_id).await else {
+        let Some(options) = self.child_reported_options(child_connection_id).await else {
             return Ok(());
         };
         let result = fork_launch::check(&requested, &options);
@@ -355,6 +360,42 @@ impl DelegationBroker {
             launch.notes.push(note);
         }
         Ok(())
+    }
+
+    /// The options a just-spawned child reports. It opens its session after
+    /// the spawn returns, so wait for that (bounded, and not on a connection
+    /// that went away); `None` when it never reported any — not checked.
+    async fn child_reported_options(
+        &self,
+        child_connection_id: &str,
+    ) -> Option<Vec<crate::acp::types::SessionConfigOptionInfo>> {
+        let deadline = tokio::time::Instant::now() + SESSION_WAIT;
+        let mut session_seen_at: Option<tokio::time::Instant> = None;
+        loop {
+            if let Some(options) = self.spawner.child_config_options(child_connection_id).await {
+                return Some(options);
+            }
+            let now = tokio::time::Instant::now();
+            if self
+                .spawner
+                .child_session_id(child_connection_id)
+                .await
+                .is_some()
+            {
+                // Session up: its options follow right behind, or never come
+                // (an agent without any).
+                let seen = *session_seen_at.get_or_insert(now);
+                if now >= seen + OPTIONS_GRACE {
+                    return None;
+                }
+            } else if !self.spawner.child_alive(child_connection_id).await {
+                return None;
+            }
+            if now >= deadline {
+                return None;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
     }
 
     /// The task id is minted: keep its launch facts for the meta writes and

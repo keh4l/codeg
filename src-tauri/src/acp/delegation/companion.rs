@@ -1540,7 +1540,8 @@ async fn build_tools_call_spawn_inner(
         | "image_generate"
         | "image_get_result"
         | "create_assistant"
-        | "update_assistant" => {
+        | "update_assistant"
+        | "continue_delegation" => {
             super::fork_tools::build_spawn(&ctx, inflight, id, &name, arguments).await
         }
         other => LineAction::Respond(err(id, -32602, format!("unknown tool: {other}"))),
@@ -8395,6 +8396,36 @@ mod tests {
             json!(["agent_type", "task"])
         );
         assert_eq!(*seen.lock().await, vec!["ping"], "no roster asked of an old parent");
+    }
+
+    // keh4l build: `continue_delegation` is dispatched, not refused as an
+    // unknown tool.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn continue_delegation_reaches_the_listener() {
+        use crate::acp::delegation::transport::BrokerMessage;
+        let dir = tempfile::tempdir_in("/tmp").unwrap();
+        let (sock, seen) = fake_listener(&dir, |msg| match msg {
+            BrokerMessage::ContinueTask(req) => {
+                assert_eq!(req.task_id, "t-1");
+                assert_eq!(req.task, "and tests");
+                Some(json!({
+                    "task_id": "t-2",
+                    "status": "running",
+                    "message": "Continuation started. task_id=t-2"
+                }))
+            }
+            _ => None,
+        });
+        let line = r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"continue_delegation","arguments":{"task_id":"t-1","task":"and tests"}}}"#;
+        let action = dispatch_line(&ctx_on(&sock), Arc::new(InflightCalls::new()), line).await;
+        let LineAction::Spawn(call) = action else {
+            panic!("expected Spawn");
+        };
+        let response = call.future.await.response.expect("a response");
+        assert!(response.error.is_none(), "{:?}", response.error);
+        assert!(serde_json::to_string(&response.result).unwrap().contains("t-2"));
+        assert_eq!(*seen.lock().await, vec!["continue_task"]);
     }
 
     #[cfg(unix)]

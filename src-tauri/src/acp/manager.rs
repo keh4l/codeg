@@ -5086,6 +5086,18 @@ impl crate::acp::delegation::spawner::ConnectionSpawner for ConnectionManagerSpa
         id
     }
 
+    async fn child_alive(&self, conn_id: &str) -> bool {
+        let Some(state) = self.manager.get_state(conn_id).await else {
+            return false;
+        };
+        let status = state.read().await.status.clone();
+        !matches!(
+            status,
+            crate::acp::types::ConnectionStatus::Disconnected
+                | crate::acp::types::ConnectionStatus::Error
+        )
+    }
+
     async fn cancel(
         &self,
         conn_id: &str,

@@ -713,7 +713,7 @@ mod tests {
     /// session it holds.
     struct Spawner {
         mock: Arc<MockSpawner>,
-        options: Vec<SessionConfigOptionInfo>,
+        options: StdMutex<Vec<SessionConfigOptionInfo>>,
         session: StdMutex<Option<String>>,
     }
 
@@ -780,10 +780,14 @@ mod tests {
             &self,
             _conn_id: &str,
         ) -> Option<Vec<SessionConfigOptionInfo>> {
-            (!self.options.is_empty()).then(|| self.options.clone())
+            let options = self.options.lock().unwrap().clone();
+            (!options.is_empty()).then_some(options)
         }
         async fn child_session_id(&self, _conn_id: &str) -> Option<String> {
             self.session.lock().unwrap().clone()
+        }
+        async fn child_alive(&self, _conn_id: &str) -> bool {
+            true
         }
     }
 
@@ -874,7 +878,7 @@ mod tests {
         let mock = Arc::new(MockSpawner::new());
         let spawner = Arc::new(Spawner {
             mock: mock.clone(),
-            options,
+            options: StdMutex::new(options),
             session: StdMutex::new(Some("ext-1".into())),
         });
         let rows = Arc::new(RowLookup::default());
@@ -999,6 +1003,29 @@ mod tests {
             h.mock.send_args.lock().await.is_empty(),
             "never given the task"
         );
+    }
+
+    #[tokio::test]
+    async fn the_check_waits_for_the_options_the_child_reports_with_its_session() {
+        // A real child opens its session after the spawn returns.
+        let h = harness(vec![]).await;
+        *h.spawner.session.lock().unwrap() = None;
+        let spawner = h.spawner.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            *spawner.options.lock().unwrap() = vec![select("model", &["opus", "sonnet", "haiku"])];
+            *spawner.session.lock().unwrap() = Some("ext-1".into());
+        });
+        h.mock.queue_spawn(Ok("child-1".into())).await;
+        let report = h
+            .broker
+            .start_delegation(request(ForkDelegationExtras {
+                model: Some("no-such-model".into()),
+                ..Default::default()
+            }))
+            .await;
+        assert_eq!(report.error_code.as_deref(), Some("invalid_launch_option"));
+        assert!(report.message.unwrap().contains("opus, sonnet, haiku"));
     }
 
     #[tokio::test]
