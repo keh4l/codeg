@@ -102,7 +102,16 @@ export function FollowUpSendButton({
         <DropdownMenuTrigger asChild>
           <span aria-hidden className="pointer-events-none absolute inset-0" />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" side="top">
+        <DropdownMenuContent
+          align="end"
+          side="top"
+          // Lifting the finger after a long press can still bring the
+          // button's mouse events (mousedown → click), which would move focus
+          // off the menu and close it before anything is picked.
+          onFocusOutside={(event) => {
+            if (longPressed.current) event.preventDefault()
+          }}
+        >
           <DropdownMenuItem
             disabled={!canSteer}
             onSelect={() => onSubmit(false, "steer")}
@@ -129,14 +138,15 @@ export function FollowUpSendButton({
       <Button
         type="button"
         size="icon"
-        className="h-8 w-8"
+        // No text selection or iOS callout on a long press: the menu is ours.
+        className="h-8 w-8 select-none [-webkit-touch-callout:none]"
         disabled={disabled}
         title={title}
         aria-label={action === "steer" ? t("actionSteer") : t("actionQueue")}
         data-follow-up-action={action}
         onPointerDown={(event) => {
-          if (event.pointerType === "mouse") return
           longPressed.current = false
+          if (event.pointerType === "mouse") return
           clearPress()
           pressTimer.current = setTimeout(() => {
             longPressed.current = true
@@ -146,6 +156,10 @@ export function FollowUpSendButton({
         onPointerUp={clearPress}
         onPointerLeave={clearPress}
         onPointerCancel={clearPress}
+        onMouseDown={(event) => {
+          // The mouse events that follow a long press keep focus on the menu.
+          if (longPressed.current) event.preventDefault()
+        }}
         onContextMenu={(event) => {
           // A long press on touch fires this too; the menu is ours.
           if (longPressed.current) event.preventDefault()

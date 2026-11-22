@@ -2663,6 +2663,36 @@ describe("MessageInput mid-turn send (steer or queue)", () => {
     expect(onSteer).not.toHaveBeenCalled()
   })
 
+  it("keeps the long-press menu open through the mouse events of the release", async () => {
+    // What a phone browser fired in headless Chromium after the finger
+    // lifted: mousedown (moving focus to the button) and click, both on the
+    // send button. Neither may close the menu or send.
+    const onSteer = vi.fn()
+    const onEnqueue = vi.fn()
+    const editor = await mountPrompting({ onSteer, onEnqueue })
+    typeDraft(editor, "pick one")
+    await waitFor(() => expect(sendButton()).toBeInTheDocument())
+    fireEvent.pointerDown(sendButton(), { pointerType: "touch" })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 550))
+    })
+    await screen.findByRole("menu")
+    fireEvent.pointerUp(sendButton(), { pointerType: "touch" })
+    // A prevented mousedown keeps focus where it is.
+    expect(fireEvent.mouseDown(sendButton())).toBe(false)
+    // Focus reaching the button anyway does not close the menu either.
+    act(() => sendButton().focus())
+    fireEvent.click(sendButton())
+    expect(screen.getByRole("menu")).toBeInTheDocument()
+    expect(onSteer).not.toHaveBeenCalled()
+    expect(onEnqueue).not.toHaveBeenCalled()
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: new RegExp(FU.actionQueue) })
+    )
+    await waitFor(() => expect(onEnqueue).toHaveBeenCalled())
+    expect(onSteer).not.toHaveBeenCalled()
+  })
+
   it.each([false, true])(
     "preserves edits made during a steer (turn ended: %s)",
     async (turnEnded) => {
