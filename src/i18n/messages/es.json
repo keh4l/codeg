@@ -4452,7 +4452,10 @@
         "background": "En segundo plano",
         "delegatedFallback": "Subagente delegado",
         "autoContinue": "sigue cuando terminen",
-        "heldForNext": "los resultados irán con tu próximo mensaje"
+        "heldForNext": "los resultados irán con tu próximo mensaje",
+        "stop": "Detener",
+        "stopAll": "Detener todo",
+        "stopFailed": "No se pudo detener: {detail}"
       },
       "remoteControl": {
         "title": "Control remoto activado",

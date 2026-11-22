@@ -4452,7 +4452,10 @@
         "background": "Background",
         "delegatedFallback": "Delegated sub-agent",
         "autoContinue": "continues when they finish",
-        "heldForNext": "results go with your next message"
+        "heldForNext": "results go with your next message",
+        "stop": "Stop",
+        "stopAll": "Stop all",
+        "stopFailed": "Couldn't stop it: {detail}"
       },
       "remoteControl": {
         "title": "Remote Control is on",

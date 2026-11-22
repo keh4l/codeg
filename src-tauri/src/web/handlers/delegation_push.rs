@@ -27,3 +27,22 @@ pub async fn set_delegation_push_settings(
         delivery::set_settings_core(&state.db.conn, &state.emitter, params.settings).await?;
     Ok(Json(saved))
 }
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StopDelegationTasksParams {
+    pub task_ids: Vec<String>,
+}
+
+/// The user stops delegated tasks (the live-runs list's stop buttons).
+pub async fn stop_delegation_tasks(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<StopDelegationTasksParams>,
+) -> Result<Json<usize>, AppCommandError> {
+    Ok(Json(
+        state
+            .delegation_broker
+            .user_stop_tasks(&params.task_ids)
+            .await,
+    ))
+}

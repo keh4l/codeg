@@ -4452,7 +4452,10 @@
         "background": "Hintergrund",
         "delegatedFallback": "Delegierter Sub-Agent",
         "autoContinue": "geht weiter, wenn sie fertig sind",
-        "heldForNext": "Ergebnisse gehen mit deiner nächsten Nachricht mit"
+        "heldForNext": "Ergebnisse gehen mit deiner nächsten Nachricht mit",
+        "stop": "Stoppen",
+        "stopAll": "Alle stoppen",
+        "stopFailed": "Konnte nicht gestoppt werden: {detail}"
       },
       "remoteControl": {
         "title": "Fernsteuerung aktiv",

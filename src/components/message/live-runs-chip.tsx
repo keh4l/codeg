@@ -51,6 +51,10 @@ import {
   subscribeDelegationResultsLive,
 } from "@/lib/delegation-results-live"
 import { useDelegationPushEnabled } from "@/hooks/use-delegation-push-enabled"
+import {
+  DelegationStopAllButton,
+  DelegationStopButton,
+} from "@/components/message/delegation-stop"
 import type {
   LiveDelegationRun,
   LiveRuns,
@@ -203,7 +207,18 @@ export function LiveRunsGroups({
         </RunGroup>
       )}
       {runs.delegations.length > 0 && (
-        <RunGroup title={t("groupDelegations")} count={runs.delegations.length}>
+        <RunGroup
+          title={t("groupDelegations")}
+          count={runs.delegations.length}
+          // keh4l build: stop them all.
+          action={
+            <DelegationStopAllButton
+              taskIds={runs.delegations.flatMap((run) =>
+                run.binding?.taskId ? [run.binding.taskId] : []
+              )}
+            />
+          }
+        >
           {runs.delegations.map((run) => (
             <DelegationRunRow
               key={run.childConnectionId}
@@ -220,10 +235,12 @@ export function LiveRunsGroups({
 function RunGroup({
   title,
   count,
+  action,
   children,
 }: {
   title: string
   count: number
+  action?: ReactNode
   children: ReactNode
 }) {
   return (
@@ -231,6 +248,7 @@ function RunGroup({
       <h3 className="flex items-center gap-1.5 px-3 pt-1.5 pb-0.5 text-2xs font-medium text-muted-foreground">
         <span className="min-w-0 truncate">{title}</span>
         <span className="tabular-nums">{count}</span>
+        {action}
       </h3>
       {children}
     </section>
@@ -348,7 +366,7 @@ function SubAgentRunLine({
 
 /** A codeg delegation: who runs it, what it was asked, how it stands
  *  ("waiting" while it is parked on a decision). Opens the child's
- *  conversation. No stop — that is the parent agent's (`cancel_delegation`). */
+ *  conversation. keh4l build: and stops it (`DelegationStopButton`). */
 function DelegationRunRow({
   run,
   onNavigate,
@@ -399,22 +417,35 @@ function BoundDelegationRunRow({
   )
   // The viewer lives on the transcript (`SessionViewerHost`), so it outlasts
   // this row — which goes as soon as the list closes.
-  return viewerHost && childConversationId != null ? (
-    <button
-      type="button"
-      onClick={() => {
-        onNavigate()
-        viewerHost.open({ kind: "delegation", source })
-      }}
-      className={cn(
-        RUN_ROW_BOX,
-        "w-full cursor-pointer text-start outline-none hover:bg-muted/60 focus-visible:bg-muted/60"
-      )}
-    >
-      {body}
-    </button>
+  const row =
+    viewerHost && childConversationId != null ? (
+      <button
+        type="button"
+        onClick={() => {
+          onNavigate()
+          viewerHost.open({ kind: "delegation", source })
+        }}
+        className={cn(
+          RUN_ROW_BOX,
+          "w-full cursor-pointer text-start outline-none hover:bg-muted/60 focus-visible:bg-muted/60"
+        )}
+      >
+        {body}
+      </button>
+    ) : (
+      <div className={RUN_ROW_BOX}>{body}</div>
+    )
+  // keh4l build: a stop beside the row (not in it: the row is a button).
+  const stoppable =
+    binding.taskId != null &&
+    (status === "starting" || status === "running" || status === "waiting")
+  return stoppable && binding.taskId ? (
+    <div className="flex items-center pe-2">
+      <div className="min-w-0 flex-1">{row}</div>
+      <DelegationStopButton taskId={binding.taskId} />
+    </div>
   ) : (
-    <div className={RUN_ROW_BOX}>{body}</div>
+    row
   )
 }
 

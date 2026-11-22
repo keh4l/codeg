@@ -4452,7 +4452,10 @@
         "background": "في الخلفية",
         "delegatedFallback": "وكيل فرعي مفوَّض",
         "autoContinue": "يتابع عند انتهائها",
-        "heldForNext": "ستُرسل النتائج مع رسالتك التالية"
+        "heldForNext": "ستُرسل النتائج مع رسالتك التالية",
+        "stop": "إيقاف",
+        "stopAll": "إيقاف الكل",
+        "stopFailed": "تعذّر الإيقاف: {detail}"
       },
       "remoteControl": {
         "title": "التحكم عن بُعد مُفعّل",

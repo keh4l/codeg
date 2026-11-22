@@ -4452,7 +4452,10 @@
         "background": "백그라운드",
         "delegatedFallback": "위임한 서브 에이전트",
         "autoContinue": "끝나면 자동으로 이어서 진행",
-        "heldForNext": "결과는 다음 메시지와 함께 전달"
+        "heldForNext": "결과는 다음 메시지와 함께 전달",
+        "stop": "중지",
+        "stopAll": "모두 중지",
+        "stopFailed": "중지하지 못했습니다: {detail}"
       },
       "remoteControl": {
         "title": "원격 제어 켜짐",

@@ -7,6 +7,26 @@ use crate::app_error::AppCommandError;
 #[cfg(feature = "tauri-runtime")]
 use crate::web::event_bridge::EventEmitter;
 
+/// The user stops delegated tasks (the live-runs list's stop buttons).
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn stop_delegation_tasks(
+    #[cfg(feature = "tauri-runtime")] broker: tauri::State<
+        '_,
+        std::sync::Arc<crate::acp::delegation::broker::DelegationBroker>,
+    >,
+    task_ids: Vec<String>,
+) -> Result<usize, AppCommandError> {
+    #[cfg(feature = "tauri-runtime")]
+    {
+        Ok(broker.user_stop_tasks(&task_ids).await)
+    }
+    #[cfg(not(feature = "tauri-runtime"))]
+    {
+        let _ = task_ids;
+        Err(AppCommandError::configuration_invalid("tauri-only command"))
+    }
+}
+
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn get_delegation_push_settings() -> Result<DelegationPushSettings, AppCommandError> {
     Ok(delivery::get_settings())

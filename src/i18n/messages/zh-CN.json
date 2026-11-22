@@ -4452,7 +4452,10 @@
         "background": "后台",
         "delegatedFallback": "委派的子智能体",
         "autoContinue": "完成后自动继续",
-        "heldForNext": "结果会随你下一条消息交给主智能体"
+        "heldForNext": "结果会随你下一条消息交给主智能体",
+        "stop": "停止",
+        "stopAll": "全部停止",
+        "stopFailed": "停止失败：{detail}"
       },
       "remoteControl": {
         "title": "远程控制已开启",

@@ -4452,7 +4452,10 @@
         "background": "バックグラウンド",
         "delegatedFallback": "委任したサブエージェント",
         "autoContinue": "完了すると自動で続行",
-        "heldForNext": "結果は次のメッセージと一緒に渡します"
+        "heldForNext": "結果は次のメッセージと一緒に渡します",
+        "stop": "停止",
+        "stopAll": "すべて停止",
+        "stopFailed": "停止できませんでした：{detail}"
       },
       "remoteControl": {
         "title": "リモートコントロール有効",

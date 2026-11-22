@@ -22,3 +22,12 @@ export async function setDelegationPushSettings(
 ): Promise<DelegationPushSettings> {
   return getTransport().call("set_delegation_push_settings", { settings })
 }
+
+/**
+ * Stop delegated tasks, as the user (the live-runs list's stop buttons): each
+ * is canceled as the parent agent's `cancel_delegation` would, and not handed
+ * back to it. Returns how many were still running and stopped.
+ */
+export async function stopDelegationTasks(taskIds: string[]): Promise<number> {
+  return getTransport().call("stop_delegation_tasks", { taskIds })
+}

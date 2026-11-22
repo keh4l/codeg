@@ -489,6 +489,10 @@ pub fn build_router_with_srn(
             post(handlers::delegation_push::set_delegation_push_settings),
         )
         .route(
+            "/stop_delegation_tasks",
+            post(handlers::delegation_push::stop_delegation_tasks),
+        )
+        .route(
             "/get_delegation_worktree",
             post(handlers::delegation_worktree::get_delegation_worktree),
         )

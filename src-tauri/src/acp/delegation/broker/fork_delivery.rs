@@ -149,6 +149,44 @@ impl DelegationBroker {
     }
 }
 
+impl DelegationBroker {
+    /// The user stops delegated tasks from the live-runs list. Each is
+    /// canceled as its parent agent's `cancel_delegation` would — so it counts
+    /// as taken and is not handed back — scoped to the parent that started
+    /// it. Ids not running are skipped; returns how many were stopped.
+    pub async fn user_stop_tasks(&self, task_ids: &[String]) -> usize {
+        let targets: Vec<(String, String, i32)> = {
+            let inner = self.pending.inner.lock().await;
+            task_ids
+                .iter()
+                .filter_map(|id| {
+                    inner.running.get(id).map(|t| {
+                        (
+                            id.clone(),
+                            t.parent_connection_id.clone(),
+                            t.parent_conversation_id,
+                        )
+                    })
+                })
+                .collect()
+        };
+        let mut stopped = 0;
+        for (task_id, parent_connection_id, parent_conversation_id) in targets {
+            let report = self
+                .cancel_task_by_id(
+                    &parent_connection_id,
+                    Some(parent_conversation_id),
+                    &task_id,
+                )
+                .await;
+            if report.status == crate::acp::delegation::types::TaskStatus::Canceled {
+                stopped += 1;
+            }
+        }
+        stopped
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex as StdMutex;
@@ -326,5 +364,20 @@ mod tests {
             .cancel_task_by_id("parent-conn", Some(7), &task_id)
             .await;
         assert_eq!(*sink.consumed.lock().unwrap(), vec![task_id]);
+    }
+
+    #[tokio::test]
+    async fn the_user_stops_tasks_without_them_being_handed_back() {
+        let (broker, mock, sink) = broker_with_sink().await;
+        let a = start(&broker, &mock, "child-1").await;
+        let b = start(&broker, &mock, "child-2").await;
+        let stopped = broker
+            .user_stop_tasks(&[a.clone(), b.clone(), "not-running".into()])
+            .await;
+        assert_eq!(stopped, 2);
+        assert!(broker.running_task_ids_for_conversation(7).await.is_empty());
+        assert!(sink.terminals.lock().unwrap().is_empty(), "not pushed");
+        let consumed = sink.consumed.lock().unwrap().clone();
+        assert!(consumed.contains(&a) && consumed.contains(&b));
     }
 }

@@ -4452,7 +4452,10 @@
         "background": "Arrière-plan",
         "delegatedFallback": "Sous-agent délégué",
         "autoContinue": "reprend quand ils ont fini",
-        "heldForNext": "les résultats partiront avec votre prochain message"
+        "heldForNext": "les résultats partiront avec votre prochain message",
+        "stop": "Arrêter",
+        "stopAll": "Tout arrêter",
+        "stopFailed": "Impossible d’arrêter : {detail}"
       },
       "remoteControl": {
         "title": "Contrôle à distance activé",

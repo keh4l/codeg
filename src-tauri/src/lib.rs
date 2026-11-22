@@ -1941,6 +1941,7 @@ mod tauri_app {
                 translation_commands::get_sent_originals,
                 crate::commands::delegation_push::get_delegation_push_settings,
                 crate::commands::delegation_push::set_delegation_push_settings,
+                crate::commands::delegation_push::stop_delegation_tasks,
                 crate::commands::delegation_worktree::get_delegation_worktree,
                 crate::commands::delegation_worktree::delegation_worktree_for_conversation,
                 crate::commands::delegation_worktree::remove_delegation_worktree,
