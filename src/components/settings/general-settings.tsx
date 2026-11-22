@@ -51,6 +51,8 @@ import { DesktopNotificationSettingsSection } from "@/components/settings/deskto
 import { MentionPanelSettingsSection } from "@/components/settings/mention-panel-settings"
 import { NotificationSoundSettingsSection } from "@/components/settings/notification-sound-settings"
 import { TabSyncSettingsSection } from "@/components/settings/tab-sync-settings"
+// keh4l build: steer or queue while the agent replies.
+import { FollowUpSettingsSection } from "@/components/settings/follow-up-settings"
 import { WindowAttentionSettingsSection } from "@/components/settings/window-attention-settings"
 
 const TERMINAL_SHELL_OPTION_SYSTEM = "system"
@@ -524,6 +526,7 @@ export function GeneralSettings() {
         <SettingsGroup label={t("groups.tabsAndInput")}>
           <TabSyncSettingsSection />
           <MentionPanelSettingsSection />
+          <FollowUpSettingsSection />
         </SettingsGroup>
 
         <SettingsGroup label={t("groups.windowAndAlerts")}>

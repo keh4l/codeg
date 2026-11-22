@@ -54,7 +54,10 @@ import {
   type AskSelectionParkedDetail,
 } from "@/lib/ask-selection-handoff"
 import { useConnectionLifecycle } from "@/hooks/use-connection-lifecycle"
-import { useMessageQueue, type QueuedMessage } from "@/hooks/use-message-queue"
+import { type QueuedMessage } from "@/hooks/use-message-queue"
+// keh4l build: steer or queue while the agent replies.
+import { useFollowUpQueue } from "@/hooks/use-follow-up-queue"
+import { useFollowUpPanel } from "@/hooks/use-follow-up-panel"
 import { useTouchSelectionMenuGuard } from "@/hooks/use-touch-selection-menu-guard"
 import {
   MessageListView,
@@ -68,11 +71,7 @@ import { useAdvertisedGoalActions } from "@/hooks/use-goal-actions"
 import { ConversationShell } from "@/components/chat/conversation-shell"
 import { SessionConfigStaleBanner } from "@/components/chat/session-config-stale-banner"
 import { PiProjectTrustBanner } from "@/components/chat/pi-project-trust-banner"
-import { FeedbackNotesDisplay } from "@/components/chat/feedback-notes-display"
-import { FeedbackDialog } from "@/components/chat/feedback-dialog"
 import { AgentDiagnosticsDialog } from "@/components/settings/agent-diagnostics-dialog"
-import { useFeedbackEnabled } from "@/hooks/use-feedback-enabled"
-import { useSessionFeedback } from "@/hooks/use-session-feedback"
 import { AgentSelector } from "@/components/chat/agent-selector"
 import { ChatInput } from "@/components/chat/chat-input"
 import { WelcomeHero, WelcomeTip } from "@/components/chat/welcome-hero"
@@ -112,8 +111,6 @@ import {
   shouldRejectDuplicateCreate,
 } from "@/lib/queue-flush"
 import { TurnBusyError } from "@/lib/turn-busy"
-import { deliverQueuedSteer } from "@/lib/queued-steer"
-import { toErrorMessage } from "@/lib/app-error"
 import { blockingPrompts } from "@/lib/blocking-prompts"
 import { notify } from "@/lib/notify"
 import {
@@ -130,7 +127,6 @@ import { useConversationDetail } from "@/hooks/use-conversation-detail"
 import { useOutOfTurnContentNotice } from "@/hooks/use-out-of-turn-content-notice"
 import { useDelegationResultsLive } from "@/hooks/use-delegation-results-live"
 import {
-  buildSteerPayload,
   extractUserImagesFromDraft,
   getPromptDraftDisplayText,
   promptDraftTitleSeed,
@@ -288,7 +284,6 @@ const ConversationTabView = memo(function ConversationTabView({
   const t = useTranslations("Folder.conversation")
   // Composer-namespace copy for the queue row's click-to-insert outcomes
   // (same keys the composer's own mid-turn send reports).
-  const tCmp = useTranslations("Folder.chat.messageInput")
   const tWelcome = useTranslations("Folder.chat.welcomeInputPanel")
   const tDiag = useTranslations("DiagnosticsSettings")
   const sharedT = useTranslations("Folder.chat.shared")
@@ -727,7 +722,10 @@ const ConversationTabView = memo(function ConversationTabView({
     ),
   })
   const { status: connStatus, sessionId: connSessionId } = conn
-  const messageQueue = useMessageQueue()
+  const messageQueue = useFollowUpQueue({
+    conversationId: dbConversationId,
+    connectionId: conn.connectionId,
+  })
   const {
     queue: msgQueue,
     enqueue: mqEnqueue,
@@ -736,11 +734,11 @@ const ConversationTabView = memo(function ConversationTabView({
     dequeue: mqDequeue,
     remove: mqRemove,
     reorder: mqReorder,
-    moveToFront: mqMoveToFront,
     updateItem: mqUpdateItem,
     editingItemId: mqEditingItemId,
     startEditing: mqStartEditing,
     cancelEditing: mqCancelEditing,
+    serverMode: mqServerMode,
   } = messageQueue
   const connStatusRef = useRef(connStatus)
   useEffect(() => {
@@ -945,6 +943,8 @@ const ConversationTabView = memo(function ConversationTabView({
     // switched keeps the OLD agent's connection live at the same cwd until the
     // lifecycle reconnects — which, for a not-installed target, never happens.
     if (!connectionReady) return
+    // keh4l build: a queue kept on the server is sent by the server.
+    if (mqServerMode) return
     if (runtimeSyncState === "awaiting_persist") return
     // A row being inserted into the (just-ended) turn is still queued; sending
     // it now would deliver it twice. See `queueSteerInFlight`.
@@ -976,7 +976,13 @@ const ConversationTabView = memo(function ConversationTabView({
     return () => clearTimeout(timer)
     // `connectionReady` subsumes connStatus, cwd, agent, and `!selectorsLoading`,
     // so it is the only connection dependency this effect needs.
-  }, [connectionReady, runtimeSyncState, msgQueue.length, queueSteerInFlight])
+  }, [
+    connectionReady,
+    runtimeSyncState,
+    msgQueue.length,
+    queueSteerInFlight,
+    mqServerMode,
+  ])
 
   // Mirror the connection's liveMessage into the runtime session OUTSIDE React.
   // The connection dispatch invokes this sink synchronously whenever liveMessage
@@ -2200,11 +2206,48 @@ const ConversationTabView = memo(function ConversationTabView({
     ]
   )
 
+  // keh4l build: steering, the server-side queue's screen parts and steer
+  // marks (`useFollowUpPanel`). Upstream's live-feedback notes are gone: every
+  // agent can be steered, natively or by restarting its turn.
+  const handleComposerHandBack = useCallback((blocks: PromptInputBlock[]) => {
+    setComposerInject({ handBack: blocks })
+  }, [])
+  const followUp = useFollowUpPanel({
+    tabId,
+    queue: messageQueue,
+    conversationId: dbConversationId,
+    connectionId: conn.connectionId,
+    connStatus,
+    connectionReady,
+    awaitingPersist: runtimeSyncState === "awaiting_persist",
+    modeId: selectedModeId,
+    onHandBack: handleComposerHandBack,
+    onQueueEdit: handleQueueEdit,
+  })
+  const handleSteer = followUp.handleSteer
+  const followUpQueueSteer = followUp.handleQueueSteer
+  // The row stays queued for the whole round-trip; the local flush must not
+  // hand it out meanwhile (see `queueSteerInFlight`).
+  const handleQueueSteer = useCallback(
+    async (id: string) => {
+      setQueueSteerInFlight(true)
+      try {
+        await followUpQueueSteer(id)
+      } finally {
+        setQueueSteerInFlight(false)
+      }
+    },
+    [followUpQueueSteer]
+  )
+
   const messageListNode = (
     <GoalControlProvider value={goalControlValue}>
       <ActivityLiveProvider value={activityLive}>
         <MessageListView
           conversationId={effectiveConversationId}
+          userTurnFooter={followUp.userTurnFooter}
+          isRestartTurn={followUp.isRestartTurn}
+          threadTail={followUp.threadTail}
           imageRoot={workingDirForConnection ?? null}
           agentType={selectedAgent}
           availableCommands={connectionCommands}
@@ -2251,99 +2294,6 @@ const ConversationTabView = memo(function ConversationTabView({
         />
       </ActivityLiveProvider>
     </GoalControlProvider>
-  )
-
-  // Live-feedback bar gating + the "agent never read your note" resend fallback.
-  // Enqueue rather than `handleSend`: this fallback fires on a turn-end race
-  // where the backend already reports no active turn but the frontend may still
-  // read `connStatus === "prompting"`, and `handleSend` no-ops unless
-  // "connected" — which would silently drop the note. The message queue holds it
-  // (visible above the composer) and auto-flushes when the turn completes, so
-  // the user's note is never lost.
-  const feedbackEnabled = useFeedbackEnabled()
-  const resendFeedbackAsPrompt = useCallback(
-    (text: string) => {
-      mqEnqueue(
-        { blocks: [{ type: "text", text }], displayText: text },
-        selectedModeId
-      )
-    },
-    [mqEnqueue, selectedModeId]
-  )
-  const feedback = useSessionFeedback({
-    connectionId: conn.connectionId,
-    connStatus,
-    enabled: feedbackEnabled,
-    // Notes the transcript adopted as mid-turn user turns show as messages,
-    // not as strips above the composer.
-    steeredMessageIds: conn.steeredMessageIds,
-    onResendAsPrompt: resendFeedbackAsPrompt,
-  })
-  // Composer mid-turn send, over whichever live-feedback channel this session
-  // has (native push or the pull tool). Rethrows — MessageInput owns the
-  // enqueue fallback and draft-preservation policy, so this wrapper must not
-  // swallow the turn-end race the way `submit` does. `blocks` rides along when
-  // the draft carries attachments (images steer natively; the pull path
-  // rejects them into the composer's queue fallback); `text` stays the
-  // recorded/display form.
-  const feedbackSteer = feedback.steer
-  const handleSteer = useCallback(
-    async (text: string, blocks?: PromptInputBlock[]) => {
-      await feedbackSteer(text, blocks)
-    },
-    [feedbackSteer]
-  )
-
-  // Click-to-insert for a queued row: send THAT item into the running turn
-  // over the same live-feedback channel the composer's mid-turn dropdown uses.
-  // The block/text encoding is the shared `buildSteerPayload` — one call site,
-  // no policy here beyond the row's own lifecycle: success removes the row;
-  // a turn-end race prioritizes the row for the existing queue auto-flush.
-  // Failures keep the row available for retry.
-  const handleQueueSteer = useCallback(
-    async (id: string) => {
-      const item = msgQueue.find((m) => m.id === id)
-      if (!item) return
-      const payload = buildSteerPayload(item.draft)
-      // Nothing sendable in this row (no text, and no display text standing in
-      // for its attachments). Leave it alone: removing it would delete queued
-      // content — including whatever blocks it carries — on a button that
-      // promises to SEND it.
-      if (!payload) return
-      // Set before the first await so the flush effect above is already held
-      // when the turn-end edge lands mid-round-trip.
-      setQueueSteerInFlight(true)
-      try {
-        const delivered = await deliverQueuedSteer(
-          () => feedbackSteer(payload.text, payload.blocks),
-          () => mqMoveToFront(id)
-        )
-        // Not delivered means the turn ended first, so the row goes out as the
-        // next turn instead; say so, as the composer's steer does.
-        if (delivered) mqRemove(id)
-        else toast.info(tCmp("steerQueuedInstead"))
-      } catch (err: unknown) {
-        notify({
-          level: "error",
-          key: `steer-failed:${tabId}`,
-          title: tCmp(
-            feedback.channel === "pull" ? "steerNoteFailed" : "steerFailed"
-          ),
-          description: toErrorMessage(err),
-        })
-      } finally {
-        setQueueSteerInFlight(false)
-      }
-    },
-    [
-      msgQueue,
-      feedbackSteer,
-      mqRemove,
-      feedback.channel,
-      tabId,
-      tCmp,
-      mqMoveToFront,
-    ]
   )
 
   return (
@@ -2403,35 +2353,18 @@ const ConversationTabView = memo(function ConversationTabView({
       injectContent={composerInject}
       onInjectConsumed={handleComposerInjectConsumed}
       composerBanner={acpLoadErrorBanner}
-      feedbackList={
-        feedback.showList ? (
-          <FeedbackNotesDisplay
-            notes={feedback.notes}
-            // Past the turn the list is the only place an unread note still
-            // exists on screen, so it carries its own recovery actions rather
-            // than disappearing with the turn that never read it.
-            expired={feedback.notesExpired}
-            onResend={feedback.resendNote}
-            onDismiss={feedback.dismissNote}
-          />
-        ) : null
-      }
-      onAddFeedback={feedback.featureEnabled ? feedback.openDialog : undefined}
-      feedbackAddDisabled={!feedback.canSubmit}
+      feedbackList={followUp.heldBar}
       isActive={isActive}
       showActiveFlow={showActiveFlow}
-      queue={msgQueue}
+      queue={followUp.queueAboveComposer ? msgQueue : undefined}
       onEnqueue={mqEnqueue}
       onQueueReorder={mqReorder}
       onQueueEdit={handleQueueEdit}
       onQueueDelete={mqRemove}
       onQueueSteer={
-        // Same gate as the composer's mid-turn send, plus a turn actually in
-        // flight: a queued row can only be inserted into a RUNNING turn —
-        // idle sessions have the queue's own auto-flush for that.
-        feedback.featureEnabled &&
-        feedback.steerAvailable &&
-        connStatus === "prompting"
+        // A queued row can only be inserted into a RUNNING turn — idle
+        // sessions have the queue's own sending for that.
+        mqServerMode && connStatus === "prompting"
           ? handleQueueSteer
           : undefined
       }
@@ -2442,17 +2375,12 @@ const ConversationTabView = memo(function ConversationTabView({
       onSaveQueueEdit={handleSaveQueueEdit}
       onCancelQueueEdit={handleQueueCancelEdit}
       onSteer={
-        // Any working delivery channel, not just the native push: the pull
-        // tool records a waiting note the agent reads on its next check, and
-        // `steerChannel` swaps the copy so pull sessions never promise an
-        // instant insert. Sessions with NEITHER channel keep the historical
-        // prompting branch (Stop button alone, Enter queues). The prompting
-        // scope itself is enforced where the button renders.
-        feedback.featureEnabled && feedback.steerAvailable
-          ? handleSteer
-          : undefined
+        // keh4l build: every agent can be steered — the server picks native,
+        // restart or queue. The prompting scope is enforced where the button
+        // renders.
+        conn.connectionId ? handleSteer : undefined
       }
-      steerChannel={feedback.channel}
+      steerChannel="native"
     >
       {isWelcomeMode ? (
         // Same overlay scrollbar as the sidebar / file lists (os-theme-codeg)
@@ -2551,10 +2479,6 @@ const ConversationTabView = memo(function ConversationTabView({
                 isEditingQueueItem={mqEditingItemId != null}
                 onSaveQueueEdit={handleSaveQueueEdit}
                 onCancelQueueEdit={handleQueueCancelEdit}
-                onAddFeedback={
-                  feedback.featureEnabled ? feedback.openDialog : undefined
-                }
-                feedbackAddDisabled={!feedback.canSubmit}
                 injectContent={composerInject}
                 onInjectConsumed={handleComposerInjectConsumed}
                 flush
@@ -2612,17 +2536,6 @@ const ConversationTabView = memo(function ConversationTabView({
       ) : (
         messageListNode
       )}
-      <FeedbackDialog
-        open={feedback.dialogOpen}
-        onOpenChange={(open) => {
-          if (open) feedback.openDialog()
-          else feedback.closeDialog()
-        }}
-        onSubmit={feedback.submit}
-        submitting={feedback.submitting}
-        agentName={getAgentLabel(selectedAgent)}
-        channel={feedback.channel}
-      />
       <AgentDiagnosticsDialog
         open={composerDiagnosticsOpen}
         onOpenChange={setComposerDiagnosticsOpen}

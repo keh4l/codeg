@@ -148,6 +148,10 @@ const TOOL_ROWS = [
   id: string
 }>
 
+/** keh4l build: no "实时反馈" switch — the pull tool it gated is gone; every
+ *  agent is steered instead (`acp::follow_up`). */
+const SHOWN_TOOL_ROWS = TOOL_ROWS.filter((row) => row.key !== "feedback")
+
 /** Slug → the form field it edits, for resolving a `requires` relation (which
  *  is expressed in slugs, because the backend sends it that way) back to a
  *  row of this form. */
@@ -593,7 +597,7 @@ export function AgentToolsSettingsSection() {
           agent reaches: the conversation, the app state behind it, or the page
           on screen next to it. */}
       <SettingCard>
-        {TOOL_ROWS.map((row) => {
+        {SHOWN_TOOL_ROWS.map((row) => {
           const meta = AGENT_TOOL_GROUPS[row.slug]
           if (!meta) return null
           // A row that only means anything while another is on: shown off and

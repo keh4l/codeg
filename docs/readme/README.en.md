@@ -58,6 +58,9 @@
     <td width="50%" valign="top">🌿 <strong>Sub-agents work in their own worktree</strong><br/>The main agent can have a sub-agent change code in a separate git worktree and branch, so several working side by side stay out of each other's way; each delegation can set its own model and reasoning effort, and a sub-agent that has finished can be given more work in the same session.</td>
   </tr>
   <tr>
+    <td colspan="2" valign="top">🗣️ <strong>Steer while the agent works</strong><br/>While the agent replies, the send key puts your message into the running turn, and the agent reads it after the step at hand; hold ⌘/Ctrl to queue it for after the turn instead. Every agent can be steered. Queued messages live on the server, so they survive a reload and follow you to another device; a stop or an error pauses the queue until you say go.</td>
+  </tr>
+  <tr>
     <td colspan="2" valign="top">🔄 <strong>Follows upstream</strong><br/>Upstream is merged in regularly; anything not listed here works exactly as in the official build. The built-in Kiro CLI, the first thing this build added, has been part of the official build since 0.36.0. Claude Code thinking summaries use the official build's switch from 0.41.3-1 on: “Show Claude's thinking summaries” in Settings → Agents → Claude Code, off by default. From 0.46.0-1 the suggested next message is filled in the official way: Tab on a computer, the lightbulb button beside Send on a phone.</td>
   </tr>
 </table>
@@ -220,7 +223,7 @@
 - In the official build, once the main agent has sent a sub-agent off, the only way it learns the result is to check with `get_delegation_status` itself: either blocking until it arrives or checking every so often. Once it ends its turn, nobody tells it when the sub-agent finishes; it waits until you send another message reminding it to check.
 - This build hands the result back to the main agent when a sub-agent finishes (or stops on an error partway):
   - Main agent idle: after 2 seconds (results that arrive together are combined into one), a new turn starts by itself and the main agent carries on from the results;
-  - Main agent in the middle of a turn: Claude Code and Codex get the results within that turn; other agents get them in a new turn that starts by itself once that one ends;
+  - Main agent in the middle of a turn: Claude Code, Codex, Grok, Kiro and Antigravity get the results within that turn; other agents get them in a new turn that starts by itself once that one ends;
   - You are just sending a message: the results go along with it.
 - The conversation shows a “Subtask results handed back” row naming each sub-agent, whether it finished or failed, and how long it took; expand it for a summary of each result and “Open session”. Results that went with your message show under it as “N subtask results attached”. This row is codeg writing to the main agent: it isn't passed on to chat channels as if you had said it, and it isn't used to name the session.
 - Results the main agent already got itself with `get_delegation_status` or `cancel_delegation` aren't sent again; sub-tasks canceled by the main agent or by you aren't sent.
@@ -240,6 +243,24 @@
 - A new tool, `continue_delegation`, gives a sub-task that has ended (finished, failed or canceled) more work in its original sub-session, keeping its context, working folder, model and options; the result comes back to the main agent the same way. Each follow-up is a new round with a new task_id. How it differs from `resume_delegation`: resume picks up work that was cut off partway, continue asks for more once it's done.
 - The delegation row gets model, branch and “Round N” tags after its title; expand it to see the model, the options and the worktree's state (the commit it was created from, how many files changed). “Open” opens the worktree in the workspace, where you review the changes, commit and merge, and “Remove worktree” removes it, its branch too if you like.
 - Worktrees aren't removed automatically. When you delete a sub-session that used one, the confirmation adds “Also remove its worktree”; if it has uncommitted changes, that box is unticked by default and says how many.
+
+</details>
+
+<details>
+<summary><strong>Steer while the agent works</strong>: details</summary>
+<br/>
+
+- In the official build, Enter queues while the agent replies; steering hides behind the small arrow next to Send and goes straight into the turn only for Claude Code and Codex. Other agents need “Live Feedback” switched on in settings and only get a note they may read when they check. The queue lives in the current browser and is gone on reload, and after a stop the next queued message goes out at once.
+- This build follows T3 Code:
+  - The send button: Stop while the composer is empty; with something in it, the icon says what a click does — steer (↱) or queue (list +). Holding ⌘/Ctrl flips the icon, and a ⌘/Ctrl-click does the other one; on a phone, a long press on Send picks the other one for that message.
+  - Steering is the default; “Sending while the agent replies” in Settings → General → Tabs & input switches it to queueing, on this device only.
+  - Keys (changeable in Settings → Shortcuts): Enter sends the default way; ⌘/Ctrl+Enter the other way; ⌘/Ctrl+Shift+Enter steers the oldest queued message in; Alt+↑ with the caret at the start of the composer edits the latest queued one.
+  - Slash commands always queue, and so does a steer while the agent is compacting its context.
+- How a steer arrives: Claude Code, Codex, Grok, Kiro (text only) and Antigravity 1.5.0+ take it into the running turn and read it after the step at hand. Any other agent has its turn stopped and started again in the same session with your message: the reply that was cut off folds into “Attempt cut off by a steer”, the step in progress is lost, and the sub-agents it delegated keep running. Grok without native steering only queues (its cancel takes the running tool down too).
+- A steered message is marked “Steer”, and “Steer · waiting to be read” while it is on its way; the marks survive a reload.
+- The queue lives on the server: every window and device sees the same one, and it survives reloads and restarts. On a computer it shows as dashed bubbles at the end of the conversation, on a phone above the composer; each message can be sent now (into the running turn, or as a new turn when idle), edited, removed and dragged into order. The server sends the next one when a turn ends normally, even with every browser closed, and it carries any sub-task results not yet delivered.
+- A stop, a turn that ends in an error (rate limit, network…) or a server restart pauses the queue: “Queue paused” with “Continue” shows above the composer; Continue, Enter in an empty composer or a new message lets it go. A steer still on its way when you stop is reported as not delivered, with a button to put it back in the composer.
+- The official build's “Live Feedback” notes are gone: no switch in settings, and agents no longer get the `check_user_feedback` tool.
 
 </details>
 

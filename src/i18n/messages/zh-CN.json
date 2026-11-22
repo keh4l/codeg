@@ -587,6 +587,18 @@
       "translate_input": {
         "title": "翻译消息",
         "description": "把输入框里的内容翻译成消息翻译的目标语言"
+      },
+      "follow_up_alternate_send": {
+        "title": "用另一种方式发送",
+        "description": "智能体回复时：发送键插话就排队，发送键排队就插话"
+      },
+      "follow_up_steer_oldest": {
+        "title": "把最早排队的消息插进去",
+        "description": "把排在最前面的消息插进正在进行的这一轮，输入框里的内容不动"
+      },
+      "follow_up_edit_latest": {
+        "title": "编辑最近排队的消息",
+        "description": "光标在输入框开头时，把最后一条排队的消息载入输入框编辑"
       }
     }
   },
@@ -3626,7 +3638,8 @@
         "deleteItem": "删除",
         "steerItemNow": "插入当前回合",
         "steerItemAsNote": "作为留言，供下次检查时读取",
-        "waitingForConnection": "正在连接，就绪后自动发送"
+        "waitingForConnection": "正在连接，就绪后自动发送",
+        "serverError": "队列同步失败"
       },
       "welcomeInputPanel": {
         "agentsSettingsPath": "设置 > Agents",
@@ -10341,5 +10354,41 @@
   "DelegationWorktree": {
     "deleteWithConversation": "同时删除它的 worktree（{path}）",
     "deleteWithConversationUncommitted": "同时删除它的 worktree（{path}）——里面有 {count} 处未提交的改动"
+  },
+  "FollowUp": {
+    "interruptedAttempt": "被插话打断的尝试",
+    "steered": "插话",
+    "steerPending": "插话 · 等待读取",
+    "dragToReorder": "拖动排序",
+    "queuedLabel": "待发送 {position}",
+    "queuedHeldLabel": "已暂停 · 待发送 {position}",
+    "editingInComposer": "正在输入框里编辑",
+    "sendNow": "立即发送",
+    "sendNowIntoTurn": "插进正在进行的这一轮",
+    "sendNowAsTurn": "用这条消息开始新一轮",
+    "edit": "编辑",
+    "remove": "删除",
+    "queueAria": "{count} 条待发送的消息",
+    "showFewer": "收起",
+    "showMore": "再显示 {count} 条",
+    "heldBar": "队列已暂停 · {count} 条待发送",
+    "resume": "继续",
+    "steerQueued": "这个智能体现在插不了话，已排到这一轮之后",
+    "steerUndelivered": "插话没送达：「{text}」",
+    "putBack": "放回输入框",
+    "sendFailed": "排队的消息没发出去",
+    "queueOnlyHint": "斜杠命令只能排队",
+    "tooltipSteerDefault": "点击插话，{mod} 点击排队",
+    "tooltipQueueDefault": "点击排队，{mod} 点击插话",
+    "actionSteer": "插话",
+    "actionQueue": "排队",
+    "default": "默认"
+  },
+  "FollowUpSettings": {
+    "title": "智能体回复时发送消息",
+    "description": "智能体正在回复时，按发送键是把消息插进正在进行的这一轮，还是排队等这一轮结束再发。另一种随时可用：按住 {mod} 点发送，或按 {mod}+Enter。只对这台设备生效。",
+    "steer": "插话",
+    "queue": "排队",
+    "note": "Claude Code、Codex、Grok、Kiro、Antigravity 会把消息插进正在进行的这一轮，做完手上这一步就读到。其它智能体会先停下这一轮，再带着你的话重新开始，被打断的那一步会丢掉；想让它们先做完，就选「排队」。"
   }
 }

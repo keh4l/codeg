@@ -1418,6 +1418,20 @@ mod tauri_app {
                             ),
                         },
                     ));
+                    // keh4l build: steer or queue while the agent replies
+                    // (`acp::follow_up`).
+                    tauri::async_runtime::spawn(crate::acp::follow_up::start(
+                        crate::acp::follow_up::Runtime {
+                            db: std::sync::Arc::new(db::AppDatabase {
+                                conn: db_conn.clone(),
+                            }),
+                            manager: std::sync::Arc::new(cm.clone_ref()),
+                            bus: bus.clone(),
+                            emitter: crate::web::event_bridge::EventEmitter::from_app(
+                                app.handle(),
+                            ),
+                        },
+                    ));
                     tauri::async_runtime::spawn(crate::acp::lifecycle_subscriber_task(
                         db_conn,
                         cm,
@@ -1942,6 +1956,16 @@ mod tauri_app {
                 crate::commands::delegation_push::get_delegation_push_settings,
                 crate::commands::delegation_push::set_delegation_push_settings,
                 crate::commands::delegation_push::stop_delegation_tasks,
+            crate::commands::follow_up::follow_up_steer,
+            crate::commands::follow_up::follow_up_enqueue,
+            crate::commands::follow_up::follow_up_list,
+            crate::commands::follow_up::follow_up_update,
+            crate::commands::follow_up::follow_up_remove,
+            crate::commands::follow_up::follow_up_reorder,
+            crate::commands::follow_up::follow_up_resume,
+            crate::commands::follow_up::follow_up_kick,
+            crate::commands::follow_up::follow_up_send_now,
+            crate::commands::follow_up::follow_up_steers,
                 crate::commands::delegation_worktree::get_delegation_worktree,
                 crate::commands::delegation_worktree::delegation_worktree_for_conversation,
                 crate::commands::delegation_worktree::remove_delegation_worktree,

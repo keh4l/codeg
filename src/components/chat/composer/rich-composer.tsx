@@ -248,6 +248,13 @@ export interface RichComposerProps {
    * editor rebuild.
    */
   promptSuggestion?: string | null
+  /**
+   * keh4l build: the steer/queue keys (alternate send, steer the oldest queued
+   * message, edit the latest one). Called after the menus and history keys,
+   * before the submit/newline bindings; `atStart` is a collapsed caret at the
+   * document's start. Return true to consume the key.
+   */
+  onFollowUpKeyDown?: (event: KeyboardEvent, atStart: boolean) => boolean
 }
 
 /**
@@ -287,6 +294,7 @@ export const RichComposer = forwardRef<RichComposerHandle, RichComposerProps>(
       translateShortcut,
       onTranslate,
       promptSuggestion,
+      onFollowUpKeyDown,
     },
     ref
   ) {
@@ -316,6 +324,7 @@ export const RichComposer = forwardRef<RichComposerHandle, RichComposerProps>(
     const translateShortcutRef = useRef(translateShortcut)
     const onTranslateRef = useRef(onTranslate)
     const promptSuggestionRef = useRef(promptSuggestion)
+    const onFollowUpKeyDownRef = useRef(onFollowUpKeyDown)
     // The live editor, captured for command access inside editorProps handlers
     // (which are created before `editor` is assigned in this closure).
     const editorInstanceRef = useRef<Editor | null>(null)
@@ -340,6 +349,7 @@ export const RichComposer = forwardRef<RichComposerHandle, RichComposerProps>(
       translateShortcutRef.current = translateShortcut
       onTranslateRef.current = onTranslate
       promptSuggestionRef.current = promptSuggestion
+      onFollowUpKeyDownRef.current = onFollowUpKeyDown
     })
 
     // ── Unified `@` mention panel state bridge ──
@@ -496,6 +506,12 @@ export const RichComposer = forwardRef<RichComposerHandle, RichComposerProps>(
                 event
               )
             }
+          }
+          if (onFollowUpKeyDownRef.current) {
+            const { selection, doc } = view.state
+            const atStart =
+              selection.empty && selection.from === Selection.atStart(doc).from
+            if (onFollowUpKeyDownRef.current(event, atStart)) return true
           }
           // Paste without formatting: Ctrl/⌘+Shift+V routes to the host, which
           // owns the clipboard read. Consume the key (suppressing the browser's

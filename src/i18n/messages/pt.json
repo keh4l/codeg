@@ -587,6 +587,18 @@
       "translate_input": {
         "title": "Traduzir mensagem",
         "description": "Traduz a caixa de mensagem para o idioma de tradução de mensagens"
+      },
+      "follow_up_alternate_send": {
+        "title": "Enviar da outra forma",
+        "description": "Enquanto o agente responde: põe na fila se enviar intervém, intervém se enviar põe na fila"
+      },
+      "follow_up_steer_oldest": {
+        "title": "Intervir com a mensagem mais antiga da fila",
+        "description": "Envia a primeira mensagem da fila para o turno em andamento; a caixa de texto fica como está"
+      },
+      "follow_up_edit_latest": {
+        "title": "Editar a última mensagem da fila",
+        "description": "Com o cursor no início da caixa de texto, carrega nela a última mensagem da fila"
       }
     }
   },
@@ -3626,7 +3638,8 @@
         "deleteItem": "Remover",
         "steerItemNow": "Inserir na vez atual",
         "steerItemAsNote": "Enviar como nota para a próxima verificação",
-        "waitingForConnection": "Conectando… será enviado automaticamente quando estiver pronto"
+        "waitingForConnection": "Conectando… será enviado automaticamente quando estiver pronto",
+        "serverError": "Não foi possível atualizar a fila"
       },
       "welcomeInputPanel": {
         "agentsSettingsPath": "Configurações > Agentes",
@@ -10341,5 +10354,41 @@
   "DelegationWorktree": {
     "deleteWithConversation": "Também remover o worktree ({path})",
     "deleteWithConversationUncommitted": "Também remover o worktree ({path}) — tem {count} alteração(ões) sem commit"
+  },
+  "FollowUp": {
+    "interruptedAttempt": "Tentativa interrompida por uma intervenção",
+    "steered": "Intervenção",
+    "steerPending": "Intervenção · aguardando leitura",
+    "dragToReorder": "Arraste para reordenar",
+    "queuedLabel": "Na fila {position}",
+    "queuedHeldLabel": "Pausado · na fila {position}",
+    "editingInComposer": "Editando na caixa de texto",
+    "sendNow": "Enviar agora",
+    "sendNowIntoTurn": "Enviar para o turno em andamento",
+    "sendNowAsTurn": "Começar um turno com esta mensagem",
+    "edit": "Editar",
+    "remove": "Remover",
+    "queueAria": "{count, plural, one {# mensagem na fila} other {# mensagens na fila}}",
+    "showFewer": "Mostrar menos",
+    "showMore": "Mostrar mais {count}",
+    "heldBar": "Fila pausada · {count, plural, one {# mensagem aguardando} other {# mensagens aguardando}}",
+    "resume": "Continuar",
+    "steerQueued": "Este agente não pode receber mensagens agora; ela foi colocada na fila para depois deste turno",
+    "steerUndelivered": "A intervenção não foi entregue: “{text}”",
+    "putBack": "Devolver à caixa de texto",
+    "sendFailed": "Não foi possível enviar a mensagem da fila",
+    "queueOnlyHint": "Comandos de barra sempre vão para a fila",
+    "tooltipSteerDefault": "Clique para intervir, {mod}+clique para pôr na fila",
+    "tooltipQueueDefault": "Clique para pôr na fila, {mod}+clique para intervir",
+    "actionSteer": "Intervir neste turno",
+    "actionQueue": "Pôr na fila para depois deste turno",
+    "default": "Padrão"
+  },
+  "FollowUpSettings": {
+    "title": "Enviar enquanto o agente responde",
+    "description": "Se a tecla de enviar coloca a mensagem no turno em andamento ou a põe na fila para depois. A outra opção está sempre disponível: {mod}+clique em enviar, ou {mod}+Enter. Vale só para este dispositivo.",
+    "steer": "Intervir",
+    "queue": "Fila",
+    "note": "Claude Code, Codex, Grok, Kiro e Antigravity recebem a mensagem no turno em andamento e a leem depois da etapa atual. Os outros agentes param o turno e recomeçam com a sua mensagem, descartando a etapa interrompida; escolha Fila se preferir que terminem antes."
   }
 }

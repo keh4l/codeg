@@ -37,6 +37,7 @@ pub mod skills;
 pub mod image_gen;
 // keh4l build
 pub mod delegation_push;
+pub mod follow_up;
 pub mod delegation_worktree;
 pub mod logging;
 pub mod mcp;

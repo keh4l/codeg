@@ -587,6 +587,18 @@
       "translate_input": {
         "title": "翻譯訊息",
         "description": "把輸入框裡的內容翻譯成訊息翻譯的目標語言"
+      },
+      "follow_up_alternate_send": {
+        "title": "用另一種方式傳送",
+        "description": "智慧體回覆時：傳送鍵插話就排隊，傳送鍵排隊就插話"
+      },
+      "follow_up_steer_oldest": {
+        "title": "把最早排隊的訊息插進去",
+        "description": "把排在最前面的訊息插進正在進行的這一輪，輸入框裡的內容不動"
+      },
+      "follow_up_edit_latest": {
+        "title": "編輯最近排隊的訊息",
+        "description": "游標在輸入框開頭時，把最後一則排隊的訊息載入輸入框編輯"
       }
     }
   },
@@ -3626,7 +3638,8 @@
         "deleteItem": "刪除",
         "steerItemNow": "插入目前回合",
         "steerItemAsNote": "作為留言，供下次檢查時讀取",
-        "waitingForConnection": "正在連線，就緒後自動傳送"
+        "waitingForConnection": "正在連線，就緒後自動傳送",
+        "serverError": "佇列同步失敗"
       },
       "welcomeInputPanel": {
         "agentsSettingsPath": "設定 > Agents",
@@ -10341,5 +10354,41 @@
   "DelegationWorktree": {
     "deleteWithConversation": "同時刪除它的 worktree（{path}）",
     "deleteWithConversationUncommitted": "同時刪除它的 worktree（{path}）——裡面有 {count} 處未提交的變更"
+  },
+  "FollowUp": {
+    "interruptedAttempt": "被插話打斷的嘗試",
+    "steered": "插話",
+    "steerPending": "插話 · 等待讀取",
+    "dragToReorder": "拖動排序",
+    "queuedLabel": "待傳送 {position}",
+    "queuedHeldLabel": "已暫停 · 待傳送 {position}",
+    "editingInComposer": "正在輸入框裡編輯",
+    "sendNow": "立即傳送",
+    "sendNowIntoTurn": "插進正在進行的這一輪",
+    "sendNowAsTurn": "用這則訊息開始新一輪",
+    "edit": "編輯",
+    "remove": "刪除",
+    "queueAria": "{count} 則待傳送的訊息",
+    "showFewer": "收起",
+    "showMore": "再顯示 {count} 則",
+    "heldBar": "佇列已暫停 · {count} 則待傳送",
+    "resume": "繼續",
+    "steerQueued": "這個智慧體現在插不了話，已排到這一輪之後",
+    "steerUndelivered": "插話沒送達：「{text}」",
+    "putBack": "放回輸入框",
+    "sendFailed": "排隊的訊息沒發出去",
+    "queueOnlyHint": "斜線命令只能排隊",
+    "tooltipSteerDefault": "點擊插話，{mod} 點擊排隊",
+    "tooltipQueueDefault": "點擊排隊，{mod} 點擊插話",
+    "actionSteer": "插話",
+    "actionQueue": "排隊",
+    "default": "預設"
+  },
+  "FollowUpSettings": {
+    "title": "智慧體回覆時傳送訊息",
+    "description": "智慧體正在回覆時，按傳送鍵是把訊息插進正在進行的這一輪，還是排隊等這一輪結束再發。另一種隨時可用：按住 {mod} 點傳送，或按 {mod}+Enter。只對這台裝置生效。",
+    "steer": "插話",
+    "queue": "排隊",
+    "note": "Claude Code、Codex、Grok、Kiro、Antigravity 會把訊息插進正在進行的這一輪，做完手上這一步就讀到。其他智慧體會先停下這一輪，再帶著你的話重新開始，被打斷的那一步會丟掉；想讓它們先做完，就選「排隊」。"
   }
 }

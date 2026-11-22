@@ -58,6 +58,9 @@
     <td width="50%" valign="top">🌿 <strong>Les sous-agents travaillent dans leur propre worktree</strong><br/>L'agent principal peut faire modifier le code par un sous-agent dans un worktree et une branche git à part, pour que plusieurs sous-agents en parallèle ne se gênent pas ; chaque délégation peut choisir son modèle et son niveau de raisonnement, et un sous-agent qui a fini peut recevoir du travail en plus dans la même session.</td>
   </tr>
   <tr>
+    <td colspan="2" valign="top">🗣️ <strong>Intervenir à tout moment</strong><br/>Pendant que l'agent répond, la touche d'envoi glisse votre message dans le tour en cours, et l'agent le lit après l'étape en cours ; avec ⌘/Ctrl, il est mis en attente pour après le tour. On peut intervenir avec tous les agents. La file vit sur le serveur : elle survit à un rechargement et vous suit sur un autre appareil ; un arrêt ou une erreur la met en pause jusqu'à ce que vous repreniez.</td>
+  </tr>
+  <tr>
     <td colspan="2" valign="top">🔄 <strong>Au plus près de l'original</strong><br/>Le projet d'origine est fusionné régulièrement ; ce qui n'est pas listé ici fonctionne comme dans la version officielle. Kiro CLI intégré, le premier ajout de cette version, fait partie de la version officielle depuis la 0.36.0. Les résumés de réflexion de Claude Code passent dès la 0.41.3-1 par l'interrupteur de la version officielle : « Afficher les résumés de réflexion de Claude » dans Réglages → Agents IA → Claude Code, désactivé par défaut. Depuis la 0.46.0-1, le message suivant suggéré se remplit comme dans la version officielle : Tab sur ordinateur, bouton ampoule à côté d’Envoyer sur téléphone.</td>
   </tr>
 </table>
@@ -220,7 +223,7 @@
 - Dans la version officielle, une fois un sous-agent envoyé, l'agent principal ne connaît le résultat qu'en allant le chercher lui-même avec `get_delegation_status` : soit il attend en bloquant, soit il vérifie de temps en temps. Dès qu'il termine son tour, personne ne le prévient quand le sous-agent a fini ; il faut que vous lui envoyiez un nouveau message pour qu'il pense à vérifier.
 - Cette version renvoie le résultat à l'agent principal quand un sous-agent a fini (ou s'arrête en route sur une erreur) :
   - Agent principal libre : au bout de 2 secondes (ceux qui finissent en même temps sont regroupés), un nouveau tour démarre tout seul et l'agent principal poursuit à partir des résultats ;
-  - Agent principal en plein tour : Claude Code et Codex les reçoivent directement dans ce tour, les autres agents dans un nouveau tour qui démarre tout seul une fois celui-ci terminé ;
+  - Agent principal en plein tour : Claude Code, Codex, Grok, Kiro et Antigravity les reçoivent directement dans ce tour, les autres agents dans un nouveau tour qui démarre tout seul une fois celui-ci terminé ;
   - Vous êtes justement en train d'envoyer un message : les résultats partent avec.
 - La conversation affiche une ligne « Résultats des sous-tâches rendus » qui indique chaque sous-agent, s'il a fini ou échoué et combien de temps il a pris ; dépliée, elle montre un résumé de chaque résultat et « Ouvrir la session ». Ceux qui sont partis avec votre message s'affichent dessous sous la forme « N résultats de sous-tâches joints ». Cette ligne est envoyée par codeg à l'agent principal : elle n'est pas relayée aux canaux de chat comme si vous l'aviez dite, et ne sert pas à nommer la session.
 - Les résultats que l'agent principal a déjà récupérés lui-même avec `get_delegation_status` ou `cancel_delegation` ne sont pas renvoyés ; les sous-tâches annulées par l'agent principal ou par vous ne sont pas envoyées.
@@ -240,6 +243,24 @@
 - Nouvel outil `continue_delegation` : donne du travail en plus à une sous-tâche terminée (achevée, échouée ou annulée), dans sa sous-session d'origine, en gardant le contexte, le dossier de travail, le modèle et les options ; le résultat revient lui aussi à l'agent principal. Chaque ajout compte comme un nouveau tour, avec un nouveau task_id. Partage des rôles avec `resume_delegation` : resume reprend un travail interrompu en route, continue en demande plus une fois qu'il est fini.
 - La ligne de la délégation porte après son titre des étiquettes pour le modèle, la branche et « Tour N » ; dépliée, elle montre le modèle, les options et l'état du worktree (le commit dont il part, le nombre de fichiers modifiés). « Ouvrir » ouvre le worktree dans l'espace de travail (relire les modifications, commiter et fusionner se font là), et « Supprimer le worktree » le supprime, branche comprise si vous le voulez.
 - Les worktrees ne sont pas supprimés automatiquement. Quand vous supprimez une sous-session qui en a utilisé un, la boîte de confirmation propose en plus « Supprimer aussi son worktree » ; s'il contient des modifications non commitées, la case est décochée par défaut et leur nombre est indiqué.
+
+</details>
+
+<details>
+<summary><strong>Intervenir à tout moment</strong> : détails</summary>
+<br/>
+
+- Dans la version officielle, Entrée met le message en attente pendant que l'agent répond ; l'intervention se cache derrière la petite flèche à côté d'Envoyer et n'entre directement dans le tour qu'avec Claude Code et Codex. Les autres agents demandent d'activer « Retour en direct » dans les réglages et ne reçoivent qu'une note qu'ils liront peut-être en la consultant. La file vit dans le navigateur courant et disparaît au rechargement, et après un arrêt le message suivant part aussitôt.
+- Cette version suit T3 Code :
+  - Le bouton d'envoi : Arrêter quand la zone de saisie est vide ; avec du contenu, l'icône indique ce que fait un clic — intervenir (↱) ou mettre en attente (liste +). En maintenant ⌘/Ctrl l'icône bascule, et ⌘/Ctrl-clic fait l'autre ; sur téléphone, un appui long sur Envoyer choisit l'autre pour ce message.
+  - Intervenir est le comportement par défaut ; « Envoyer pendant que l'agent répond » dans Réglages → Général → Onglets et saisie passe à la file d'attente, sur cet appareil seulement.
+  - Touches (modifiables dans Réglages → Raccourcis) : Entrée envoie de la façon par défaut ; ⌘/Ctrl+Entrée de l'autre ; ⌘/Ctrl+Maj+Entrée fait intervenir le plus ancien message en attente ; Alt+↑ avec le curseur au début de la zone de saisie modifie le dernier en attente.
+  - Les commandes slash sont toujours mises en attente, de même qu'une intervention pendant que l'agent compacte son contexte.
+- Comment arrive une intervention : Claude Code, Codex, Grok, Kiro (texte seul) et Antigravity 1.5.0+ la prennent dans le tour en cours et la lisent après l'étape en cours. Pour tout autre agent, le tour est arrêté puis relancé dans la même session avec votre message : la réponse coupée se replie en « Tentative interrompue par une intervention », l'étape en cours est perdue et les sous-agents délégués continuent. Grok sans intervention native ne fait que mettre en attente (son annulation arrête aussi l'outil en cours).
+- Un message d'intervention est marqué « Intervention », et « Intervention · en attente de lecture » tant qu'il est en route ; les marques survivent à un rechargement.
+- La file vit sur le serveur : toutes les fenêtres et tous les appareils voient la même, et elle survit aux rechargements et redémarrages. Sur ordinateur, elle s'affiche en bulles pointillées à la fin de la conversation, sur téléphone au-dessus de la zone de saisie ; chaque message peut être envoyé tout de suite (dans le tour en cours, ou comme nouveau tour au repos), modifié, retiré et réordonné par glisser. Le serveur envoie le suivant quand un tour se termine normalement, même si tous les navigateurs sont fermés, avec les résultats de sous-tâches pas encore livrés.
+- Un arrêt, un tour qui finit en erreur (limite de débit, réseau…) ou un redémarrage du serveur met la file en pause : « File en pause » et « Reprendre » s'affichent au-dessus de la zone de saisie ; Reprendre, Entrée dans une zone vide ou un nouveau message la relancent. Une intervention encore en route au moment de l'arrêt est signalée comme non transmise, avec un bouton pour la remettre dans la zone de saisie.
+- Le « Retour en direct » (notes) de la version officielle a disparu : plus d'interrupteur dans les réglages, et les agents ne reçoivent plus l'outil `check_user_feedback`.
 
 </details>
 

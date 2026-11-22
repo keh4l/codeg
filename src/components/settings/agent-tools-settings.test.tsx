@@ -81,7 +81,6 @@ const mockGetComputer = vi.mocked(getComputerToolsSettings)
 const mockSetComputer = vi.mocked(setComputerToolsEnabled)
 
 const LABELS = {
-  feedback: "Live Feedback",
   question: "Ask user question",
   sessionInfo: "Get session info",
   browserTools: "Read and drive the built-in browser",
@@ -104,12 +103,13 @@ function renderWithIntl() {
  * first render, showing the defaults and locked, so finding one says nothing
  * about the load, and a click on a locked one is dropped. Whether the load's
  * render beats a `findBy*` is down to event-loop timing, which a busy CI
- * runner loses now and then. The feedback switch hangs off no other switch,
- * so only the load or a save locks it.
+ * runner loses now and then. The question switch hangs off no other switch,
+ * so only the load or a save locks it. (keh4l build: the feedback switch this
+ * used to watch is gone.)
  */
 function loaded() {
   return waitFor(() =>
-    expect(screen.getByLabelText(LABELS.feedback)).toBeEnabled()
+    expect(screen.getByLabelText(LABELS.question)).toBeEnabled()
   )
 }
 
@@ -191,10 +191,8 @@ describe("AgentToolsSettingsSection", () => {
     renderWithIntl()
     await loaded()
 
-    expect(screen.getByLabelText(LABELS.feedback)).toHaveAttribute(
-      "data-state",
-      "checked"
-    )
+    // keh4l build: a stored feedback flag shows nowhere.
+    expect(screen.queryByLabelText("Live Feedback")).toBeNull()
     expect(screen.getByLabelText(LABELS.question)).toHaveAttribute(
       "data-state",
       "checked"
@@ -313,13 +311,12 @@ describe("AgentToolsSettingsSection", () => {
     )
   })
 
-  it("writes both create-from-chat flags together and primes the feedback cache", async () => {
+  it("writes both create-from-chat flags together", async () => {
     primeBackend()
 
     renderWithIntl()
     await loaded()
 
-    fireEvent.click(screen.getByLabelText(LABELS.feedback))
     fireEvent.click(screen.getByLabelText(LABELS.automations))
     fireEvent.click(screen.getByRole("button", { name: "Save" }))
 
@@ -329,9 +326,9 @@ describe("AgentToolsSettingsSection", () => {
         work_tasks_enabled: false,
       })
     })
-    expect(mockSetFeedback).toHaveBeenCalledWith({ enabled: true })
-    // Open conversations show/hide the feedback bar off this cached flag.
-    expect(mockPrime).toHaveBeenCalledWith(true)
+    // keh4l build: there is no feedback switch to write.
+    expect(mockSetFeedback).not.toHaveBeenCalled()
+    expect(mockPrime).not.toHaveBeenCalled()
   })
 
   /** The status-bar codeg-mcp popover writes these same two flags one key at a
@@ -339,11 +336,12 @@ describe("AgentToolsSettingsSection", () => {
    * open across such a write must adopt the new value for the switch the user
    * never touched — otherwise saving the other one reverts it. */
   it("adopts a remote create-from-chat write instead of reverting it on save", async () => {
-    primeBackend({ feedback: true })
+    primeBackend({ sessionInfo: false })
     renderWithIntl()
     await waitFor(() =>
-      expect(screen.getByLabelText(LABELS.feedback)).toBeChecked()
+      expect(screen.getByLabelText(LABELS.sessionInfo)).not.toBeChecked()
     )
+    await loaded()
 
     // Elsewhere (the popover), automations is switched on.
     act(() =>
@@ -371,13 +369,14 @@ describe("AgentToolsSettingsSection", () => {
   /** A switch the user already moved must not be yanked out from under them by
    * a remote write; their pending edit still wins on save. */
   it("keeps a pending local edit when a remote write lands", async () => {
-    // `feedback: true` differs from the render-time default, so its switch
-    // flipping on is the signal that the initial load has settled.
-    primeBackend({ feedback: true })
+    // `sessionInfo: false` differs from the render-time default, so its
+    // switch flipping off is the signal that the initial load has settled.
+    primeBackend({ sessionInfo: false })
     renderWithIntl()
     await waitFor(() =>
-      expect(screen.getByLabelText(LABELS.feedback)).toBeChecked()
+      expect(screen.getByLabelText(LABELS.sessionInfo)).not.toBeChecked()
     )
+    await loaded()
 
     fireEvent.click(screen.getByLabelText(LABELS.automations))
     expect(screen.getByLabelText(LABELS.automations)).toBeChecked()
@@ -493,14 +492,14 @@ describe("AgentToolsSettingsSection", () => {
   })
 
   it("reports a failed group without blanking the rest, and won't write it back", async () => {
-    primeBackend({ feedback: true })
+    primeBackend({ workTasks: true })
     mockGetQuestion.mockRejectedValue(new Error("boom"))
 
     renderWithIntl()
 
     expect(await screen.findByRole("alert")).toHaveTextContent("boom")
     // Loaded groups still show what is stored…
-    expect(screen.getByLabelText(LABELS.feedback)).toHaveAttribute(
+    expect(screen.getByLabelText(LABELS.workTasks)).toHaveAttribute(
       "data-state",
       "checked"
     )

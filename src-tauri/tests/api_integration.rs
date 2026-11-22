@@ -532,7 +532,8 @@ async fn codeg_mcp_service_status_reports_a_socketless_runtime_as_stopped() {
     let groups = body["tool_groups"].as_array().expect("tool_groups array");
     let keys: Vec<&str> = groups.iter().filter_map(|g| g["key"].as_str()).collect();
     assert!(keys.contains(&"delegation"), "got {keys:?}");
-    assert!(keys.contains(&"feedback"), "got {keys:?}");
+    // keh4l build: the live-feedback pull tool is gone, and its switch with it.
+    assert!(!keys.contains(&"feedback"), "got {keys:?}");
 }
 
 /// Starting without a handle must fail loudly rather than report success the

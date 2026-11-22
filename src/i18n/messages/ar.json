@@ -587,6 +587,18 @@
       "translate_input": {
         "title": "ترجمة الرسالة",
         "description": "ترجمة مربع الرسالة إلى لغة ترجمة الرسائل"
+      },
+      "follow_up_alternate_send": {
+        "title": "الإرسال بالطريقة الأخرى",
+        "description": "أثناء رد الوكيل: انتظار إن كان الإرسال مداخلة، ومداخلة إن كان الإرسال انتظارًا"
+      },
+      "follow_up_steer_oldest": {
+        "title": "إدخال أقدم رسالة منتظرة",
+        "description": "يرسل أول رسالة منتظرة إلى الدور الجاري، ويبقى مربع الكتابة كما هو"
+      },
+      "follow_up_edit_latest": {
+        "title": "تحرير آخر رسالة منتظرة",
+        "description": "عندما يكون المؤشر في بداية مربع الكتابة، يحمّل فيه آخر رسالة منتظرة"
       }
     }
   },
@@ -3626,7 +3638,8 @@
         "deleteItem": "حذف",
         "steerItemNow": "إدراج في الدور الحالي",
         "steerItemAsNote": "إرسال كملاحظة للفحص التالي",
-        "waitingForConnection": "جارٍ الاتصال… سيتم الإرسال تلقائيًا عند الجاهزية"
+        "waitingForConnection": "جارٍ الاتصال… سيتم الإرسال تلقائيًا عند الجاهزية",
+        "serverError": "تعذّر تحديث الطابور"
       },
       "welcomeInputPanel": {
         "agentsSettingsPath": "الإعدادات > الوكلاء",
@@ -10341,5 +10354,41 @@
   "DelegationWorktree": {
     "deleteWithConversation": "أزل شجرة العمل أيضًا ({path})",
     "deleteWithConversationUncommitted": "أزل شجرة العمل أيضًا ({path}) — فيها {count} تغيير غير مُودَع"
+  },
+  "FollowUp": {
+    "interruptedAttempt": "محاولة قُطعت بمداخلة",
+    "steered": "مداخلة",
+    "steerPending": "مداخلة · بانتظار القراءة",
+    "dragToReorder": "اسحب لإعادة الترتيب",
+    "queuedLabel": "في الانتظار {position}",
+    "queuedHeldLabel": "متوقف مؤقتًا · في الانتظار {position}",
+    "editingInComposer": "قيد التحرير في مربع الكتابة",
+    "sendNow": "إرسال الآن",
+    "sendNowIntoTurn": "إرسال إلى الدور الجاري",
+    "sendNowAsTurn": "بدء دور بهذه الرسالة",
+    "edit": "تحرير",
+    "remove": "إزالة",
+    "queueAria": "{count, plural, zero {لا رسائل في الانتظار} one {رسالة واحدة في الانتظار} two {رسالتان في الانتظار} few {# رسائل في الانتظار} many {# رسالة في الانتظار} other {# رسالة في الانتظار}}",
+    "showFewer": "عرض أقل",
+    "showMore": "عرض {count} أخرى",
+    "heldBar": "الطابور متوقف مؤقتًا · {count, plural, zero {لا رسائل} one {رسالة واحدة} two {رسالتان} few {# رسائل} many {# رسالة} other {# رسالة}} في الانتظار",
+    "resume": "متابعة",
+    "steerQueued": "لا يستطيع هذا الوكيل استقبال مداخلة الآن، فوُضعت في الانتظار إلى ما بعد هذا الدور",
+    "steerUndelivered": "لم تُسلَّم المداخلة: «{text}»",
+    "putBack": "إعادتها إلى مربع الكتابة",
+    "sendFailed": "تعذّر إرسال الرسالة المنتظرة",
+    "queueOnlyHint": "أوامر الشرطة المائلة تُوضع دائمًا في الانتظار",
+    "tooltipSteerDefault": "انقر للمداخلة، و{mod}+نقر للانتظار",
+    "tooltipQueueDefault": "انقر للانتظار، و{mod}+نقر للمداخلة",
+    "actionSteer": "المداخلة في هذا الدور",
+    "actionQueue": "الانتظار إلى ما بعد هذا الدور",
+    "default": "افتراضي"
+  },
+  "FollowUpSettings": {
+    "title": "الإرسال أثناء رد الوكيل",
+    "description": "هل يُدخل زر الإرسال رسالتك في الدور الجاري أم يضعها في الانتظار إلى ما بعده. الخيار الآخر متاح دائمًا: {mod}+نقر على الإرسال، أو {mod}+Enter. يسري على هذا الجهاز فقط.",
+    "steer": "مداخلة",
+    "queue": "انتظار",
+    "note": "يستقبل Claude Code وCodex وGrok وKiro وAntigravity الرسالة داخل الدور الجاري ويقرؤونها بعد الخطوة الحالية. أما الوكلاء الآخرون فيوقفون الدور ويبدؤون من جديد برسالتك، فتضيع الخطوة التي قُطعت؛ اختر «انتظار» إن أردت أن يُنهوا أولًا."
   }
 }

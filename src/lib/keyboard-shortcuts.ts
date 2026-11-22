@@ -25,6 +25,9 @@ export type ShortcutActionId =
   | "send_message"
   | "newline_in_message"
   | "translate_input"
+  | "follow_up_alternate_send"
+  | "follow_up_steer_oldest"
+  | "follow_up_edit_latest"
   | "toggle_custom_style"
   | "zoom_in"
   | "zoom_out"
@@ -95,6 +98,10 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
   {
     id: "translate_input",
   },
+  // keh4l build: steer or queue while the agent replies.
+  { id: "follow_up_alternate_send" },
+  { id: "follow_up_steer_oldest" },
+  { id: "follow_up_edit_latest" },
   {
     id: "toggle_custom_style",
   },
@@ -165,6 +172,12 @@ export const DEFAULT_SHORTCUTS: ShortcutSettings = {
   // L for language. Not mod+shift+t (reopen tab) nor ctrl+alt+t, which Ubuntu
   // takes system-wide for a terminal.
   translate_input: "mod+shift+l",
+  // keh4l build (T3 Code's keys): the other of steer / queue; the oldest
+  // queued message into the running turn; edit the latest queued message
+  // (with the caret at the composer's start).
+  follow_up_alternate_send: "mod+enter",
+  follow_up_steer_oldest: "mod+shift+enter",
+  follow_up_edit_latest: "alt+arrowup",
   // 自定义样式的逃生舱：用户把界面改到不可用时，这一路必须仍然按得动，所以选一个
   // 三修饰键组合（不会与任何常用操作撞车），并在捕获阶段监听。
   toggle_custom_style: "mod+alt+shift+s",

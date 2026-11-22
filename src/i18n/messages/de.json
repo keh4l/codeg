@@ -587,6 +587,18 @@
       "translate_input": {
         "title": "Nachricht übersetzen",
         "description": "Übersetzt das Eingabefeld in die Sprache der Nachrichtenübersetzung"
+      },
+      "follow_up_alternate_send": {
+        "title": "Auf die andere Art senden",
+        "description": "Während der Agent antwortet: einreihen, wenn Senden einwirft – einwerfen, wenn Senden einreiht"
+      },
+      "follow_up_steer_oldest": {
+        "title": "Älteste wartende Nachricht einwerfen",
+        "description": "Schickt die erste wartende Nachricht in die laufende Runde; das Eingabefeld bleibt, wie es ist"
+      },
+      "follow_up_edit_latest": {
+        "title": "Neueste wartende Nachricht bearbeiten",
+        "description": "Lädt die letzte wartende Nachricht ins Eingabefeld, wenn der Cursor an dessen Anfang steht"
       }
     }
   },
@@ -3626,7 +3638,8 @@
         "deleteItem": "Entfernen",
         "steerItemNow": "In aktuellen Turn einfügen",
         "steerItemAsNote": "Als Notiz für die nächste Abfrage senden",
-        "waitingForConnection": "Verbindung wird hergestellt… wird automatisch gesendet, sobald bereit"
+        "waitingForConnection": "Verbindung wird hergestellt… wird automatisch gesendet, sobald bereit",
+        "serverError": "Warteschlange konnte nicht aktualisiert werden"
       },
       "welcomeInputPanel": {
         "agentsSettingsPath": "Einstellungen > Agenten",
@@ -10341,5 +10354,41 @@
   "DelegationWorktree": {
     "deleteWithConversation": "Auch den Worktree entfernen ({path})",
     "deleteWithConversationUncommitted": "Auch den Worktree entfernen ({path}) – er hat {count} nicht committete Änderung(en)"
+  },
+  "FollowUp": {
+    "interruptedAttempt": "Durch Einwurf abgebrochener Versuch",
+    "steered": "Einwurf",
+    "steerPending": "Einwurf · wartet aufs Lesen",
+    "dragToReorder": "Zum Umsortieren ziehen",
+    "queuedLabel": "Wartend {position}",
+    "queuedHeldLabel": "Pausiert · wartend {position}",
+    "editingInComposer": "Wird im Eingabefeld bearbeitet",
+    "sendNow": "Jetzt senden",
+    "sendNowIntoTurn": "In die laufende Runde senden",
+    "sendNowAsTurn": "Mit dieser Nachricht eine Runde beginnen",
+    "edit": "Bearbeiten",
+    "remove": "Entfernen",
+    "queueAria": "{count, plural, one {# wartende Nachricht} other {# wartende Nachrichten}}",
+    "showFewer": "Weniger anzeigen",
+    "showMore": "{count} weitere anzeigen",
+    "heldBar": "Warteschlange pausiert · {count, plural, one {# Nachricht wartet} other {# Nachrichten warten}}",
+    "resume": "Fortsetzen",
+    "steerQueued": "Dieser Agent kann gerade keinen Einwurf annehmen; die Nachricht wartet bis nach dieser Runde",
+    "steerUndelivered": "Einwurf nicht zugestellt: „{text}“",
+    "putBack": "Zurück ins Eingabefeld",
+    "sendFailed": "Die wartende Nachricht konnte nicht gesendet werden",
+    "queueOnlyHint": "Slash-Befehle werden immer eingereiht",
+    "tooltipSteerDefault": "Klick für Einwurf, {mod}-Klick zum Einreihen",
+    "tooltipQueueDefault": "Klick zum Einreihen, {mod}-Klick für Einwurf",
+    "actionSteer": "In diese Runde einwerfen",
+    "actionQueue": "Für nach dieser Runde einreihen",
+    "default": "Standard"
+  },
+  "FollowUpSettings": {
+    "title": "Senden, während der Agent antwortet",
+    "description": "Ob die Sendetaste deine Nachricht in die laufende Runde einwirft oder sie für nach der Runde einreiht. Das andere geht immer: {mod}-Klick auf Senden oder {mod}+Enter. Gilt nur für dieses Gerät.",
+    "steer": "Einwerfen",
+    "queue": "Einreihen",
+    "note": "Claude Code, Codex, Grok, Kiro und Antigravity nehmen die Nachricht in die laufende Runde auf und lesen sie nach dem aktuellen Schritt. Andere Agenten brechen die Runde ab und beginnen mit deiner Nachricht neu; der abgebrochene Schritt geht verloren. Wähle Einreihen, wenn sie erst fertig werden sollen."
   }
 }

@@ -2356,6 +2356,9 @@ impl ConnectionManager {
     }
 
     pub async fn cancel(&self, db: &DatabaseConnection, conn_id: &str) -> Result<(), AcpError> {
+        // keh4l build: a steer still waiting to restart this turn is not sent
+        // (the user is told), and the queue learns about the stop.
+        crate::acp::follow_up::on_user_cancel(conn_id).await;
         let (cmd_tx, state_arc, emitter) = {
             let connections = self.connections.lock().await;
             let conn = connections

@@ -587,6 +587,18 @@
       "translate_input": {
         "title": "メッセージを翻訳",
         "description": "入力欄の内容をメッセージ翻訳の言語に翻訳します"
+      },
+      "follow_up_alternate_send": {
+        "title": "もう一方の方法で送信",
+        "description": "エージェントの応答中：送信が割り込みならキューに、キューなら割り込みに"
+      },
+      "follow_up_steer_oldest": {
+        "title": "最も古いキューのメッセージを割り込ませる",
+        "description": "先頭のキューのメッセージを進行中のターンに送ります。入力欄はそのまま"
+      },
+      "follow_up_edit_latest": {
+        "title": "最新のキューのメッセージを編集",
+        "description": "カーソルが入力欄の先頭にあるとき、最後のキューのメッセージを読み込んで編集します"
       }
     }
   },
@@ -3626,7 +3638,8 @@
         "deleteItem": "削除",
         "steerItemNow": "現在のターンに挿入",
         "steerItemAsNote": "メモとして送信し次回チェック時に読ませる",
-        "waitingForConnection": "接続中…準備完了後に自動送信します"
+        "waitingForConnection": "接続中…準備完了後に自動送信します",
+        "serverError": "キューを更新できませんでした"
       },
       "welcomeInputPanel": {
         "agentsSettingsPath": "設定 > エージェント",
@@ -10341,5 +10354,41 @@
   "DelegationWorktree": {
     "deleteWithConversation": "ワークツリーも削除（{path}）",
     "deleteWithConversationUncommitted": "ワークツリーも削除（{path}）— 未コミットの変更が {count} 件あります"
+  },
+  "FollowUp": {
+    "interruptedAttempt": "割り込みで中断された試行",
+    "steered": "割り込み",
+    "steerPending": "割り込み · 読み取り待ち",
+    "dragToReorder": "ドラッグで並べ替え",
+    "queuedLabel": "送信待ち {position}",
+    "queuedHeldLabel": "一時停止中 · 送信待ち {position}",
+    "editingInComposer": "入力欄で編集中",
+    "sendNow": "今すぐ送信",
+    "sendNowIntoTurn": "進行中のターンに送る",
+    "sendNowAsTurn": "このメッセージで新しいターンを始める",
+    "edit": "編集",
+    "remove": "削除",
+    "queueAria": "送信待ちのメッセージ {count} 件",
+    "showFewer": "折りたたむ",
+    "showMore": "あと {count} 件表示",
+    "heldBar": "キューは一時停止中 · 送信待ち {count} 件",
+    "resume": "再開",
+    "steerQueued": "このエージェントは今は割り込めないため、このターンの後に送るようキューに入れました",
+    "steerUndelivered": "割り込みは届きませんでした：「{text}」",
+    "putBack": "入力欄に戻す",
+    "sendFailed": "キューのメッセージを送信できませんでした",
+    "queueOnlyHint": "スラッシュコマンドは常にキューに入ります",
+    "tooltipSteerDefault": "クリックで割り込み、{mod}+クリックでキューに追加",
+    "tooltipQueueDefault": "クリックでキューに追加、{mod}+クリックで割り込み",
+    "actionSteer": "このターンに割り込む",
+    "actionQueue": "このターンの後に送る",
+    "default": "既定"
+  },
+  "FollowUpSettings": {
+    "title": "エージェントの応答中に送信したとき",
+    "description": "エージェントの応答中に送信キーを押したとき、進行中のターンに割り込ませるか、ターンの後に送るようキューに入れるか。もう一方はいつでも使えます：{mod} を押しながら送信をクリック、または {mod}+Enter。このデバイスにのみ適用されます。",
+    "steer": "割り込み",
+    "queue": "キュー",
+    "note": "Claude Code、Codex、Grok、Kiro、Antigravity は進行中のターンにメッセージを取り込み、今のステップの後に読みます。その他のエージェントはターンを止めてメッセージとともにやり直すため、中断されたステップは失われます。先に終わらせたい場合は「キュー」を選んでください。"
   }
 }

@@ -8467,7 +8467,9 @@ where
     // `groups` are per-spawn: the reporting tools of a task-engine launch and
     // the `submit_result` of a `codeg-cli` run's root, each given regardless of
     // the settings toggles.
-    let feedback_enabled = injection.feedback.is_enabled().await;
+    // keh4l build: no pull-feedback tool (`follow_up::pull_feedback_tool`).
+    let feedback_enabled =
+        crate::acp::follow_up::pull_feedback_tool(injection.feedback.is_enabled().await);
     let authoring = injection.authoring.snapshot().await;
     // Delegation is a THIRD door into the same room as `fs/*` and `terminal/*`:
     // `delegate_to_agent` has codeg spawn a second agent — in codeg's process
@@ -9441,6 +9443,14 @@ async fn run_connection(
                 init_resp.meta.as_ref(),
                 init_resp.agent_info.as_ref(),
             );
+            // keh4l build: Grok / Kiro / Antigravity steer natively over
+            // wires of their own (`follow_up::native`).
+            let native_steering_available = crate::acp::follow_up::native::register(
+                &conn_id,
+                agent_type,
+                init_resp.agent_info.as_ref(),
+                speaks_antigravity_interactions(agent_type, init_resp.agent_info.as_ref()),
+            ) || native_steering_available;
             // Same `agent_info.version` proof, for a different shape decision:
             // which generation of codex's `request_user_input` form this
             // connection will receive.
@@ -16299,7 +16309,34 @@ async fn run_conversation_loop(
                                     if let Some(inj) = delegation_injection {
                                         inj.questions.cancel_questions_by_parent(conn_id).await;
                                     }
-                                    let outcome = send_steer_request(&cx, &sid, &blocks).await;
+                                    // keh4l build: the fork's wires (`follow_up::native`);
+                                    // Antigravity's is a second prompt that carries
+                                    // the turn on, so the loop now waits on it.
+                                    let outcome = match crate::acp::follow_up::native::wire(conn_id) {
+                                        Some(crate::acp::follow_up::native::SteerWire::PromptSteer) => {
+                                            let next = Box::pin(
+                                                cx.clone()
+                                                    .send_request_to(
+                                                        Agent,
+                                                        PromptRequest::new(
+                                                            sid.clone(),
+                                                            map_prompt_blocks(blocks.clone()),
+                                                        ),
+                                                    )
+                                                    .block_task(),
+                                            );
+                                            let answered = std::mem::replace(&mut prompt_response, next);
+                                            tokio::spawn(async move {
+                                                let _ = answered.await;
+                                            });
+                                            Ok(SteerOutcome::Injected)
+                                        }
+                                        Some(wire) => {
+                                            crate::acp::follow_up::native::send(&cx, &sid, &blocks, wire)
+                                                .await
+                                        }
+                                        None => send_steer_request(&cx, &sid, &blocks).await,
+                                    };
                                     // A steered message still lands in the
                                     // agent's OWN transcript: as a user record
                                     // when it runs as a turn of its own, and as
@@ -16359,6 +16396,10 @@ async fn run_conversation_loop(
                                     );
                                 }
                                 Some(ConnectionCommand::Cancel) => {
+                                    // keh4l build: a steer restart cuts the turn off
+                                    // to send the steer next; that is not the user's
+                                    // stop, so delegated sub-agents keep running.
+                                    let steer_restart = crate::acp::follow_up::restart::cancel_is_restart(conn_id);
                                     // Send CancelNotification to agent to stop the current turn
                                     let _ = cx.send_notification_to(
                                         Agent,
@@ -16438,7 +16479,9 @@ async fn run_conversation_loop(
                                     // drain-first lock guarantees no double
                                     // DelegationCompleted emit.
                                     if let Some(inj) = delegation_injection {
-                                        inj.broker.cancel_by_parent_turn(conn_id).await;
+                                        if !steer_restart {
+                                            inj.broker.cancel_by_parent_turn(conn_id).await;
+                                        }
                                         // Reclaim any parked `ask_user_question` /
                                         // Grok `exit_plan_mode` approval owned by this
                                         // connection. Unlike `perms` (drained inline
@@ -16695,8 +16738,13 @@ async fn run_conversation_loop(
                 // Awaited inline (fast drain before the next prompt; broker
                 // backgrounds the slow child teardown): see inner Cancel
                 // handler above for rationale.
+                //
+                // keh4l build: a steer restart whose turn already ended
+                // leaves the sub-agents alone (see the mid-turn arm).
                 if let Some(inj) = delegation_injection {
-                    inj.broker.cancel_by_parent_turn(conn_id).await;
+                    if !crate::acp::follow_up::restart::cancel_is_restart(conn_id) {
+                        inj.broker.cancel_by_parent_turn(conn_id).await;
+                    }
                 }
                 if closed_agent_turn {
                     cancel_grok_agent_turn_asks(delegation_injection, conn_id).await;
@@ -21001,6 +21049,9 @@ fn track_subagent_window(
 /// a throwaway instance. Mirrors `ToolCallOutputCache`'s lifetime.
 #[derive(Default)]
 struct CodeBuddyLiveState {
+    /// keh4l build: drops Kiro's `[STEERING …]` note after a steer
+    /// (`follow_up::native::KiroSteerNoteFilter`).
+    fork_kiro_steer_note: crate::acp::follow_up::native::KiroSteerNoteFilter,
     /// tool_call_id → authoritative title: `"agent"` for a native sub-agent, or
     /// the inner `mcp__…` name for a `DeferExecuteTool` MCP call. Re-asserted on
     /// every later frame so a status-only update can't downgrade the card.
@@ -25937,6 +25988,13 @@ async fn emit_conversation_update(
     raw_output_cache: &mut ToolCallOutputCache,
     cb_state: &mut CodeBuddyLiveState,
 ) {
+    let Some(update) = crate::acp::follow_up::native::filter_update(
+        agent_type,
+        update,
+        &mut cb_state.fork_kiro_steer_note,
+    ) else {
+        return;
+    };
     match update {
         SessionUpdate::UserMessageChunk(_) => {
             // User echo chunks are informational for transcript sync and

@@ -27,6 +27,8 @@ pub mod error;
 pub mod event_stream;
 pub mod feedback;
 pub mod file_system_runtime;
+/// Steering and queueing while the agent replies (keh4l build).
+pub mod follow_up;
 pub mod fork;
 pub mod host_tools_policy;
 pub mod idle_sweep;

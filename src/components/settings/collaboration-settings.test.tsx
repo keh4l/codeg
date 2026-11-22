@@ -70,7 +70,8 @@ describe("CollaborationSettings", () => {
     }
 
     expect(screen.getByLabelText("Enable delegation")).toBeInTheDocument()
-    expect(screen.getByLabelText("Live Feedback")).toBeInTheDocument()
+    // keh4l build: no live-feedback switch.
+    expect(screen.queryByLabelText("Live Feedback")).toBeNull()
     expect(screen.getByLabelText("Ask user question")).toBeInTheDocument()
     expect(screen.getByLabelText("Get session info")).toBeInTheDocument()
     expect(screen.getByLabelText("Create automations")).toBeInTheDocument()

@@ -65,6 +65,7 @@ pub mod harness_updates;
 pub mod image_gen;
 /// The pushed-delegation-results switch (keh4l build).
 pub mod delegation_push;
+pub mod follow_up;
 /// Worktrees delegations made (keh4l build).
 pub mod delegation_worktree;
 /// Folder commands set to run on the desktop's own machine ("Run on this

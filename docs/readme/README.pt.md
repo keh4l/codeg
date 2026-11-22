@@ -58,6 +58,9 @@
     <td width="50%" valign="top">🌿 <strong>Subagentes trabalham no próprio worktree</strong><br/>O agente principal pode fazer um subagente mudar código num worktree e numa branch do git separados, para que vários em paralelo não atrapalhem uns aos outros; cada delegação pode definir o próprio modelo e nível de raciocínio, e um subagente que já terminou pode receber mais trabalho na mesma sessão.</td>
   </tr>
   <tr>
+    <td colspan="2" valign="top">🗣️ <strong>Intervir a qualquer momento</strong><br/>Enquanto o agente responde, a tecla de enviar coloca a sua mensagem no turno em andamento, e o agente a lê depois da etapa atual; com ⌘/Ctrl ela vai para a fila, para depois do turno. Dá para intervir com qualquer agente. A fila fica no servidor, então sobrevive a um recarregamento e acompanha você em outro dispositivo; parar ou um erro pausam a fila até você mandar continuar.</td>
+  </tr>
+  <tr>
     <td colspan="2" valign="top">🔄 <strong>Acompanha o original</strong><br/>O projeto original é mesclado regularmente; o que não está listado aqui funciona como na versão oficial. O Kiro CLI integrado, a primeira coisa que esta versão adicionou, faz parte da versão oficial desde a 0.36.0. Os resumos do raciocínio do Claude Code usam, desde a 0.41.3-1, o interruptor da versão oficial: “Mostrar resumos do raciocínio do Claude” em Configurações → Agentes → Claude Code, desativado por padrão. A partir da 0.46.0-1, a próxima mensagem sugerida é preenchida como na versão oficial: Tab no computador e o botão de lâmpada ao lado de Enviar no celular.</td>
   </tr>
 </table>
@@ -220,7 +223,7 @@
 - Na versão oficial, depois de mandar um subagente, o agente principal só fica sabendo do resultado se consultar por conta própria com `get_delegation_status`: ou fica bloqueado esperando, ou consulta de tempos em tempos. Assim que encerra o turno, ninguém avisa quando o subagente termina; é preciso esperar você mandar outra mensagem lembrando de consultar.
 - Esta versão devolve o resultado ao agente principal quando um subagente termina (ou para no meio por um erro):
   - Agente principal livre: depois de 2 segundos (os que terminam juntos viram uma coisa só), começa sozinho um turno novo, e o agente principal segue a partir dos resultados;
-  - Agente principal no meio de um turno: Claude Code e Codex recebem direto nesse turno; os outros agentes recebem num turno novo que começa sozinho quando esse acaba;
+  - Agente principal no meio de um turno: Claude Code, Codex, Grok, Kiro e Antigravity recebem direto nesse turno; os outros agentes recebem num turno novo que começa sozinho quando esse acaba;
   - Você está mandando uma mensagem bem na hora: os resultados vão junto com ela.
 - A conversa mostra uma linha “Resultados das subtarefas devolvidos” com cada subagente, se terminou ou falhou e quanto tempo levou; expandida, mostra um resumo de cada resultado e “Abrir sessão”. Os que foram junto com a sua mensagem aparecem embaixo dela como “N resultados de subtarefas anexados”. Essa linha é o codeg falando com o agente principal: não é repassada aos canais de chat como se fosse você falando, nem usada para dar título à sessão.
 - Resultados que o agente principal já pegou por conta própria com `get_delegation_status` ou `cancel_delegation` não são enviados de novo; subtarefas canceladas pelo agente principal ou por você não são enviadas.
@@ -240,6 +243,24 @@
 - Ferramenta nova, `continue_delegation`: passa mais trabalho para uma subtarefa que já terminou (concluída, com falha ou cancelada), na subsessão original, mantendo o contexto, a pasta de trabalho, o modelo e as opções; o resultado também volta para o agente principal. Cada acréscimo é uma rodada nova, com um task_id novo. Divisão com `resume_delegation`: resume continua o que foi interrompido no meio; continue pede mais depois que está pronto.
 - A linha da delegação mostra depois do título etiquetas com o modelo, a branch e “Rodada N”; expandida, mostra o modelo, as opções e o estado do worktree (de que commit saiu, quantos arquivos mudaram). “Abrir” abre o worktree no espaço de trabalho (lá você vê as mudanças, faz commit e merge), e “Remover worktree” o remove, junto com a branch se quiser.
 - Os worktrees não são removidos sozinhos. Ao excluir uma subsessão que usou um, a confirmação ganha a opção “Também remover o worktree”; se houver mudanças sem commit dentro, ela vem desmarcada por padrão e diz quantas são.
+
+</details>
+
+<details>
+<summary><strong>Intervir a qualquer momento</strong>: detalhes</summary>
+<br/>
+
+- Na versão oficial, Enter põe a mensagem na fila enquanto o agente responde; intervir fica escondido atrás da setinha ao lado de Enviar e só entra direto no turno com Claude Code e Codex. Os outros agentes precisam de “Feedback ao vivo” ligado nas configurações e recebem só uma nota que talvez leiam quando consultarem. A fila vive no navegador atual e some ao recarregar, e depois de parar a próxima mensagem da fila sai na hora.
+- Esta versão segue o T3 Code:
+  - O botão de enviar: Parar com a caixa vazia; com conteúdo, o ícone diz o que um clique faz — intervir (↱) ou pôr na fila (lista +). Segurando ⌘/Ctrl o ícone troca, e ⌘/Ctrl+clique faz o outro; no celular, um toque longo em Enviar escolhe o outro para essa mensagem.
+  - Intervir é o padrão; “Enviar enquanto o agente responde” em Configurações → Geral → Abas e entrada muda para a fila, só neste dispositivo.
+  - Teclas (alteráveis em Configurações → Atalhos): Enter envia do jeito padrão; ⌘/Ctrl+Enter do outro; ⌘/Ctrl+Shift+Enter coloca no turno a mensagem mais antiga da fila; Alt+↑ com o cursor no início da caixa edita a última da fila.
+  - Comandos de barra sempre vão para a fila, assim como uma intervenção enquanto o agente compacta o contexto.
+- Como uma intervenção chega: Claude Code, Codex, Grok, Kiro (só texto) e Antigravity 1.5.0+ a recebem no turno em andamento e a leem depois da etapa atual. Qualquer outro agente tem o turno parado e recomeçado na mesma sessão com a sua mensagem: a resposta interrompida se recolhe em “Tentativa interrompida por uma intervenção”, a etapa em andamento se perde e os subagentes delegados continuam. Grok sem intervenção nativa só usa a fila (o cancelamento dele também para a ferramenta em execução).
+- Uma mensagem de intervenção é marcada “Intervenção”, e “Intervenção · aguardando leitura” enquanto está a caminho; as marcas sobrevivem a um recarregamento.
+- A fila fica no servidor: todas as janelas e dispositivos veem a mesma, e ela sobrevive a recarregamentos e reinícios. No computador aparece em balões tracejados no fim da conversa, no celular acima da caixa de texto; cada mensagem pode ser enviada agora (no turno em andamento, ou como turno novo se estiver ocioso), editada, removida e reordenada arrastando. O servidor envia a próxima quando um turno termina normalmente, mesmo com todos os navegadores fechados, levando os resultados de subtarefas ainda não entregues.
+- Parar, um turno que termina em erro (limite de uso, rede…) ou reiniciar o servidor pausa a fila: acima da caixa aparece “Fila pausada” com “Continuar”; Continuar, Enter com a caixa vazia ou uma mensagem nova liberam a fila. Uma intervenção ainda a caminho quando você para é avisada como não entregue, com um botão para devolvê-la à caixa.
+- O “Feedback ao vivo” (notas) da versão oficial saiu: não há chave nas configurações, e os agentes não recebem mais a ferramenta `check_user_feedback`.
 
 </details>
 

@@ -587,6 +587,18 @@
       "translate_input": {
         "title": "Traduire le message",
         "description": "Traduit la zone de saisie dans la langue de traduction des messages"
+      },
+      "follow_up_alternate_send": {
+        "title": "Envoyer de l'autre façon",
+        "description": "Pendant la réponse de l'agent : met en attente si l'envoi intervient, intervient si l'envoi met en attente"
+      },
+      "follow_up_steer_oldest": {
+        "title": "Faire intervenir le plus ancien message en attente",
+        "description": "Envoie le premier message en attente dans le tour en cours ; la zone de saisie reste inchangée"
+      },
+      "follow_up_edit_latest": {
+        "title": "Modifier le dernier message en attente",
+        "description": "Le curseur au début de la zone de saisie, y charge le dernier message en attente"
       }
     }
   },
@@ -3626,7 +3638,8 @@
         "deleteItem": "Supprimer",
         "steerItemNow": "Insérer dans le tour en cours",
         "steerItemAsNote": "Envoyer comme note pour la prochaine vérification",
-        "waitingForConnection": "Connexion… envoi automatique dès que prêt"
+        "waitingForConnection": "Connexion… envoi automatique dès que prêt",
+        "serverError": "Impossible de mettre à jour la file"
       },
       "welcomeInputPanel": {
         "agentsSettingsPath": "Paramètres > Agents",
@@ -10341,5 +10354,41 @@
   "DelegationWorktree": {
     "deleteWithConversation": "Supprimer aussi son worktree ({path})",
     "deleteWithConversationUncommitted": "Supprimer aussi son worktree ({path}) — {count} modification(s) non commitée(s)"
+  },
+  "FollowUp": {
+    "interruptedAttempt": "Tentative interrompue par une intervention",
+    "steered": "Intervention",
+    "steerPending": "Intervention · en attente de lecture",
+    "dragToReorder": "Glisser pour réordonner",
+    "queuedLabel": "En attente {position}",
+    "queuedHeldLabel": "En pause · en attente {position}",
+    "editingInComposer": "Modification dans la zone de saisie",
+    "sendNow": "Envoyer maintenant",
+    "sendNowIntoTurn": "Envoyer dans le tour en cours",
+    "sendNowAsTurn": "Commencer un tour avec ce message",
+    "edit": "Modifier",
+    "remove": "Retirer",
+    "queueAria": "{count, plural, one {# message en attente} other {# messages en attente}}",
+    "showFewer": "Afficher moins",
+    "showMore": "Afficher {count} de plus",
+    "heldBar": "File en pause · {count, plural, one {# message en attente} other {# messages en attente}}",
+    "resume": "Reprendre",
+    "steerQueued": "Cet agent ne peut pas recevoir de message pour l'instant ; il a été mis en attente après ce tour",
+    "steerUndelivered": "Intervention non transmise : « {text} »",
+    "putBack": "Remettre dans la zone de saisie",
+    "sendFailed": "Impossible d'envoyer le message en attente",
+    "queueOnlyHint": "Les commandes slash sont toujours mises en attente",
+    "tooltipSteerDefault": "Cliquer pour intervenir, {mod}-clic pour mettre en attente",
+    "tooltipQueueDefault": "Cliquer pour mettre en attente, {mod}-clic pour intervenir",
+    "actionSteer": "Intervenir dans ce tour",
+    "actionQueue": "Mettre en attente pour après ce tour",
+    "default": "Par défaut"
+  },
+  "FollowUpSettings": {
+    "title": "Envoyer pendant que l'agent répond",
+    "description": "Si la touche d'envoi glisse votre message dans le tour en cours ou le met en attente pour après. L'autre option reste disponible : {mod}-clic sur envoyer, ou {mod}+Entrée. S'applique à cet appareil uniquement.",
+    "steer": "Intervenir",
+    "queue": "File d'attente",
+    "note": "Claude Code, Codex, Grok, Kiro et Antigravity prennent le message dans le tour en cours et le lisent après l'étape en cours. Les autres agents arrêtent le tour et repartent avec votre message, ce qui abandonne l'étape interrompue ; choisissez File d'attente pour qu'ils terminent d'abord."
   }
 }

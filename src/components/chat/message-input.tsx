@@ -15,9 +15,7 @@ import { Button } from "@/components/ui/button"
 import {
   BookOpenText,
   Check,
-  ChevronUp,
   ClipboardPaste,
-  Clock,
   Copy,
   Languages,
   Lightbulb,
@@ -28,14 +26,7 @@ import {
   Square,
   TextSelect,
   X,
-  Zap,
 } from "lucide-react"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import {
   ContextMenu,
   ContextMenuContent,
@@ -153,6 +144,16 @@ import { useComposerAttachments } from "@/components/chat/composer/use-composer-
 import { useComposerTranslation } from "@/components/chat/composer/use-composer-translation"
 import { rememberSentOriginal } from "@/lib/translation/sent-originals"
 import { useComposerShortcuts } from "@/components/chat/composer/use-composer-shortcuts"
+// keh4l build: steer or queue while the agent replies.
+import { FollowUpSendButton } from "@/components/chat/follow-up-send-button"
+import { useFollowUpComposerBridge } from "@/lib/follow-up/composer-bridge"
+import {
+  type FollowUpAction,
+  isSlashCommandDraft,
+  resolveFollowUpAction,
+} from "@/lib/follow-up/dispatch-mode"
+import { useFollowUpBehavior } from "@/lib/follow-up/prefs"
+import { matchShortcutEvent } from "@/lib/keyboard-shortcuts"
 
 /**
  * Payload pushed into the composer from outside (e.g. a welcome-page quick
@@ -495,9 +496,14 @@ export function MessageInput({
   // mounted, so the hydration effect can use the imperative handle.
   const [composerReady, setComposerReady] = useState(false)
 
+  // keh4l build: a slash command cannot steer (see `submitFollowUp`).
+  const [composerIsSlash, setComposerIsSlash] = useState(false)
   const syncComposerEmpty = useCallback(() => {
     const ed = editorRef.current?.getEditor()
     setComposerEmpty(ed ? isComposerEmpty(ed) : true)
+    setComposerIsSlash(
+      ed ? isSlashCommandDraft(serializeDocToText(ed.state.doc)) : false
+    )
   }, [])
 
   // What this composer holds that its saved draft may not show yet — typing
@@ -1856,6 +1862,97 @@ export function MessageInput({
     t,
   ])
 
+  // keh4l build: what a send does while the agent is replying — the
+  // per-device default (steer, as in T3 Code), flipped by ⌘/Ctrl; a slash
+  // command always queues. Saving a queue edit and idle sends are untouched.
+  const followUpBehavior = useFollowUpBehavior()
+  const followUpBridge = useFollowUpComposerBridge(attachmentTabId)
+  const submitFollowUp = useCallback(
+    (alternate: boolean, forced?: Exclude<FollowUpAction, "send">) => {
+      if (!isPrompting || isEditingQueueItem || !onEnqueue) {
+        handleSubmit()
+        return
+      }
+      const draft = buildDraft()
+      const canSteer =
+        Boolean(onSteer) && !isSlashCommandDraft(draft?.displayText ?? "")
+      const action =
+        forced ??
+        resolveFollowUpAction({
+          running: true,
+          alternate,
+          behavior: followUpBehavior,
+          canSteer,
+        })
+      if (action === "steer" && canSteer) {
+        if (!translateOnSend) {
+          void handleSteerClick()
+          return
+        }
+        void translateNow().then((ready) => {
+          if (ready) void handleSteerClick()
+        })
+        return
+      }
+      handleSubmit()
+    },
+    [
+      isPrompting,
+      isEditingQueueItem,
+      onEnqueue,
+      handleSubmit,
+      buildDraft,
+      onSteer,
+      followUpBehavior,
+      translateOnSend,
+      handleSteerClick,
+      translateNow,
+    ]
+  )
+  const handleComposerSubmit = useCallback(() => {
+    // Enter in an empty composer lets a held queue go (T3 Code).
+    if (!hasSendableContent && followUpBridge.resumeHeld) {
+      followUpBridge.resumeHeld()
+      return
+    }
+    submitFollowUp(false)
+  }, [hasSendableContent, followUpBridge, submitFollowUp])
+  const handleFollowUpKeyDown = useCallback(
+    (event: KeyboardEvent, atStart: boolean) => {
+      if (matchShortcutEvent(event, shortcuts.follow_up_alternate_send || "")) {
+        submitFollowUp(true)
+        return true
+      }
+      if (
+        isPrompting &&
+        followUpBridge.steerOldest &&
+        matchShortcutEvent(event, shortcuts.follow_up_steer_oldest || "")
+      ) {
+        followUpBridge.steerOldest()
+        return true
+      }
+      if (
+        atStart &&
+        !isEditingQueueItem &&
+        followUpBridge.editLatest &&
+        matchShortcutEvent(event, shortcuts.follow_up_edit_latest || "")
+      ) {
+        followUpBridge.editLatest()
+        return true
+      }
+      return false
+    },
+    [
+      shortcuts.follow_up_alternate_send,
+      shortcuts.follow_up_steer_oldest,
+      shortcuts.follow_up_edit_latest,
+      submitFollowUp,
+      isPrompting,
+      isEditingQueueItem,
+      followUpBridge,
+    ]
+  )
+
   // Navigation/confirm/escape keys for the `/` (commands) and `$` (Codex skills)
   // runtime menu, routed from inside the editor (RichComposer.onExternalMenuKeyDown)
   // because ProseMirror's DOM handler fires before a host capture handler could.
@@ -2004,67 +2101,16 @@ export function MessageInput({
       </Button>
     </div>
   ) : isPrompting && onCancel ? (
-    onSteer && onEnqueue && hasSendableContent ? (
-      // Sessions with a working live-feedback channel surface the mid-turn
-      // actions that already exist but were keyboard-only/invisible: the
-      // primary half of the split queues the draft (what Enter has always
-      // done here), the dropdown sends it over the channel — a native push
-      // inserts into the RUNNING turn, a pull-tool session records a waiting
-      // note for the agent's next check (label keyed on `steerChannel`).
-      // Without `onSteer` this branch stays pixel-identical to the
-      // historical Stop-only form below.
-      <div className="flex items-center gap-1">
-        <Button
-          onClick={onCancel}
-          variant="destructive"
-          size="icon"
-          className="h-8 w-8"
-          title={t("cancel")}
-        >
-          <Square className="size-4" />
-        </Button>
-        <div className="flex items-center">
-          <Button
-            onClick={handleSubmit}
-            disabled={steering || composerTranslation.translating}
-            size="icon"
-            className="h-8 w-8 rounded-r-none"
-            title={t("queueMessage")}
-          >
-            <Send className="size-4" />
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                disabled={steering}
-                size="icon"
-                className="h-8 w-5 rounded-l-none border-l border-primary-foreground/20"
-                aria-label={t(
-                  steerChannel === "pull" ? "steerAsNote" : "steerIntoTurn"
-                )}
-              >
-                <ChevronUp className="size-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" side="top">
-              <DropdownMenuItem
-                onSelect={() => void handleSteerClick()}
-                disabled={steering}
-              >
-                {/* Icon carries the same promise as the label: the bolt is
-                    the instant insert, the clock is the note that waits —
-                    the very glyph the notes strip uses for `pending`. */}
-                {steerChannel === "pull" ? (
-                  <Clock className="h-4 w-4" />
-                ) : (
-                  <Zap className="h-4 w-4" />
-                )}
-                {t(steerChannel === "pull" ? "steerAsNote" : "steerIntoTurn")}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </div>
+    onEnqueue && hasSendableContent ? (
+      // keh4l build: with something to send, the button says what a click
+      // does — steer into the turn or queue after it (T3 Code). To stop,
+      // empty the composer: the stop button below comes back.
+      <FollowUpSendButton
+        behavior={followUpBehavior}
+        canSteer={Boolean(onSteer) && !composerIsSlash}
+        disabled={steering || composerTranslation.translating}
+        onSubmit={submitFollowUp}
+      />
     ) : (
       <Button
         onClick={onCancel}
@@ -2299,7 +2345,8 @@ export function MessageInput({
                 knownInvocations={knownInvocations}
                 onChange={handleComposerChange}
                 onReady={handleComposerReady}
-                onSubmit={handleSubmit}
+                onSubmit={handleComposerSubmit}
+                onFollowUpKeyDown={handleFollowUpKeyDown}
                 onFocus={onFocus}
                 onPasteFiles={attach.handlePasteFiles}
                 onDropFiles={attach.handleEditorDrop}

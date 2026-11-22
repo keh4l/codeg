@@ -492,6 +492,17 @@ pub fn build_router_with_srn(
             "/stop_delegation_tasks",
             post(handlers::delegation_push::stop_delegation_tasks),
         )
+        // keh4l build: steer or queue while the agent replies.
+        .route("/follow_up_steer", post(handlers::follow_up::follow_up_steer))
+        .route("/follow_up_enqueue", post(handlers::follow_up::follow_up_enqueue))
+        .route("/follow_up_list", post(handlers::follow_up::follow_up_list))
+        .route("/follow_up_update", post(handlers::follow_up::follow_up_update))
+        .route("/follow_up_remove", post(handlers::follow_up::follow_up_remove))
+        .route("/follow_up_reorder", post(handlers::follow_up::follow_up_reorder))
+        .route("/follow_up_resume", post(handlers::follow_up::follow_up_resume))
+        .route("/follow_up_kick", post(handlers::follow_up::follow_up_kick))
+        .route("/follow_up_send_now", post(handlers::follow_up::follow_up_send_now))
+        .route("/follow_up_steers", post(handlers::follow_up::follow_up_steers))
         .route(
             "/get_delegation_worktree",
             post(handlers::delegation_worktree::get_delegation_worktree),

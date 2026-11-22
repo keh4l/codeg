@@ -458,6 +458,11 @@ impl DeliveryHub {
 
     /// A turn of `connection_id` ended.
     pub async fn on_turn_complete(&self, connection_id: &str, stop_reason: &str) {
+        // A turn cut off by a steer restart goes on with the steer as the next
+        // prompt, which carries whatever is queued: neither a pause nor a wake.
+        if crate::acp::follow_up::restart::turn_end_is_restart(connection_id, stop_reason) {
+            return;
+        }
         let Some(conversation_id) = self.driver.conversation_of(connection_id).await else {
             return;
         };

@@ -176,7 +176,8 @@ pub async fn codeg_mcp_service_status_core(
     let browser_cfg = sources.browser.snapshot().await;
     let tool_groups = vec![
         CodegMcpToolGroup::group("delegation", delegation_cfg.enabled),
-        CodegMcpToolGroup::group("feedback", sources.feedback.is_enabled().await),
+        // keh4l build: no `feedback` group — the pull tool is gone
+        // (`acp::follow_up::pull_feedback_tool`).
         CodegMcpToolGroup::group("ask", sources.question.is_enabled().await),
         CodegMcpToolGroup::group("sessions", sources.session_info.is_enabled().await),
         CodegMcpToolGroup::group("automations", authoring_cfg.automations_enabled),

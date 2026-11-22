@@ -625,6 +625,17 @@ async fn async_main(
             emitter: state.emitter.clone(),
         },
     ));
+    // keh4l build: steer or queue while the agent replies (`acp::follow_up`).
+    tokio::spawn(codeg_lib::acp::follow_up::start(
+        codeg_lib::acp::follow_up::Runtime {
+            db: Arc::new(codeg_lib::db::AppDatabase {
+                conn: state.db.conn.clone(),
+            }),
+            manager: Arc::new(state.connection_manager.clone_ref()),
+            bus: state.acp_event_bus.clone(),
+            emitter: state.emitter.clone(),
+        },
+    ));
     tokio::spawn(codeg_lib::lifecycle_subscriber_task(
         state.db.conn.clone(),
         state.connection_manager.clone_ref(),

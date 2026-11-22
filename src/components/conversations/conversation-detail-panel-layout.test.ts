@@ -525,7 +525,12 @@ describe("ConversationDetailPanel send-path hardening", () => {
     )
     expect(effectWithDeps).toContain("if (queueSteerInFlight) return")
     // …and as a dependency, so releasing the hold re-runs the flush.
-    expect(effectWithDeps).toContain("queueSteerInFlight])")
+    // (keh4l build: the dependency list wraps, and a queue kept on the server
+    // is never flushed here at all.)
+    expect(effectWithDeps).toMatch(
+      /\}, \[[^\]]*\bqueueSteerInFlight\b[^\]]*\]\)$/
+    )
+    expect(effectWithDeps).toContain("if (mqServerMode) return")
 
     const steerStart = source.indexOf("const handleQueueSteer = useCallback")
     expect(steerStart).toBeGreaterThan(-1)
@@ -536,19 +541,16 @@ describe("ConversationDetailPanel send-path hardening", () => {
     // Set BEFORE the first await, cleared in a finally. Both must be found: a
     // missing setter's -1 would otherwise pass the ordering check.
     const holdAt = steerHandler.indexOf("setQueueSteerInFlight(true)")
-    const awaitAt = steerHandler.indexOf("await deliverQueuedSteer(")
+    // keh4l build: the row goes to the server's send-now.
+    const awaitAt = steerHandler.indexOf("await followUpQueueSteer(")
     expect(holdAt).toBeGreaterThan(-1)
     expect(holdAt).toBeLessThan(awaitAt)
     expect(steerHandler).toContain("finally {")
     expect(steerHandler).toContain("setQueueSteerInFlight(false)")
     // A turn-end fallback must use the existing mode/readiness/busy handling,
     // without a second prompt or optimistic-message path in this callback.
-    expect(steerHandler).toContain("() => mqMoveToFront(id)")
-    expect(steerHandler).toContain("if (delivered) mqRemove(id)")
-    // …and still tells the user the row became the next turn, not an insert.
-    expect(steerHandler).toContain(
-      'else toast.info(tCmp("steerQueuedInstead"))'
-    )
+    // (keh4l build: the server's send-now sends the row as a new turn when
+    // the turn has ended, through the same prompt path as the queue.)
     expect(steerHandler).not.toContain("acpPrompt(")
     expect(steerHandler).not.toContain("appendOptimisticTurn(")
   })

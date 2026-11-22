@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
   type ComponentProps,
+  type ReactNode,
 } from "react"
 import {
   isLiveTurnId,
@@ -151,6 +152,10 @@ import { useStickToBottomContext } from "use-stick-to-bottom"
 import { useAppWorkspaceStore } from "@/stores/app-workspace-store"
 import { MarkdownImageProvider } from "@/components/ai-elements/markdown-local-image"
 import { foldCollectCalls, holdsCollectCalls } from "@/lib/image-gen/tool-calls"
+import {
+  findInterruptedReplies,
+  InterruptedAttemptFold,
+} from "@/components/message/follow-up-marks"
 
 interface MessageListViewProps {
   conversationId: number
@@ -209,6 +214,18 @@ interface MessageListViewProps {
    * items render in arbitrary order and multiplicity. `null` = no divider.
    */
   userTurnHeader?: ((group: ResolvedMessageGroup) => string | null) | null
+  /**
+   * keh4l build: a mark under a user turn (a message steered into a running
+   * turn). Same purity rules as `userTurnHeader`.
+   */
+  userTurnFooter?: ((group: ResolvedMessageGroup) => ReactNode) | null
+  /**
+   * keh4l build: whether this user turn restarted the turn before it (a steer
+   * on an agent without native steering). The reply it cut off folds away.
+   */
+  isRestartTurn?: ((group: ResolvedMessageGroup) => boolean) | null
+  /** keh4l build: rendered after the last turn (the queued follow-ups). */
+  threadTail?: ReactNode
   /**
    * Quote a text selection made in this transcript into the conversation
    * composer. Enables the "quote" entry on the selection bubble; omitted on
@@ -310,6 +327,12 @@ export type ThreadRenderItem =
   | {
       key: string
       kind: "typing"
+    }
+  | {
+      // keh4l build: whatever the host appends after the last turn (the
+      // queued follow-ups, `threadTail`).
+      key: string
+      kind: "fork-tail"
     }
   | {
       // A context-compaction event hoisted OUT of an assistant turn into its own
@@ -1675,6 +1698,9 @@ export function MessageListView({
   onNewSession,
   insightsInSidebar = false,
   userTurnHeader = null,
+  userTurnFooter = null,
+  isRestartTurn = null,
+  threadTail = null,
   onQuoteSelection,
   onAskSelection,
   onSaveNoteSelection,
@@ -1777,6 +1803,7 @@ export function MessageListView({
     () => new WeakMap()
   )
 
+  const hasThreadTail = threadTail != null && threadTail !== false
   const threadState = useMemo(() => {
     const allTurns = timelineTurns.map((item) => item.turn)
     const streamingIndices = new Set<number>()
@@ -1938,6 +1965,7 @@ export function MessageListView({
     ) {
       items.push({ key: "pending-typing", kind: "typing" })
     }
+    if (hasThreadTail) items.push({ key: "fork-tail", kind: "fork-tail" })
 
     return {
       threadItems: items,
@@ -1955,8 +1983,14 @@ export function MessageListView({
     turnAdapter,
     groupCache,
     mergedRunCache,
+    hasThreadTail,
   ])
   const { threadItems, nonStreamingAdapted, lastAssistantRunning } = threadState
+  // keh4l build: replies cut off by a steer restart (see `isRestartTurn`).
+  const interruptedKeys = useMemo(
+    () => findInterruptedReplies(threadItems, isRestartTurn),
+    [threadItems, isRestartTurn]
+  )
 
   // See `ReplyFoldState`. Derived during render rather than in an effect so a
   // send and the fold it causes land in the same commit — an effect would paint
@@ -2005,7 +2039,7 @@ export function MessageListView({
             item.group.role === "user" && userTurnHeader
               ? userTurnHeader(item.group)
               : null
-          return (
+          const turn = (
             <div style={pt > 0 ? { paddingTop: pt } : undefined}>
               {phaseLabel ? (
                 <div className="flex items-center gap-2 px-1 pb-3 pt-1">
@@ -2031,9 +2065,19 @@ export function MessageListView({
                 forkDisabled={forkBusy}
                 isThreadTail={item.isThreadTail}
               />
+              {item.group.role === "user" && userTurnFooter
+                ? userTurnFooter(item.group)
+                : null}
             </div>
           )
+          return interruptedKeys.has(item.key) ? (
+            <InterruptedAttemptFold>{turn}</InterruptedAttemptFold>
+          ) : (
+            turn
+          )
         }
+        case "fork-tail":
+          return threadTail
         case "typing":
           // Where the reply will be: under the sent message, as far down as
           // a reply after a message is (`isRoleTransition`).
@@ -2059,6 +2103,9 @@ export function MessageListView({
     },
     [
       userTurnHeader,
+      userTurnFooter,
+      interruptedKeys,
+      threadTail,
       fold.armed,
       fold.roundOpen,
       fold.epoch,

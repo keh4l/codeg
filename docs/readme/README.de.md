@@ -58,6 +58,9 @@
     <td width="50%" valign="top">🌿 <strong>Subagenten arbeiten in ihrem eigenen Worktree</strong><br/>Der Hauptagent kann einen Subagenten Code in einem eigenen Git-Worktree und Branch ändern lassen, sodass sich mehrere parallel nicht in die Quere kommen; jede Delegation kann ihr eigenes Modell und Reasoning festlegen, und einem fertigen Subagenten lässt sich in derselben Sitzung weitere Arbeit geben.</td>
   </tr>
   <tr>
+    <td colspan="2" valign="top">🗣️ <strong>Jederzeit einwerfen</strong><br/>Während der Agent antwortet, schickt die Sendetaste deine Nachricht in die laufende Runde, und der Agent liest sie nach dem aktuellen Schritt; mit gedrückter ⌘/Ctrl-Taste wird sie stattdessen für nach der Runde eingereiht. Jeder Agent nimmt Einwürfe an. Die Warteschlange liegt auf dem Server, übersteht also ein Neuladen und folgt dir aufs nächste Gerät; Stopp oder Fehler pausieren sie, bis du fortsetzt.</td>
+  </tr>
+  <tr>
     <td colspan="2" valign="top">🔄 <strong>Nah am Upstream</strong><br/>Upstream wird regelmäßig hineingemergt; was hier nicht steht, funktioniert genau wie in der offiziellen Version. Das eingebaute Kiro CLI, das diese Version als Erstes hinzugefügt hat, ist seit 0.36.0 Teil der offiziellen Version. Die Zusammenfassungen von Claudes Denken nutzen seit 0.41.3-1 den Schalter der offiziellen Version: „Zusammenfassungen von Claudes Denken anzeigen“ unter Einstellungen → Agenten → Claude Code, standardmäßig aus. Seit 0.46.0-1 wird die vorgeschlagene nächste Nachricht wie in der offiziellen Version übernommen: am Computer mit Tab, am Handy mit der Glühbirnen-Schaltfläche neben „Senden“.</td>
   </tr>
 </table>
@@ -220,7 +223,7 @@
 - Im offiziellen Build kann der Hauptagent, nachdem er einen Subagenten losgeschickt hat, nur selbst mit `get_delegation_status` nachsehen: entweder blockierend warten oder ab und zu nachfragen. Sobald er seinen Durchgang beendet, sagt ihm niemand, dass der Subagent fertig ist – das erfährt er erst, wenn du ihn mit einer neuen Nachricht ans Nachsehen erinnerst.
 - Dieser Build gibt das Ergebnis an den Hauptagenten zurück, sobald ein Subagent fertig ist (oder unterwegs an einem Fehler stehen bleibt):
   - Hauptagent frei: Nach 2 Sekunden (gleichzeitig fertige werden zu einer Meldung zusammengefasst) startet von selbst ein neuer Durchgang, und der Hauptagent macht mit den Ergebnissen weiter;
-  - Hauptagent mitten in einem Durchgang: Claude Code und Codex bekommen sie direkt in diesem Durchgang, andere Agenten in einem neuen, der nach dessen Ende von selbst startet;
+  - Hauptagent mitten in einem Durchgang: Claude Code, Codex, Grok, Kiro und Antigravity bekommen sie direkt in diesem Durchgang, andere Agenten in einem neuen, der nach dessen Ende von selbst startet;
   - Du schickst gerade eine Nachricht: Die Ergebnisse gehen mit ihr.
 - In der Unterhaltung erscheint eine Zeile „Ergebnisse der Teilaufgaben zurückgegeben“ mit dem jeweiligen Subagenten, ob er fertig wurde oder fehlschlug und wie lange er brauchte; aufgeklappt zeigt sie eine Zusammenfassung jedes Ergebnisses und „Sitzung öffnen“. Was mit deiner Nachricht mitging, steht darunter als „N Teilaufgaben-Ergebnisse angehängt“. Diese Zeile schickt codeg an den Hauptagenten: Sie wird nicht als deine Worte an Chat-Kanäle weitergegeben und nicht für den Sitzungstitel verwendet.
 - Ergebnisse, die der Hauptagent schon selbst über `get_delegation_status` oder `cancel_delegation` abgeholt hat, werden nicht noch einmal geschickt; Teilaufgaben, die der Hauptagent oder du abgebrochen habt, gar nicht.
@@ -240,6 +243,24 @@
 - Neues Tool `continue_delegation`: gibt einer beendeten (fertigen, fehlgeschlagenen oder abgebrochenen) Teilaufgabe neue Arbeit in ihrer ursprünglichen Untersitzung; Kontext, Arbeitsordner, Modell und Optionen bleiben, und das Ergebnis kommt ebenso zum Hauptagenten zurück. Jeder Nachtrag ist eine neue Runde mit neuer task_id. Abgrenzung zu `resume_delegation`: resume setzt fort, was mittendrin abgebrochen ist; continue legt nach, wenn es fertig ist.
 - Die Zeile der Delegation trägt hinter dem Titel Labels für Modell, Branch und „Runde N“; aufgeklappt zeigt sie Modell, Optionen und den Stand des Worktrees (von welchem Commit angelegt, wie viele Dateien geändert). „Öffnen“ öffnet den Worktree im Arbeitsbereich (Änderungen ansehen, committen und mergen geht dort), „Worktree entfernen“ entfernt ihn, auf Wunsch samt Branch.
 - Worktrees werden nicht automatisch entfernt. Beim Löschen einer Untersitzung, die einen benutzt hat, bietet die Rückfrage zusätzlich „Auch den Worktree entfernen“ an; sind darin nicht committete Änderungen, ist das standardmäßig nicht angehakt und nennt ihre Anzahl.
+
+</details>
+
+<details>
+<summary><strong>Jederzeit einwerfen</strong> – Details</summary>
+<br/>
+
+- Im offiziellen Build reiht Enter die Nachricht ein, während der Agent antwortet; der Einwurf steckt hinter dem kleinen Pfeil neben Senden und landet nur bei Claude Code und Codex direkt in der Runde. Andere Agenten brauchen „Live-Feedback“ in den Einstellungen und bekommen nur eine Notiz, die sie vielleicht lesen, wenn sie nachsehen. Die Warteschlange lebt im aktuellen Browser und ist nach dem Neuladen weg, und nach einem Stopp geht die nächste wartende Nachricht sofort raus.
+- Dieser Build folgt T3 Code:
+  - Die Sendetaste: Stopp bei leerem Eingabefeld; mit Inhalt zeigt das Symbol, was ein Klick tut – einwerfen (↱) oder einreihen (Liste +). Mit gedrückter ⌘/Ctrl-Taste wechselt das Symbol, und ⌘/Ctrl-Klick tut das andere; auf dem Handy wählt langes Drücken auf Senden das andere für diese Nachricht.
+  - Einwerfen ist Standard; „Senden, während der Agent antwortet“ unter Einstellungen → Allgemein → Tabs & Eingabe stellt auf Einreihen um, nur auf diesem Gerät.
+  - Tasten (änderbar unter Einstellungen → Tastenkürzel): Enter sendet auf die Standardart; ⌘/Ctrl+Enter auf die andere; ⌘/Ctrl+Shift+Enter wirft die älteste wartende Nachricht ein; Alt+↑ mit dem Cursor am Anfang des Eingabefelds bearbeitet die neueste wartende.
+  - Slash-Befehle werden immer eingereiht, ebenso ein Einwurf, während der Agent seinen Kontext verdichtet.
+- Wie ein Einwurf ankommt: Claude Code, Codex, Grok, Kiro (nur Text) und Antigravity ab 1.5.0 nehmen ihn in die laufende Runde auf und lesen ihn nach dem aktuellen Schritt. Bei allen anderen Agenten wird die Runde abgebrochen und in derselben Sitzung mit deiner Nachricht neu begonnen: Die abgebrochene Antwort wird zu „Durch Einwurf abgebrochener Versuch“ zusammengeklappt, der laufende Schritt geht verloren, delegierte Subagenten arbeiten weiter. Grok ohne nativen Einwurf reiht nur ein (sein Abbruch beendet auch das laufende Werkzeug).
+- Eine eingeworfene Nachricht ist mit „Einwurf“ markiert, unterwegs mit „Einwurf · wartet aufs Lesen“; die Markierungen bleiben nach dem Neuladen.
+- Die Warteschlange liegt auf dem Server: Alle Fenster und Geräte sehen dieselbe, und sie übersteht Neuladen und Neustarts. Am Computer erscheint sie als gestrichelte Blasen am Ende des Gesprächs, auf dem Handy über dem Eingabefeld; jede Nachricht lässt sich sofort senden (in die laufende Runde, oder als neue Runde, wenn nichts läuft), bearbeiten, entfernen und per Ziehen umsortieren. Der Server sendet die nächste, wenn eine Runde normal endet – auch wenn alle Browser geschlossen sind – und nimmt noch nicht zugestellte Ergebnisse von Teilaufgaben mit.
+- Stopp, eine Runde, die mit einem Fehler endet (Ratenlimit, Netzwerk …), oder ein Serverneustart pausiert die Warteschlange: Über dem Eingabefeld erscheint „Warteschlange pausiert“ mit „Fortsetzen“; Fortsetzen, Enter im leeren Eingabefeld oder eine neue Nachricht geben sie frei. Ein Einwurf, der beim Stopp noch unterwegs war, wird als nicht zugestellt gemeldet – mit einer Schaltfläche, die ihn ins Eingabefeld zurücklegt.
+- Das „Live-Feedback“ (Notizen) des offiziellen Builds ist entfallen: kein Schalter in den Einstellungen, und Agenten bekommen das Werkzeug `check_user_feedback` nicht mehr.
 
 </details>
 

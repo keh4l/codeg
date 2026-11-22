@@ -587,6 +587,18 @@
       "translate_input": {
         "title": "Traducir mensaje",
         "description": "Traduce el cuadro de mensaje al idioma de traducción de mensajes"
+      },
+      "follow_up_alternate_send": {
+        "title": "Enviar de la otra forma",
+        "description": "Mientras el agente responde: en cola si enviar interviene, interviene si enviar pone en cola"
+      },
+      "follow_up_steer_oldest": {
+        "title": "Intervenir con el mensaje en cola más antiguo",
+        "description": "Envía el primer mensaje en cola al turno en curso; el cuadro de texto no cambia"
+      },
+      "follow_up_edit_latest": {
+        "title": "Editar el último mensaje en cola",
+        "description": "Con el cursor al inicio del cuadro de texto, carga en él el último mensaje en cola"
       }
     }
   },
@@ -3626,7 +3638,8 @@
         "deleteItem": "Eliminar",
         "steerItemNow": "Insertar en el turno actual",
         "steerItemAsNote": "Enviar como nota para la próxima comprobación",
-        "waitingForConnection": "Conectando… se enviará automáticamente cuando esté listo"
+        "waitingForConnection": "Conectando… se enviará automáticamente cuando esté listo",
+        "serverError": "No se pudo actualizar la cola"
       },
       "welcomeInputPanel": {
         "agentsSettingsPath": "Ajustes > Agentes",
@@ -10341,5 +10354,41 @@
   "DelegationWorktree": {
     "deleteWithConversation": "Eliminar también su worktree ({path})",
     "deleteWithConversationUncommitted": "Eliminar también su worktree ({path}): tiene {count} cambio(s) sin confirmar"
+  },
+  "FollowUp": {
+    "interruptedAttempt": "Intento interrumpido por un mensaje",
+    "steered": "Intervención",
+    "steerPending": "Intervención · pendiente de lectura",
+    "dragToReorder": "Arrastra para reordenar",
+    "queuedLabel": "En cola {position}",
+    "queuedHeldLabel": "En pausa · en cola {position}",
+    "editingInComposer": "Editando en el cuadro de texto",
+    "sendNow": "Enviar ahora",
+    "sendNowIntoTurn": "Enviar al turno en curso",
+    "sendNowAsTurn": "Empezar un turno con este mensaje",
+    "edit": "Editar",
+    "remove": "Quitar",
+    "queueAria": "{count, plural, one {# mensaje en cola} other {# mensajes en cola}}",
+    "showFewer": "Mostrar menos",
+    "showMore": "Mostrar {count} más",
+    "heldBar": "Cola en pausa · {count, plural, one {# mensaje esperando} other {# mensajes esperando}}",
+    "resume": "Continuar",
+    "steerQueued": "Este agente no puede recibir mensajes ahora; se puso en cola para después de este turno",
+    "steerUndelivered": "La intervención no se entregó: «{text}»",
+    "putBack": "Devolver al cuadro de texto",
+    "sendFailed": "No se pudo enviar el mensaje en cola",
+    "queueOnlyHint": "Los comandos con barra siempre van a la cola",
+    "tooltipSteerDefault": "Clic para intervenir, {mod}+clic para poner en cola",
+    "tooltipQueueDefault": "Clic para poner en cola, {mod}+clic para intervenir",
+    "actionSteer": "Intervenir en este turno",
+    "actionQueue": "Poner en cola para después",
+    "default": "Predeterminado"
+  },
+  "FollowUpSettings": {
+    "title": "Enviar mientras el agente responde",
+    "description": "Si la tecla de envío mete tu mensaje en el turno en curso o lo pone en cola para después. La otra opción siempre está a mano: {mod}+clic en enviar, o {mod}+Enter. Solo se aplica a este dispositivo.",
+    "steer": "Intervenir",
+    "queue": "En cola",
+    "note": "Claude Code, Codex, Grok, Kiro y Antigravity reciben el mensaje en el turno en curso y lo leen tras el paso actual. Los demás agentes detienen el turno y empiezan de nuevo con tu mensaje, lo que descarta el paso interrumpido; elige En cola si prefieres que terminen antes."
   }
 }

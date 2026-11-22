@@ -587,6 +587,18 @@
       "translate_input": {
         "title": "Translate Message",
         "description": "Translate the message input box into the message translation language"
+      },
+      "follow_up_alternate_send": {
+        "title": "Send the Other Way",
+        "description": "While the agent replies: queue when sending steers, steer when sending queues"
+      },
+      "follow_up_steer_oldest": {
+        "title": "Steer the Oldest Queued Message",
+        "description": "Send the first queued message into the running turn; the composer is left as it is"
+      },
+      "follow_up_edit_latest": {
+        "title": "Edit the Latest Queued Message",
+        "description": "With the caret at the start of the composer, load the last queued message into it"
       }
     }
   },
@@ -3626,7 +3638,8 @@
         "deleteItem": "Remove",
         "steerItemNow": "Insert into current turn",
         "steerItemAsNote": "Send as note for next check",
-        "waitingForConnection": "Connecting... will send automatically once ready"
+        "waitingForConnection": "Connecting... will send automatically once ready",
+        "serverError": "Couldn't update the queue"
       },
       "welcomeInputPanel": {
         "agentsSettingsPath": "Settings > Agents",
@@ -10341,5 +10354,41 @@
   "DelegationWorktree": {
     "deleteWithConversation": "Also remove its worktree ({path})",
     "deleteWithConversationUncommitted": "Also remove its worktree ({path}) — it has {count} uncommitted change(s)"
+  },
+  "FollowUp": {
+    "interruptedAttempt": "Attempt cut off by a steer",
+    "steered": "Steer",
+    "steerPending": "Steer · waiting to be read",
+    "dragToReorder": "Drag to reorder",
+    "queuedLabel": "Queued {position}",
+    "queuedHeldLabel": "Paused · queued {position}",
+    "editingInComposer": "Editing in the composer",
+    "sendNow": "Send now",
+    "sendNowIntoTurn": "Send into the current turn",
+    "sendNowAsTurn": "Start a turn with this message",
+    "edit": "Edit",
+    "remove": "Remove",
+    "queueAria": "{count, plural, one {# queued message} other {# queued messages}}",
+    "showFewer": "Show fewer",
+    "showMore": "Show {count} more",
+    "heldBar": "Queue paused · {count, plural, one {# message waiting} other {# messages waiting}}",
+    "resume": "Continue",
+    "steerQueued": "This agent can't take a message right now, so it was queued for after this turn",
+    "steerUndelivered": "Steer not delivered: “{text}”",
+    "putBack": "Put back in the composer",
+    "sendFailed": "Couldn't send the queued message",
+    "queueOnlyHint": "Slash commands always queue",
+    "tooltipSteerDefault": "Click to steer, {mod}-click to queue",
+    "tooltipQueueDefault": "Click to queue, {mod}-click to steer",
+    "actionSteer": "Steer into this turn",
+    "actionQueue": "Queue for after this turn",
+    "default": "Default"
+  },
+  "FollowUpSettings": {
+    "title": "Sending while the agent replies",
+    "description": "Whether the send key steers your message into the running turn or queues it for after the turn. The other one is always there: {mod}-click send, or press {mod}+Enter. Applies to this device only.",
+    "steer": "Steer",
+    "queue": "Queue",
+    "note": "Claude Code, Codex, Grok, Kiro and Antigravity take the message into the running turn and read it after the step at hand. Other agents stop the turn and start again with your message, which drops the step that was cut off; pick Queue if you'd rather they finish first."
   }
 }
