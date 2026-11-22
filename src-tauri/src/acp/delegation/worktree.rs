@@ -307,9 +307,12 @@ mod tests {
             .await
             .expect("made");
         assert_eq!(wt.branch, "delegate/9f3a1c22");
+        // The same directory however the platform spells it: macOS reaches
+        // its temp dir through the /var -> /private/var link, and on Windows
+        // git gives the long name with forward slashes.
         assert_eq!(
-            wt.root,
-            repo.parent().unwrap().join("proj-delegate-9f3a1c22")
+            std::fs::canonicalize(&wt.root).unwrap(),
+            std::fs::canonicalize(repo.parent().unwrap().join("proj-delegate-9f3a1c22")).unwrap()
         );
         assert_eq!(wt.working_dir, wt.root.join("app/"));
         assert_eq!(wt.parent_uncommitted, 1);
