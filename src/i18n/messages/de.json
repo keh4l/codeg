@@ -112,7 +112,8 @@
         "green": "Green",
         "blue": "Blue",
         "yellow": "Yellow",
-        "violet": "Violet"
+        "violet": "Violet",
+        "carbon": "Karbon"
       }
     },
     "customStyle": {
@@ -262,6 +263,24 @@
         "appliedToast": "Hintergrund angewendet",
         "credit": "Bilder von wallhaven.cc · nur SFW"
       }
+    },
+    "chatView": {
+      "styleTitle": "Gesprächsstil",
+      "styleDescription": "Kompakt klappt die Arbeitsschritte jeder Antwort in eine Zeile ein (T3-Code-Stil). Jederzeit zurück zur klassischen Zeitleiste wechselbar.",
+      "styleCompact": "Kompakt (T3-Stil)",
+      "styleTimeline": "Zeitleiste (klassisch)",
+      "toolVisibilityTitle": "Tool-Aufrufe",
+      "toolVisibilityDescription": "Steuert, welche Tool-Aufrufe in der kompakten Ansicht angezeigt werden.",
+      "toolVisibility": {
+        "showAll": "Alle anzeigen",
+        "hideSuccessful": "Erfolgreiche ausblenden",
+        "hideAll": "Alle ausblenden",
+        "zen": "Zen-Modus"
+      },
+      "liveSpeedTitle": "Live-Ausgabegeschwindigkeit",
+      "liveSpeedDescription": "Zeigt während der Antwort die aktuelle Token-Geschwindigkeit (tok/s) in der Statuszeile.",
+      "minimapTitle": "Zeitleisten-Minimap",
+      "minimapDescription": "Zeigt auf dem Desktop eine schmale Sprung- und Vorschauleiste am Rand des Gesprächs."
     }
   },
   "SystemSettings": {
@@ -10390,5 +10409,43 @@
     "steer": "Einwerfen",
     "queue": "Einreihen",
     "note": "Claude Code, Codex, Grok, Kiro und Antigravity nehmen die Nachricht in die laufende Runde auf und lesen sie nach dem aktuellen Schritt. Andere Agenten brechen die Runde ab und beginnen mit deiner Nachricht neu; der abgebrochene Schritt geht verloren. Wähle Einreihen, wenn sie erst fertig werden sollen."
+  },
+  "CompactView": {
+    "working": "Arbeitet",
+    "worked": "Bearbeitet",
+    "workedFor": "{time} gearbeitet",
+    "files": "{count, plural, one {# Datei} other {# Dateien}}",
+    "expandSteps": "Schritte ausklappen",
+    "collapseSteps": "Schritte einklappen",
+    "openInDiffPanel": "Im Diff-Panel öffnen",
+    "changedFilesTitle": "{count, plural, one {1 Datei geändert} other {# Dateien geändert}}",
+    "expandAllDirs": "Alle ausklappen",
+    "collapseAllDirs": "Alle einklappen",
+    "fileAddedBadge": "Neu",
+    "fileRemovedBadge": "Entf",
+    "previewFile": "Vorschau",
+    "closePreview": "Vorschau schließen",
+    "loadingPreview": "Vorschau wird geladen…",
+    "editMessage": "Im Eingabefeld bearbeiten",
+    "citationJumpTitle": "Zur zitierten Nachricht springen",
+    "citationJumpAria": "Zur zitierten Nachricht springen",
+    "expandQuote": "Zitat ausklappen",
+    "collapseQuote": "Zitat einklappen",
+    "removeQuote": "Zitat entfernen",
+    "minimapLabel": "Gesprächsverlauf",
+    "minimapTurnAria": "Zu Nachricht {index} springen",
+    "minimapEmptyPrompt": "(Kein Text)",
+    "minimapNoReply": "(Noch keine Antwort)",
+    "findInConversation": "Im Gespräch suchen",
+    "findPlaceholder": "Im Gespräch suchen…",
+    "findCaseSensitive": "Groß-/Kleinschreibung beachten",
+    "findPrevious": "Vorheriger Treffer",
+    "findNext": "Nächster Treffer",
+    "findClose": "Suche schließen",
+    "codeWrap": "Zeilenumbruch aktivieren",
+    "codeUnwrap": "Zeilenumbruch deaktivieren",
+    "runInTerminal": "Im Terminal ausführen",
+    "runInTerminalHint": "Befehl in ein neues Terminal einfügen (Enter zum Ausführen)",
+    "pastedToTerminal": "Befehl in neues Terminal eingefügt — Enter zum Ausführen"
   }
 }

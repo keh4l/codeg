@@ -58,7 +58,8 @@
     <td width="50%" valign="top">🌿 <strong>Les sous-agents travaillent dans leur propre worktree</strong><br/>L'agent principal peut faire modifier le code par un sous-agent dans un worktree et une branche git à part, pour que plusieurs sous-agents en parallèle ne se gênent pas ; chaque délégation peut choisir son modèle et son niveau de raisonnement, et un sous-agent qui a fini peut recevoir du travail en plus dans la même session.</td>
   </tr>
   <tr>
-    <td colspan="2" valign="top">🗣️ <strong>Intervenir à tout moment</strong><br/>Pendant que l'agent répond, la touche d'envoi glisse votre message dans le tour en cours, et l'agent le lit après l'étape en cours ; avec ⌘/Ctrl, il est mis en attente pour après le tour. On peut intervenir avec tous les agents. La file vit sur le serveur : elle survit à un rechargement et vous suit sur un autre appareil ; un arrêt ou une erreur la met en pause jusqu'à ce que vous repreniez.</td>
+    <td width="50%" valign="top">🗣️ <strong>Intervenir à tout moment</strong><br/>Pendant que l'agent répond, la touche d'envoi glisse votre message dans le tour en cours, et l'agent le lit après l'étape en cours ; avec ⌘/Ctrl, il est mis en attente pour après le tour. On peut intervenir avec tous les agents. La file vit sur le serveur : elle survit à un rechargement et vous suit sur un autre appareil ; un arrêt ou une erreur la met en pause jusqu'à ce que vous repreniez.</td>
+    <td width="50%" valign="top">✨ <strong>Vue compacte façon T3</strong><br/>Replie les étapes de chaque réponse en une ligne « A travaillé Xs » et n’affiche que l’étape en cours pendant l’exécution ; remplace les cartes par une arborescence des fichiers modifiés et n’affiche le pied de réponse qu’au survol. Ajoute quatre niveaux d’outils, une minicarte, la recherche ⌘/Ctrl+F sur tout le fil, des citations avec retour à la source, le retour à la ligne et « Lancer dans le terminal » sur le code, et un thème noir pur « Carbone ».</td>
   </tr>
   <tr>
     <td colspan="2" valign="top">🔄 <strong>Au plus près de l'original</strong><br/>Le projet d'origine est fusionné régulièrement ; ce qui n'est pas listé ici fonctionne comme dans la version officielle. Kiro CLI intégré, le premier ajout de cette version, fait partie de la version officielle depuis la 0.36.0. Les résumés de réflexion de Claude Code passent dès la 0.41.3-1 par l'interrupteur de la version officielle : « Afficher les résumés de réflexion de Claude » dans Réglages → Agents IA → Claude Code, désactivé par défaut. Depuis la 0.46.0-1, le message suivant suggéré se remplit comme dans la version officielle : Tab sur ordinateur, bouton ampoule à côté d’Envoyer sur téléphone.</td>
@@ -261,6 +262,19 @@
 - La file vit sur le serveur : toutes les fenêtres et tous les appareils voient la même, et elle survit aux rechargements et redémarrages. Sur ordinateur, elle s'affiche en bulles pointillées à la fin de la conversation, sur téléphone au-dessus de la zone de saisie ; chaque message peut être envoyé tout de suite (dans le tour en cours, ou comme nouveau tour au repos), modifié, retiré et réordonné par glisser. Le serveur envoie le suivant quand un tour se termine normalement, même si tous les navigateurs sont fermés, avec les résultats de sous-tâches pas encore livrés.
 - Un arrêt, un tour qui finit en erreur (limite de débit, réseau…) ou un redémarrage du serveur met la file en pause : « File en pause » et « Reprendre » s'affichent au-dessus de la zone de saisie ; Reprendre, Entrée dans une zone vide ou un nouveau message la relancent. Une intervention encore en route au moment de l'arrêt est signalée comme non transmise, avec un bouton pour la remettre dans la zone de saisie.
 - Le « Retour en direct » (notes) de la version officielle a disparu : plus d'interrupteur dans les réglages, et les agents ne reçoivent plus l'outil `check_user_feedback`.
+
+</details>
+
+<details>
+<summary>Détails de <strong>Vue compacte façon T3</strong></summary>
+<br/>
+
+- <strong>Activée par défaut, réversible</strong> : basculez instantanément entre « Compact (style T3) » et « Chronologie (classique) » dans Paramètres → Apparence → Style de conversation (local à l’appareil).
+- <strong>Ligne en direct et pliage auto</strong> : affiche « En cours Xs » et l’étape active (aperçu de 4 lignes en réflexion), puis se replie en une ligne à la fin. Les échecs non résolus, autorisations en attente, questions, plans, sous-agents actifs et images générées restent toujours visibles ; un tour déplié manuellement reste ouvert.
+- <strong>Quatre niveaux d’appels d’outils</strong> : Tout afficher, Masquer les réussis, Tout masquer et Mode zen dans les Paramètres ou le menu « … » de l’en-tête.
+- <strong>Arborescence des fichiers &amp; diff</strong> : dossiers uniques fusionnés, déplié jusqu’à 8 fichiers, virtualisé au-delà de 250 lignes ; un clic ouvre le panneau de diff, les nouveaux HTML/Markdown/images s’affichent en aperçu intégré, et chaque ligne d’édition propose aussi l’ouverture du diff.
+- <strong>Bulles groupées et pied au survol</strong> : messages consécutifs regroupés, collage d’images intégré à la bulle, pliage au-delà de 22rem, heure/copie/édition au survol (sans annuler les fichiers). Le pied de réponse apparaît au survol (toujours visible sur la dernière réponse) ; vitesse tok/s masquée par défaut. L’envoi ancre votre message à 24px du haut.
+- <strong>Minicarte, recherche complète, citations &amp; Carbone</strong> : minicarte sur ordinateur, ⌘/Ctrl+F sur tout l’historique (y compris les tours non chargés, avec dépliage automatique), citations cliquables avec surbrillance 2s sur l’original, retour à la ligne et collage sans exécution dans un nouveau terminal pour les blocs shell, et thème noir pur « Carbone ».
 
 </details>
 

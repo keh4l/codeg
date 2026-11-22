@@ -22,6 +22,8 @@ import { openDisclosures } from "./activity/disclosure-store"
 import { useFoldBack } from "./activity/fold-back"
 import { WorkingMark } from "./activity/rail-icon"
 import { ReplyMotion } from "./reply-motion"
+import { useChatViewPrefs } from "@/lib/chat-view-prefs"
+import { CompactTurn } from "./compact/compact-turn"
 
 export interface SplitAssistantTurnParts {
   progress: AdaptedContentPart[]
@@ -74,16 +76,7 @@ const manualFold = new WeakMap<
   { epoch: number; open: boolean }
 >()
 
-export const CompletedTurnContent = memo(function CompletedTurnContent({
-  parts,
-  durationMs,
-  completed,
-  currentRound = false,
-  roundOpen = true,
-  onRoundOpenChange,
-  foldEpoch = 0,
-  pending = false,
-}: {
+export interface CompletedTurnContentProps {
   parts: AdaptedContentPart[]
   durationMs?: number | null
   completed: boolean
@@ -101,7 +94,40 @@ export const CompletedTurnContent = memo(function CompletedTurnContent({
    *  reply will draw them, so it takes over without a jump (see
    *  `ReplyMotion`'s handoff). */
   pending?: boolean
-}) {
+  /** keh4l build: transcript turn ids & global indices covered by this reply. */
+  turnIds?: readonly string[]
+  turnIndices?: readonly number[]
+}
+
+export const CompletedTurnContent = memo(function CompletedTurnContent(
+  props: CompletedTurnContentProps
+) {
+  const { view } = useChatViewPrefs()
+  if (view === "compact") {
+    return (
+      <CompactTurn
+        parts={props.parts}
+        durationMs={props.durationMs}
+        completed={props.completed}
+        currentRound={props.currentRound}
+        turnIds={props.turnIds}
+        turnIndices={props.turnIndices}
+      />
+    )
+  }
+  return <TimelineTurnContent {...props} />
+})
+
+const TimelineTurnContent = memo(function TimelineTurnContent({
+  parts,
+  durationMs,
+  completed,
+  currentRound = false,
+  roundOpen = true,
+  onRoundOpenChange,
+  foldEpoch = 0,
+  pending = false,
+}: CompletedTurnContentProps) {
   const tElapsed = useTranslations("Folder.chat.liveTurnStats")
   const split = useMemo(() => splitAssistantTurnParts(parts), [parts])
 

@@ -8,6 +8,7 @@ import type { CSSProperties } from "react"
  */
 export const THEME_COLORS = [
   "neutral",
+  "carbon",
   "zinc",
   "slate",
   "stone",
@@ -77,6 +78,7 @@ export const DEFAULT_THEME_COLOR: ThemeColor = "neutral"
  */
 export const THEME_COLOR_PREVIEW: Record<ThemeColor, string> = {
   neutral: "oklch(0.205 0 0)",
+  carbon: "#000000",
   zinc: "oklch(0.21 0.006 285.885)",
   slate: "oklch(0.208 0.042 265.755)",
   stone: "oklch(0.216 0.006 56.043)",
@@ -114,6 +116,7 @@ export const THEME_COLOR_TITLE: Record<
   { light: string; dark: string }
 > = {
   neutral: { light: "oklch(0.205 0 0)", dark: "oklch(0.87 0 0)" },
+  carbon: { light: "oklch(0.145 0 0)", dark: "oklch(0.92 0 0)" },
   zinc: {
     light: "oklch(0.21 0.006 285.885)",
     dark: "oklch(0.92 0.004 286.32)",

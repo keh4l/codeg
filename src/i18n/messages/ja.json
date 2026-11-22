@@ -112,7 +112,8 @@
         "green": "Green",
         "blue": "Blue",
         "yellow": "Yellow",
-        "violet": "Violet"
+        "violet": "Violet",
+        "carbon": "カーボン"
       }
     },
     "customStyle": {
@@ -262,6 +263,24 @@
         "appliedToast": "壁紙を適用しました",
         "credit": "画像提供 wallhaven.cc · SFW のみ"
       }
+    },
+    "chatView": {
+      "styleTitle": "会話スタイル",
+      "styleDescription": "コンパクト表示は各応答の作業手順を1行に折りたたみます（T3 Code 風）。従来のタイムライン表示にも切り替えられます。",
+      "styleCompact": "コンパクト（T3 風）",
+      "styleTimeline": "タイムライン（従来）",
+      "toolVisibilityTitle": "ツール呼び出しの表示",
+      "toolVisibilityDescription": "コンパクト表示で応答内に表示するツール呼び出しの範囲を選択します。",
+      "toolVisibility": {
+        "showAll": "すべて表示",
+        "hideSuccessful": "成功したものを隠す",
+        "hideAll": "すべて隠す",
+        "zen": "禅モード"
+      },
+      "liveSpeedTitle": "リアルタイム出力速度",
+      "liveSpeedDescription": "応答中の作業行にトークン出力速度（tok/s）を表示します。",
+      "minimapTitle": "タイムラインミニマップ",
+      "minimapDescription": "デスクトップの会話端にホバープレビューとジャンプ用のミニマップを表示します。"
     }
   },
   "SystemSettings": {
@@ -10390,5 +10409,43 @@
     "steer": "割り込み",
     "queue": "キュー",
     "note": "Claude Code、Codex、Grok、Kiro、Antigravity は進行中のターンにメッセージを取り込み、今のステップの後に読みます。その他のエージェントはターンを止めてメッセージとともにやり直すため、中断されたステップは失われます。先に終わらせたい場合は「キュー」を選んでください。"
+  },
+  "CompactView": {
+    "working": "作業中",
+    "worked": "作業完了",
+    "workedFor": "{time} 作業しました",
+    "files": "{count} ファイル",
+    "expandSteps": "手順を展開",
+    "collapseSteps": "手順を折りたたむ",
+    "openInDiffPanel": "差分パネルで開く",
+    "changedFilesTitle": "{count} 個のファイルを変更",
+    "expandAllDirs": "すべて展開",
+    "collapseAllDirs": "すべて折りたたむ",
+    "fileAddedBadge": "新規",
+    "fileRemovedBadge": "削除",
+    "previewFile": "プレビュー",
+    "closePreview": "プレビューを閉じる",
+    "loadingPreview": "プレビューを読み込み中…",
+    "editMessage": "入力欄で再編集",
+    "citationJumpTitle": "引用元へ移動",
+    "citationJumpAria": "引用元のメッセージへ移動",
+    "expandQuote": "引用を展開",
+    "collapseQuote": "引用を折りたたむ",
+    "removeQuote": "引用を削除",
+    "minimapLabel": "会話タイムライン",
+    "minimapTurnAria": "{index} 番目のメッセージへ移動",
+    "minimapEmptyPrompt": "（テキストなし）",
+    "minimapNoReply": "（まだ返信がありません）",
+    "findInConversation": "会話内を検索",
+    "findPlaceholder": "会話内を検索…",
+    "findCaseSensitive": "大文字と小文字を区別",
+    "findPrevious": "前の一致",
+    "findNext": "次の一致",
+    "findClose": "検索を閉じる",
+    "codeWrap": "行を折り返す",
+    "codeUnwrap": "折り返しを解除",
+    "runInTerminal": "ターミナルで実行",
+    "runInTerminalHint": "新しいターミナルにコマンドを貼り付け（Enter で実行）",
+    "pastedToTerminal": "新しいターミナルに貼り付けました — Enter で実行します"
   }
 }

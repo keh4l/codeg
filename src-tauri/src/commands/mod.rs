@@ -106,6 +106,8 @@ pub mod tab_sync;
 pub mod terminal;
 pub mod token_usage;
 pub mod translation;
+/// keh4l build: whole-transcript find and minimap for the T3-style chat view.
+pub mod transcript_view;
 pub mod turn_window;
 pub mod version_control;
 #[cfg(feature = "tauri-runtime")]

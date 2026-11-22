@@ -2,17 +2,26 @@
 
 import { lazy, memo, Suspense, useCallback, useState } from "react"
 import {
+  Check,
   ChevronRight,
   Circle,
   EllipsisVertical,
+  Eye,
   Info,
   Pencil,
   Pin,
   PinOff,
+  Search,
   SquarePen,
   Trash2,
 } from "lucide-react"
 import { useTranslations } from "next-intl"
+import {
+  TOOL_CALL_VISIBILITIES,
+  useChatViewPrefs,
+  writeChatViewPrefs,
+} from "@/lib/chat-view-prefs"
+import { dispatchOpenThreadFind } from "@/components/message/compact/thread-find-bar"
 import { useImeGuard } from "@/hooks/use-ime-guard"
 import {
   deleteConversation,
@@ -124,6 +133,9 @@ export const ConversationDetailHeader = memo(function ConversationDetailHeader({
   const tConv = useTranslations("Folder.conversation")
   const tStatus = useTranslations("Folder.statusLabels")
   const tDetails = useTranslations("Folder.sessionDetails")
+  const tCompact = useTranslations("CompactView")
+  const tAppearance = useTranslations("AppearanceSettings.chatView")
+  const chatViewPrefs = useChatViewPrefs()
   const { closeTab, openNewConversationTab } = useTabActions()
   const updateConversationLocal = useAppWorkspaceStore(
     (s) => s.updateConversationLocal
@@ -374,6 +386,40 @@ export const ConversationDetailHeader = memo(function ConversationDetailHeader({
               <Info className="h-4 w-4" />
               {tDetails("menuLabel")}
             </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={!persisted}
+              onSelect={() => dispatchOpenThreadFind(conversationId)}
+            >
+              <Search className="h-4 w-4" />
+              {tCompact("findInConversation")}
+            </DropdownMenuItem>
+            {chatViewPrefs.view === "compact" ? (
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>
+                  <Eye className="h-4 w-4" />
+                  {tAppearance("toolVisibilityTitle")}
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  {TOOL_CALL_VISIBILITIES.map((level) => (
+                    <DropdownMenuItem
+                      key={level}
+                      onSelect={() =>
+                        writeChatViewPrefs({ toolVisibility: level })
+                      }
+                    >
+                      <Check
+                        className={
+                          chatViewPrefs.toolVisibility === level
+                            ? "h-4 w-4 opacity-100"
+                            : "h-4 w-4 opacity-0"
+                        }
+                      />
+                      {tAppearance(`toolVisibility.${level}`)}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+            ) : null}
             <DropdownMenuSeparator />
             <DropdownMenuSub>
               <DropdownMenuSubTrigger disabled={!persisted}>

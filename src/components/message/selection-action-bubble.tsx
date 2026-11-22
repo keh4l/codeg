@@ -82,6 +82,27 @@ function findDock(container: HTMLElement): HTMLElement | null {
   )
 }
 
+export interface SelectionQuoteSource {
+  turnIndex: number | null
+  turnId: string | null
+}
+
+function resolveQuoteSource(
+  node: Node | null
+): SelectionQuoteSource | undefined {
+  const el = node instanceof HTMLElement ? node : (node?.parentElement ?? null)
+  const turnEl = el?.closest<HTMLElement>("[data-turn-index]")
+  if (!turnEl) return undefined
+  const rawIdx = turnEl.getAttribute("data-turn-index")
+  const parsed = rawIdx !== null ? Number.parseInt(rawIdx, 10) : Number.NaN
+  const rawIds = turnEl.getAttribute("data-turn-ids") ?? ""
+  const firstId = rawIds.trim().split(/\s+/).filter(Boolean)[0] ?? null
+  return {
+    turnIndex: Number.isNaN(parsed) ? null : parsed,
+    turnId: firstId,
+  }
+}
+
 interface SelectionActionBubbleProps {
   /**
    * The element whose text selections arm the bubble. It also owns positioning:
@@ -95,7 +116,7 @@ interface SelectionActionBubbleProps {
    * surfaces (the sub-agent transcript dialog, task transcripts) — the quote
    * action then simply isn't offered and only "copy" remains.
    */
-  onQuote?: (text: string) => void
+  onQuote?: (text: string, source?: SelectionQuoteSource) => void
   /**
    * Ask a question ABOUT the selection: the host opens a fresh conversation on
    * the same agent and sends the quoted selection followed by `question`.
@@ -134,6 +155,7 @@ export function SelectionActionBubble({
   const ime = useImeGuard()
   const [state, setState] = useState<SelectionState>(NO_SELECTION)
   const stateRef = useRef<SelectionState>(NO_SELECTION)
+  const sourceRef = useRef<SelectionQuoteSource | undefined>(undefined)
   const bubbleRef = useRef<HTMLDivElement | null>(null)
   // The "ask" composer is open. While it is, the toolbar FREEZES: the selection
   // text is already captured in `state`, and every tracker below stands down.
@@ -185,6 +207,7 @@ export function SelectionActionBubble({
     if (!container.contains(range.commonAncestorContainer)) return NO_SELECTION
     const text = selection.toString()
     if (!text.trim()) return NO_SELECTION
+    sourceRef.current = resolveQuoteSource(range.startContainer)
     if (directRef.current) {
       return { kind: "docked", text, dock: findDock(container) }
     }
@@ -389,7 +412,12 @@ export function SelectionActionBubble({
   const handleQuote = useCallback(() => {
     const current = stateRef.current
     if (current.kind === "none" || !onQuote) return
-    onQuote(current.text)
+    const source = sourceRef.current
+    if (source) {
+      onQuote(current.text, source)
+    } else {
+      onQuote(current.text)
+    }
     dismiss()
   }, [onQuote, dismiss])
 

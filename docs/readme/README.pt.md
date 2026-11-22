@@ -58,7 +58,8 @@
     <td width="50%" valign="top">🌿 <strong>Subagentes trabalham no próprio worktree</strong><br/>O agente principal pode fazer um subagente mudar código num worktree e numa branch do git separados, para que vários em paralelo não atrapalhem uns aos outros; cada delegação pode definir o próprio modelo e nível de raciocínio, e um subagente que já terminou pode receber mais trabalho na mesma sessão.</td>
   </tr>
   <tr>
-    <td colspan="2" valign="top">🗣️ <strong>Intervir a qualquer momento</strong><br/>Enquanto o agente responde, a tecla de enviar coloca a sua mensagem no turno em andamento, e o agente a lê depois da etapa atual; com ⌘/Ctrl ela vai para a fila, para depois do turno. Dá para intervir com qualquer agente. A fila fica no servidor, então sobrevive a um recarregamento e acompanha você em outro dispositivo; parar ou um erro pausam a fila até você mandar continuar.</td>
+    <td width="50%" valign="top">🗣️ <strong>Intervir a qualquer momento</strong><br/>Enquanto o agente responde, a tecla de enviar coloca a sua mensagem no turno em andamento, e o agente a lê depois da etapa atual; com ⌘/Ctrl ela vai para a fila, para depois do turno. Dá para intervir com qualquer agente. A fila fica no servidor, então sobrevive a um recarregamento e acompanha você em outro dispositivo; parar ou um erro pausam a fila até você mandar continuar.</td>
+    <td width="50%" valign="top">✨ <strong>Visualização compacta estilo T3</strong><br/>Recolhe o trabalho de cada resposta em uma linha “Trabalhou por Xs” e exibe apenas o passo atual durante a execução; troca os cartões por uma árvore de arquivos alterados e mostra o rodapé ao passar o mouse. Inclui quatro níveis de ferramentas, minimapa lateral, busca ⌘/Ctrl+F em toda a conversa, citações clicáveis de volta à origem, quebra de linha e “Executar no terminal” em código, e tema preto puro “Carbono”.</td>
   </tr>
   <tr>
     <td colspan="2" valign="top">🔄 <strong>Acompanha o original</strong><br/>O projeto original é mesclado regularmente; o que não está listado aqui funciona como na versão oficial. O Kiro CLI integrado, a primeira coisa que esta versão adicionou, faz parte da versão oficial desde a 0.36.0. Os resumos do raciocínio do Claude Code usam, desde a 0.41.3-1, o interruptor da versão oficial: “Mostrar resumos do raciocínio do Claude” em Configurações → Agentes → Claude Code, desativado por padrão. A partir da 0.46.0-1, a próxima mensagem sugerida é preenchida como na versão oficial: Tab no computador e o botão de lâmpada ao lado de Enviar no celular.</td>
@@ -261,6 +262,19 @@
 - A fila fica no servidor: todas as janelas e dispositivos veem a mesma, e ela sobrevive a recarregamentos e reinícios. No computador aparece em balões tracejados no fim da conversa, no celular acima da caixa de texto; cada mensagem pode ser enviada agora (no turno em andamento, ou como turno novo se estiver ocioso), editada, removida e reordenada arrastando. O servidor envia a próxima quando um turno termina normalmente, mesmo com todos os navegadores fechados, levando os resultados de subtarefas ainda não entregues.
 - Parar, um turno que termina em erro (limite de uso, rede…) ou reiniciar o servidor pausa a fila: acima da caixa aparece “Fila pausada” com “Continuar”; Continuar, Enter com a caixa vazia ou uma mensagem nova liberam a fila. Uma intervenção ainda a caminho quando você para é avisada como não entregue, com um botão para devolvê-la à caixa.
 - O “Feedback ao vivo” (notas) da versão oficial saiu: não há chave nas configurações, e os agentes não recebem mais a ferramenta `check_user_feedback`.
+
+</details>
+
+<details>
+<summary>Detalhes sobre <strong>Visualização compacta estilo T3</strong></summary>
+<br/>
+
+- <strong>Ativa por padrão, reversível a qualquer momento</strong>: alterne instantaneamente entre “Compacto (estilo T3)” e “Linha do tempo (clássico)” em Configurações → Aparência → Estilo da conversa (salvo por dispositivo).
+- <strong>Linha ao vivo e recolhimento automático</strong>: enquanto responde mostra “Trabalhando Xs” e o passo atual (com prévia de 4 linhas ao pensar) e recolhe em uma linha ao concluir. Falhas não recuperadas, aprovações pendentes, perguntas, planos, subagentes ativos e imagens geradas ficam sempre visíveis; turnos abertos manualmente permanecem abertos.
+- <strong>Quatro níveis de ferramentas</strong>: Mostrar tudo, Ocultar bem-sucedidas, Ocultar tudo e Modo zen nas Configurações ou no menu “…” do cabeçalho.
+- <strong>Árvore de arquivos e diff</strong>: diretórios únicos mesclados, expandido até 8 arquivos, virtualizado acima de 250 linhas; clique abre o painel de diff, novos HTML/Markdown/imagens têm pré-visualização inline e linhas de edição também abrem o diff diretamente.
+- <strong>Balões agrupados e rodapé no hover</strong>: mensagens seguidas agrupadas, colagem de imagens dentro do balão, recolhimento só acima de 22rem e ações no hover (hora, copiar, editar no compositor sem reverter arquivos). O rodapé da resposta aparece no hover (sempre visível na última); tok/s desativado por padrão. Enviar fixa sua mensagem a 24px do topo.
+- <strong>Minimapa, busca completa, citações e tema Carbono</strong>: minimapa no desktop, ⌘/Ctrl+F pesquisa todo o histórico (carregando turnos antigos e abrindo seções recolhidas), citações clicáveis que saltam e destacam por 2s, quebra de linha e colagem sem executar em novo terminal para blocos shell, e tema preto puro “Carbono”.
 
 </details>
 

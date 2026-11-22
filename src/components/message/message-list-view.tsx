@@ -5,11 +5,13 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type ComponentProps,
   type ReactNode,
+  type RefObject,
 } from "react"
 import {
   isLiveTurnId,
@@ -127,7 +129,30 @@ import {
   VirtualizedMessageThread,
   type ViewportTop,
 } from "@/components/message/virtualized-message-thread"
-import { SelectionActionBubble } from "@/components/message/selection-action-bubble"
+import {
+  SelectionActionBubble,
+  type SelectionQuoteSource,
+} from "@/components/message/selection-action-bubble"
+import { useChatViewPrefs } from "@/lib/chat-view-prefs"
+import {
+  CompactThreadProvider,
+  useCompactRound,
+} from "./compact/compact-thread"
+import { ChangedFilesTree } from "./compact/changed-files-tree"
+import { ReplyMetaFooter } from "./compact/reply-meta-footer"
+import {
+  CompactUserBubble,
+  type UserBubbleGroupPosition,
+} from "./compact/user-bubble"
+import {
+  TimelineMinimap,
+  type MinimapLocalTurn,
+} from "./compact/timeline-minimap"
+import { ThreadFindBar, type LocalSearchTurn } from "./compact/thread-find-bar"
+import {
+  CitationJumpProvider,
+  type CitationJumpHandler,
+} from "./compact/citation-card"
 import type { MessageNavEntry } from "@/components/message/conversation-message-nav"
 import type { MessageScrollContextValue } from "@/components/message/message-scroll-context"
 import {
@@ -232,7 +257,10 @@ interface MessageListViewProps {
    * read-only surfaces (sub-agent dialog, task transcripts), which then offer
    * copy alone. MUST be referentially stable.
    */
-  onQuoteSelection?: (text: string) => void
+  onQuoteSelection?: (text: string, source?: SelectionQuoteSource) => void
+  /** keh4l build: put a previously sent user message back into the composer to
+   *  edit & resend (does not revert files). */
+  onEditUserMessage?: (text: string) => void
   /**
    * Ask a question about a text selection made in this transcript: the host
    * opens a new conversation on the same agent and sends the quoted selection
@@ -1449,6 +1477,9 @@ const HistoricalMessageGroup = memo(function HistoricalMessageGroup({
   onForkFromTurn,
   forkDisabled = false,
   isThreadTail = false,
+  compact = false,
+  userGroupPos = "solo",
+  turnIndices,
 }: {
   group: ResolvedMessageGroup
   dimmed?: boolean
@@ -1465,11 +1496,16 @@ const HistoricalMessageGroup = memo(function HistoricalMessageGroup({
   /** Whether nothing follows this group in the thread — the one position where
    *  a turn the backend cannot name still forks where the user pointed. */
   isThreadTail?: boolean
+  /** keh4l build: T3-style compact conversation view. */
+  compact?: boolean
+  userGroupPos?: UserBubbleGroupPosition
+  turnIndices?: readonly number[]
 }) {
   // A message the user has just sent rises into the thread. Decided once, as
   // it mounts on its way (`dimmed`): the virtual list bringing a stored one
   // back never replays it.
   const [risesIn] = useState(dimmed && group.role === "user")
+  const [touchFooterRevealed, setTouchFooterRevealed] = useState(false)
   if (group.role === "system") {
     // A failed turn's line is the agent's account of the failure, not a
     // message the system sent: it closes the round in place, unboxed.
@@ -1489,12 +1525,68 @@ const HistoricalMessageGroup = memo(function HistoricalMessageGroup({
     ? sourceTurns[sourceTurns.length - 1]
     : null
   const forkPointUnnamed = isForkPointUnnamed(forkPoint, isThreadTail)
+  const turnIds = sourceTurns?.length
+    ? sourceTurns.map((t) => t.id)
+    : [group.id]
+
+  if (compact && group.role === "user") {
+    return (
+      <>
+        <CompactUserBubble
+          parts={withoutDelegationResults(group.parts)}
+          images={group.images}
+          resources={group.resources}
+          timestamp={group.completed_at ?? sourceTurns?.[0]?.timestamp ?? null}
+          groupPos={userGroupPos}
+          risesIn={risesIn}
+          dimmed={dimmed}
+        />
+        <DelegationResultsAttached
+          parts={group.parts}
+          sourceTurns={sourceTurns}
+        />
+      </>
+    )
+  }
+
+  const forkAction =
+    onForkFromTurn && isResponseComplete && forkPoint
+      ? () => {
+          onForkFromTurn(forkPoint.source_turn_id ?? forkPoint.id)
+        }
+      : undefined
+  const replyCopyText = isResponseComplete
+    ? extractTextFromParts(group.parts)
+    : ""
+  const replyTextList = isResponseComplete
+    ? collectReplyTexts(group.parts)
+    : undefined
+  const thinkingTextList = isResponseComplete
+    ? collectThinkingTexts(group.parts)
+    : undefined
 
   return (
     // Dimmed while the message is on its way (not yet stored); it brightens
     // into place rather than at once.
     <div
-      className={cn("transition-opacity duration-300", dimmed && "opacity-70")}
+      className={cn(
+        "transition-opacity duration-300",
+        dimmed && "opacity-70",
+        compact && group.role === "assistant" && "compact-reply-group"
+      )}
+      onPointerUp={
+        compact && group.role === "assistant"
+          ? (event) => {
+              if (event.pointerType !== "touch") return
+              const target = event.target as HTMLElement | null
+              if (
+                target?.closest("button, a, input, textarea, [role='button']")
+              )
+                return
+              setTouchFooterRevealed((v) => !v)
+            }
+          : undefined
+      }
     >
       <Message
         from={group.role}
@@ -1521,6 +1613,8 @@ const HistoricalMessageGroup = memo(function HistoricalMessageGroup({
               roundOpen={roundOpen}
               onRoundOpenChange={onRoundOpenChange}
               foldEpoch={foldEpoch}
+              turnIds={turnIds}
+              turnIndices={turnIndices}
             />
           </MessageContent>
         )}
@@ -1528,50 +1622,59 @@ const HistoricalMessageGroup = memo(function HistoricalMessageGroup({
           <UserResourceLinks resources={group.resources} className="self-end" />
         ) : null}
       </Message>
-      {showStats && group.role === "assistant" && sourceTurns && (
-        <ReplyArtifacts
-          sourceTurns={sourceTurns}
-          isResponseComplete={isResponseComplete}
-        />
-      )}
-      {showStats && group.role === "assistant" && (
-        <TurnStats
-          usage={group.usage}
-          duration_ms={group.duration_ms}
-          model={group.model}
-          models={group.models}
-          previousUserIndex={previousUserIndex}
-          isResponseComplete={isResponseComplete}
-          // The row shows nothing until the reply is done; joining all of a
-          // long reply's prose on every batch while it streams bought nothing.
-          copyText={isResponseComplete ? extractTextFromParts(group.parts) : ""}
-          replyTexts={
-            isResponseComplete ? collectReplyTexts(group.parts) : undefined
-          }
-          thinkingTexts={
-            isResponseComplete ? collectThinkingTexts(group.parts) : undefined
-          }
-          completedAt={group.completed_at}
-          forkDisabled={forkDisabled || forkPointUnnamed}
-          forkDisabledReason={forkPointUnnamed ? "unnamed" : "busy"}
-          onForkFromHere={
-            // Gated on a settled turn — forking mid-stream would name a message
-            // the agent is still writing.
-            //
-            // `source_turn_id` first: a turn produced in THIS session is named
-            // `live-…`, which the backend cannot resolve against its own parse
-            // — sending it forked at the tail and produced a copy of the parent.
-            // The post-turn reparse backfills the parser's name; `id` is the
-            // right answer only for turns that came from the parser already,
-            // and for the newest reply, where the tail IS the fork point.
-            onForkFromTurn && isResponseComplete && forkPoint
-              ? () => {
-                  onForkFromTurn(forkPoint.source_turn_id ?? forkPoint.id)
-                }
-              : undefined
-          }
-        />
-      )}
+      {showStats &&
+        group.role === "assistant" &&
+        sourceTurns &&
+        (compact ? (
+          <ChangedFilesTree
+            sourceTurns={sourceTurns}
+            isResponseComplete={isResponseComplete}
+          />
+        ) : (
+          <ReplyArtifacts
+            sourceTurns={sourceTurns}
+            isResponseComplete={isResponseComplete}
+          />
+        ))}
+      {showStats &&
+        group.role === "assistant" &&
+        (compact ? (
+          <ReplyMetaFooter
+            usage={group.usage}
+            duration_ms={group.duration_ms}
+            model={group.model}
+            models={group.models}
+            previousUserIndex={previousUserIndex}
+            isResponseComplete={isResponseComplete}
+            copyText={replyCopyText}
+            replyTexts={replyTextList}
+            thinkingTexts={thinkingTextList}
+            completedAt={group.completed_at}
+            forkDisabled={forkDisabled || forkPointUnnamed}
+            forkDisabledReason={forkPointUnnamed ? "unnamed" : "busy"}
+            onForkFromHere={forkAction}
+            alwaysVisible={isThreadTail}
+            touchRevealed={touchFooterRevealed}
+          />
+        ) : (
+          <TurnStats
+            usage={group.usage}
+            duration_ms={group.duration_ms}
+            model={group.model}
+            models={group.models}
+            previousUserIndex={previousUserIndex}
+            isResponseComplete={isResponseComplete}
+            // The row shows nothing until the reply is done; joining all of a
+            // long reply's prose on every batch while it streams bought nothing.
+            copyText={replyCopyText}
+            replyTexts={replyTextList}
+            thinkingTexts={thinkingTextList}
+            completedAt={group.completed_at}
+            forkDisabled={forkDisabled || forkPointUnnamed}
+            forkDisabledReason={forkPointUnnamed ? "unnamed" : "busy"}
+            onForkFromHere={forkAction}
+          />
+        ))}
     </div>
   )
 })
@@ -1656,16 +1759,89 @@ function HeldLiveActivityBar({
 
 const AutoScrollOnSend = memo(function AutoScrollOnSend({
   signal,
+  compact,
+  anchorPadding,
+  lastUserThreadIndex,
+  scrollApiRef,
+  onAnchorPaddingChange,
 }: {
   signal: number
+  compact: boolean
+  anchorPadding: number
+  lastUserThreadIndex: number | null
+  scrollApiRef: RefObject<MessageScrollContextValue | null>
+  onAnchorPaddingChange: (px: number) => void
 }) {
-  const { scrollToBottom } = useStickToBottomContext()
+  const { scrollToBottom, stopScroll, scrollRef, contentRef } =
+    useStickToBottomContext()
   const chatAnimations = useChatAnimationsEnabled()
   const lastSignalRef = useRef(signal)
+  const lastUserRef = useRef(lastUserThreadIndex)
+  useLayoutEffect(() => {
+    lastUserRef.current = lastUserThreadIndex
+  }, [lastUserThreadIndex])
+
+  // Once the growing reply fills past a viewport below the anchored user
+  // message, drop the temporary trailing spacer so there is no blank tail.
+  useEffect(() => {
+    if (!compact || anchorPadding <= 0) return
+    const viewport = scrollRef.current
+    const content = contentRef.current
+    if (!viewport || !content) return
+    const check = () => {
+      const users = content.querySelectorAll<HTMLElement>(
+        "[data-compact-user-bubble]"
+      )
+      const lastUser = users[users.length - 1]
+      if (!lastUser) return
+      const userRect = lastUser.getBoundingClientRect()
+      const contentRect = content.getBoundingClientRect()
+      const realBelowUser = contentRect.bottom - anchorPadding - userRect.top
+      if (realBelowUser >= viewport.clientHeight - 48) {
+        onAnchorPaddingChange(0)
+      }
+    }
+    check()
+    if (typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(check)
+    observer.observe(content)
+    return () => observer.disconnect()
+  }, [compact, anchorPadding, scrollRef, contentRef, onAnchorPaddingChange])
 
   useEffect(() => {
     if (signal === lastSignalRef.current) return
     lastSignalRef.current = signal
+
+    if (compact) {
+      // keh4l build (T3 style): pin the newly sent user message 24px from the
+      // top of the viewport with trailing room below so the reply grows
+      // downward instead of force-sticking to the bottom.
+      const viewport = scrollRef.current
+      const viewportHeight = viewport?.clientHeight ?? 0
+      const padding =
+        viewportHeight > 200 ? Math.max(0, viewportHeight - 160) : 0
+      onAnchorPaddingChange(padding)
+      stopScroll()
+      const anchor = () => {
+        const idx = lastUserRef.current
+        if (idx !== null && scrollApiRef.current) {
+          scrollApiRef.current.scrollToIndex(idx, {
+            align: "start",
+            offset: -24,
+            smooth: chatAnimations,
+          })
+        } else {
+          scrollToBottom({ animation: "instant" })
+        }
+      }
+      const raf1 = requestAnimationFrame(() => {
+        anchor()
+        requestAnimationFrame(anchor)
+      })
+      return () => {
+        cancelAnimationFrame(raf1)
+      }
+    }
 
     const options = chatAnimations
       ? undefined
@@ -1677,7 +1853,16 @@ const AutoScrollOnSend = memo(function AutoScrollOnSend({
     return () => {
       cancelAnimationFrame(rafId)
     }
-  }, [scrollToBottom, signal, chatAnimations])
+  }, [
+    scrollToBottom,
+    stopScroll,
+    scrollRef,
+    signal,
+    compact,
+    scrollApiRef,
+    onAnchorPaddingChange,
+    chatAnimations,
+  ])
 
   return null
 })
@@ -1702,11 +1887,24 @@ export function MessageListView({
   isRestartTurn = null,
   threadTail = null,
   onQuoteSelection,
+  onEditUserMessage,
   onAskSelection,
   onSaveNoteSelection,
   onForkFromTurn,
   liveRuns = null,
 }: MessageListViewProps) {
+  const chatViewPrefs = useChatViewPrefs()
+  const isCompact = chatViewPrefs.view === "compact"
+  const [anchorPadding, setAnchorPadding] = useState(0)
+  // Drop trailing anchor space when switching conversations or views.
+  const [anchorScope, setAnchorScope] = useState(
+    `${conversationId}:${isCompact}`
+  )
+  const currentAnchorScope = `${conversationId}:${isCompact}`
+  if (anchorScope !== currentAnchorScope) {
+    setAnchorScope(currentAnchorScope)
+    if (anchorPadding !== 0) setAnchorPadding(0)
+  }
   const t = useTranslations("Folder.chat.messageList")
   const sharedT = useTranslations("Folder.chat.shared")
   const pageHandoffName = usePageHandoffName()
@@ -2030,17 +2228,144 @@ export function MessageListView({
   // "not right now" instead of dropping its button and shifting the icon row.
   const forkBusy = connStatus === "prompting"
 
+  // keh4l build: global turn indices, consecutive user grouping, and local
+  // search/minimap entries for compact view, citations, and in-thread find.
+  const windowedDetail = isWindowedDetail(detail) ? detail : null
+  const turnsOffset = windowedDetail?.turns_offset ?? 0
+  const turnIndexData = useMemo(() => {
+    const globalIndexByTurnId = new Map<string, number>()
+    for (let i = 0; i < timelineTurns.length; i += 1) {
+      globalIndexByTurnId.set(timelineTurns[i]!.turn.id, turnsOffset + i)
+    }
+    const threadIndexByTurnIndex = new Map<number, number>()
+    const threadIndexByAnyTurnId = new Map<string, number>()
+    const userGroupPositions = new Map<string, UserBubbleGroupPosition>()
+    const localMinimapTurns: MinimapLocalTurn[] = []
+    const localSearchTurns: LocalSearchTurn[] = []
+    let lastUserThreadIndex: number | null = null
+
+    for (let i = 0; i < threadItems.length; i += 1) {
+      const item = threadItems[i]!
+      if (item.kind !== "turn") continue
+      threadIndexByAnyTurnId.set(item.group.id, i)
+      const srcTurns = item.sourceTurns ?? []
+      let firstGlobalIdx: number | null =
+        globalIndexByTurnId.get(item.group.id) ?? null
+      for (const st of srcTurns) {
+        threadIndexByAnyTurnId.set(st.id, i)
+        const gIdx = globalIndexByTurnId.get(st.id)
+        if (gIdx !== undefined) {
+          threadIndexByTurnIndex.set(gIdx, i)
+          if (firstGlobalIdx === null) firstGlobalIdx = gIdx
+        }
+      }
+      if (firstGlobalIdx !== null) {
+        threadIndexByTurnIndex.set(firstGlobalIdx, i)
+      }
+
+      if (item.group.role === "user") {
+        lastUserThreadIndex = i
+        const prev = i > 0 ? threadItems[i - 1] : null
+        const next = i + 1 < threadItems.length ? threadItems[i + 1] : null
+        const prevUser = prev?.kind === "turn" && prev.group.role === "user"
+        const nextUser = next?.kind === "turn" && next.group.role === "user"
+        userGroupPositions.set(
+          item.key,
+          !prevUser && !nextUser
+            ? "solo"
+            : !prevUser
+              ? "first"
+              : !nextUser
+                ? "last"
+                : "middle"
+        )
+        const prompt = extractTextFromParts(item.group.parts)
+          .replace(/\s+/g, " ")
+          .trim()
+        if (prompt && firstGlobalIdx !== null) {
+          // Find the latest assistant text before the next user turn.
+          let reply: string | null = null
+          for (let j = i + 1; j < threadItems.length; j += 1) {
+            const after = threadItems[j]!
+            if (after.kind !== "turn") continue
+            if (after.group.role === "user") break
+            if (after.group.role === "assistant") {
+              const txt = extractTextFromParts(after.group.parts)
+                .replace(/\s+/g, " ")
+                .trim()
+              if (txt) reply = txt.slice(0, 240)
+            }
+          }
+          localMinimapTurns.push({
+            turnIndex: firstGlobalIdx,
+            turnId: item.group.id,
+            prompt: prompt.slice(0, 160),
+            reply,
+            timestamp: item.group.completed_at ?? srcTurns[0]?.timestamp ?? "",
+          })
+        }
+      }
+
+      if (firstGlobalIdx !== null) {
+        const text = extractTextFromParts(item.group.parts)
+        const thinking = collectThinkingTexts(item.group.parts).join("\n")
+        if (text || thinking) {
+          localSearchTurns.push({
+            turnIndex: firstGlobalIdx,
+            turnId: item.group.id,
+            role: item.group.role,
+            text,
+            thinking: thinking || undefined,
+          })
+        }
+      }
+    }
+
+    return {
+      globalIndexByTurnId,
+      threadIndexByTurnIndex,
+      threadIndexByAnyTurnId,
+      userGroupPositions,
+      lastUserThreadIndex,
+      localMinimapTurns,
+      localSearchTurns,
+    }
+  }, [timelineTurns, turnsOffset, threadItems])
+
   const renderThreadItem = useCallback(
     (item: ThreadRenderItem) => {
       switch (item.kind) {
         case "turn": {
-          const pt = item.isRoleTransition ? 16 : 0
+          const userGroupPos =
+            item.group.role === "user"
+              ? (turnIndexData.userGroupPositions.get(item.key) ?? "solo")
+              : "solo"
+          const isTightFollowUpUser =
+            isCompact &&
+            item.group.role === "user" &&
+            (userGroupPos === "middle" || userGroupPos === "last")
+          const pt = isTightFollowUpUser ? 0 : item.isRoleTransition ? 16 : 0
           const phaseLabel =
             item.group.role === "user" && userTurnHeader
               ? userTurnHeader(item.group)
               : null
+          const turnIds = item.sourceTurns?.length
+            ? item.sourceTurns.map((t) => t.id)
+            : [item.group.id]
+          const turnIndices = turnIds
+            .map((id) => turnIndexData.globalIndexByTurnId.get(id))
+            .filter((idx): idx is number => idx !== undefined)
+          const firstTurnIdx = turnIndices[0]
           const turn = (
-            <div style={pt > 0 ? { paddingTop: pt } : undefined}>
+            <div
+              data-turn-index={firstTurnIdx}
+              data-turn-indices={
+                turnIndices.length > 0 ? turnIndices.join(" ") : undefined
+              }
+              data-turn-ids={turnIds.join(" ")}
+              className={isTightFollowUpUser ? "-mt-3" : undefined}
+              style={pt > 0 ? { paddingTop: pt } : undefined}
+            >
               {phaseLabel ? (
                 <div className="flex items-center gap-2 px-1 pb-3 pt-1">
                   <span aria-hidden="true" className="h-px flex-1 bg-border" />
@@ -2064,6 +2389,9 @@ export function MessageListView({
                 onForkFromTurn={onForkFromTurn}
                 forkDisabled={forkBusy}
                 isThreadTail={item.isThreadTail}
+                compact={isCompact}
+                userGroupPos={userGroupPos}
+                turnIndices={turnIndices}
               />
               {item.group.role === "user" && userTurnFooter
                 ? userTurnFooter(item.group)
@@ -2102,6 +2430,8 @@ export function MessageListView({
       }
     },
     [
+      turnIndexData,
+      isCompact,
       userTurnHeader,
       userTurnFooter,
       interruptedKeys,
@@ -2216,7 +2546,6 @@ export function MessageListView({
   // user messages lie above it, and their outline is fetched while the rows
   // are shown. A server that doesn't report the count predates the outline
   // too; the navigator then covers the loaded window only.
-  const windowedDetail = isWindowedDetail(detail) ? detail : null
   const earlierUserCount = insightsInSidebar
     ? (windowedDetail?.user_turns_before_offset ?? 0)
     : 0
@@ -2264,14 +2593,15 @@ export function MessageListView({
     loadedSubAgents,
   ])
 
-  // The message the transcript is showing, which the navigator highlights:
-  // the one at the top of the viewport (or the one whose reply is there), or
-  // the latest once the view is at the end. Tracked only while the rows are
-  // shown — the list reports its top row only to a listener.
+  // The message the transcript is showing, which the navigator and compact
+  // minimap highlight: the one at the top of the viewport (or the one whose
+  // reply is there), or the latest once the view is at the end.
+  const showMinimap = isCompact && chatViewPrefs.minimap
+  const trackViewportTop = navDemanded || showMinimap
   const [viewportTop, setViewportTop] = useState<ViewportTop | null>(null)
   // Forgotten once nobody shows the rows, so showing them again never starts
   // from where the view was back then.
-  if (!navDemanded && viewportTop !== null) setViewportTop(null)
+  if (!trackViewportTop && viewportTop !== null) setViewportTop(null)
   // The last message the outline lists: the one whose replies the loaded
   // window starts with, when it starts inside a round.
   const earlierRoundTurnId = useMemo(() => {
@@ -2284,19 +2614,131 @@ export function MessageListView({
   }, [earlierOutlineState])
   const currentNavTurnId = useMemo(
     () =>
-      navDemanded && viewportTop != null
+      trackViewportTop && viewportTop != null
         ? currentNavTurnIdAt(threadItems, viewportTop, earlierRoundTurnId)
         : null,
-    [navDemanded, viewportTop, threadItems, earlierRoundTurnId]
+    [trackViewportTop, viewportTop, threadItems, earlierRoundTurnId]
   )
 
   const navJump = useMessageNavJump({
     conversationId,
-    threadIndexByTurnId: loadedUserMessages.threadIndexByTurnId,
+    threadIndexByTurnId: turnIndexData.threadIndexByAnyTurnId,
     scrollApiRef,
     smooth: chatAnimations,
     loadOlderTurnsThrough,
   })
+
+  // keh4l build: minimap click jump (reuses loadOlderTurnsThrough + scrollApi).
+  const fetchConversationId = session?.dbConversationId ?? conversationId
+  const handleMinimapJump = useCallback(
+    (entry: { turnIndex: number; turnId: string }) => {
+      const loadedIdx =
+        turnIndexData.threadIndexByTurnIndex.get(entry.turnIndex) ??
+        turnIndexData.threadIndexByAnyTurnId.get(entry.turnId) ??
+        null
+      navJump.select({
+        turnId: entry.turnId,
+        turnIndex: entry.turnIndex,
+        threadIndex: loadedIdx,
+        ordinal: 0,
+        label: "",
+        additions: 0,
+        deletions: 0,
+        files: [],
+        subAgents: [],
+        hasChanges: false,
+      })
+    },
+    [navJump, turnIndexData]
+  )
+
+  // keh4l build: citation backlink jump + 2s flash highlight on the target turn.
+  const flashTimerRef = useRef<number>(0)
+  const pendingCiteFlashRef = useRef<number | null>(null)
+  const triggerCiteFlash = useCallback((turnIndex: number) => {
+    const root = selectionBoxRef.current
+    if (!root) return false
+    const target = root.querySelector<HTMLElement>(
+      `[data-turn-indices~="${turnIndex}"], [data-turn-index="${turnIndex}"]`
+    )
+    if (!target) return false
+    window.clearTimeout(flashTimerRef.current)
+    target.removeAttribute("data-cite-flash")
+    // Force reflow so clicking the same citation twice replays the 2s flash.
+    void target.offsetWidth
+    target.setAttribute("data-cite-flash", "true")
+    flashTimerRef.current = window.setTimeout(() => {
+      target.removeAttribute("data-cite-flash")
+    }, 2000)
+    return true
+  }, [])
+
+  useEffect(
+    () => () => {
+      window.clearTimeout(flashTimerRef.current)
+    },
+    []
+  )
+
+  useEffect(() => {
+    const pendingIdx = pendingCiteFlashRef.current
+    if (pendingIdx === null) return
+    const threadIdx = turnIndexData.threadIndexByTurnIndex.get(pendingIdx)
+    if (threadIdx === undefined) return
+    pendingCiteFlashRef.current = null
+    const frame = requestAnimationFrame(() => {
+      scrollApiRef.current?.scrollToIndex(threadIdx, {
+        align: "center",
+        smooth: false,
+      })
+      requestAnimationFrame(() => {
+        triggerCiteFlash(pendingIdx)
+      })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [turnIndexData, triggerCiteFlash])
+
+  const handleCitationJump = useCallback<CitationJumpHandler>(
+    async (citation) => {
+      if (citation.turnIndex === null) return false
+      const existing = turnIndexData.threadIndexByTurnIndex.get(
+        citation.turnIndex
+      )
+      if (existing !== undefined) {
+        scrollApiRef.current?.scrollToIndex(existing, {
+          align: "center",
+          smooth: chatAnimations,
+        })
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            triggerCiteFlash(citation.turnIndex!)
+          })
+        })
+        return true
+      }
+      if (citation.turnIndex >= turnsOffset) {
+        // Beyond the end of the current conversation (compacted / another device).
+        return false
+      }
+      pendingCiteFlashRef.current = citation.turnIndex
+      const reached = await loadOlderTurnsThrough(
+        conversationId,
+        citation.turnIndex
+      )
+      if (!reached) {
+        pendingCiteFlashRef.current = null
+      }
+      return reached
+    },
+    [
+      turnIndexData,
+      chatAnimations,
+      triggerCiteFlash,
+      turnsOffset,
+      loadOlderTurnsThrough,
+      conversationId,
+    ]
+  )
 
   // --- Session Details side panel ---------------------------------------------
   // The plan it shows: the live reply's latest plan block while it has one,
@@ -2455,7 +2897,12 @@ export function MessageListView({
       delegationBindings,
     ]
   )
-  const activityShown = turnLive || liveRunList.count > 0
+  // keh4l build: in compact view the working line inside the reply replaces
+  // `HeldLiveActivityBar`'s timer/speed strip; the bar above the composer only
+  // appears when background runs (`LiveRunsChip`) exist.
+  const activityShown = isCompact
+    ? liveRunList.count > 0
+    : turnLive || liveRunList.count > 0
   // Slides in over the composer as a turn starts or work starts running past
   // one, and out once neither is left, so the transcript above eases up and
   // back instead of jumping. Drawn under the loading and load-error states
@@ -2465,13 +2912,26 @@ export function MessageListView({
     <SlideSlot className="shrink-0" show={activityShown}>
       <HeldLiveActivityBar
         show={activityShown}
-        message={turnLive ? liveMessage : null}
+        message={isCompact ? null : turnLive ? liveMessage : null}
         runs={liveRunList}
         onStopAsyncTask={liveRuns?.onStopAsyncTask}
         agentName={liveRuns?.agentName}
       />
     </SlideSlot>
   )
+
+  const compactRound = useCompactRound(`${fold.epoch}:${fold.runId ?? ""}`)
+  const compactThreadValue = useMemo(
+    () => ({
+      round: compactRound,
+      liveMessage: turnLive ? liveMessage : null,
+      onEditUserMessage,
+    }),
+    [compactRound, turnLive, liveMessage, onEditUserMessage]
+  )
+  const minimapRefreshKey = `${turnsOffset}:${timelineTurns.length}:${
+    timelineTurns[timelineTurns.length - 1]?.turn.id ?? ""
+  }:${connStatus}`
 
   const hasRenderableContent = threadItems.length > 0 || Boolean(liveMessage)
 
@@ -2571,6 +3031,7 @@ export function MessageListView({
     <SessionViewerHost>
       <div
         ref={selectionBoxRef}
+        data-chat-view={chatViewPrefs.view}
         className="chat-motion-scope relative flex h-full min-h-0 flex-col"
       >
         <MessageThread
@@ -2583,7 +3044,14 @@ export function MessageListView({
                 : undefined
           }
         >
-          <AutoScrollOnSend signal={sendSignal} />
+          <AutoScrollOnSend
+            signal={sendSignal}
+            compact={isCompact}
+            anchorPadding={anchorPadding}
+            lastUserThreadIndex={turnIndexData.lastUserThreadIndex}
+            scrollApiRef={scrollApiRef}
+            onAnchorPaddingChange={setAnchorPadding}
+          />
           <VirtualizedMessageThread
             items={threadItems}
             getItemKey={getThreadItemKey}
@@ -2597,7 +3065,12 @@ export function MessageListView({
             loadingOlderLabel={t("loadingEarlier")}
             prependEpoch={session?.olderTurnsPrependEpoch ?? 0}
             prependScopeKey={conversationId}
-            onViewportTopChange={navDemanded ? setViewportTop : undefined}
+            contentProps={
+              anchorPadding > 0
+                ? { style: { paddingBottom: anchorPadding } }
+                : undefined
+            }
+            onViewportTopChange={trackViewportTop ? setViewportTop : undefined}
           />
           {/* Stacked, not overlapping: both pin to the thread's bottom centre,
           so the scroll button steps up while the pill is showing. */}
@@ -2650,6 +3123,25 @@ export function MessageListView({
             />
           </div>
         )}
+        {showMinimap && (
+          <TimelineMinimap
+            conversationId={fetchConversationId}
+            refreshKey={minimapRefreshKey}
+            localTurns={turnIndexData.localMinimapTurns}
+            activeTurnId={currentNavTurnId}
+            onJump={handleMinimapJump}
+          />
+        )}
+        <ThreadFindBar
+          conversationId={fetchConversationId}
+          isActive={isActive}
+          containerRef={selectionBoxRef}
+          scrollApiRef={scrollApiRef}
+          threadIndexByTurnIndex={turnIndexData.threadIndexByTurnIndex}
+          threadIndexByTurnId={turnIndexData.threadIndexByAnyTurnId}
+          localTurns={turnIndexData.localSearchTurns}
+          loadOlderTurnsThrough={loadOlderTurnsThrough}
+        />
         <SelectionActionBubble
           containerRef={selectionBoxRef}
           onQuote={onQuoteSelection}
@@ -2665,9 +3157,13 @@ export function MessageListView({
       <MarkdownImageProvider rootPath={resolvedImageRoot}>
         <ModelLabelProvider value={modelLabel}>
           <DelegationStatusIndexProvider value={delegationStatusIndex}>
-            <KnownInvocationsProvider value={knownInvocations}>
-              {thread}
-            </KnownInvocationsProvider>
+            <CompactThreadProvider value={compactThreadValue}>
+              <CitationJumpProvider onJump={handleCitationJump}>
+                <KnownInvocationsProvider value={knownInvocations}>
+                  {thread}
+                </KnownInvocationsProvider>
+              </CitationJumpProvider>
+            </CompactThreadProvider>
           </DelegationStatusIndexProvider>
         </ModelLabelProvider>
       </MarkdownImageProvider>

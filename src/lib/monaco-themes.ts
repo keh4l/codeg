@@ -21,6 +21,7 @@ export const EDITOR_CANVAS_BG: Record<
   { light: string; dark: string }
 > = {
   neutral: { light: "#ffffff", dark: "#171717" },
+  carbon: { light: "#ffffff", dark: "#141414" },
   zinc: { light: "#ffffff", dark: "#18181b" },
   slate: { light: "#ffffff", dark: "#0f172b" },
   stone: { light: "#ffffff", dark: "#1c1917" },
@@ -45,6 +46,7 @@ export const EDITOR_LINE_HIGHLIGHT: Record<
   { light: string; dark: string }
 > = {
   neutral: { light: "#f5f5f5", dark: "#262626" },
+  carbon: { light: "#f5f5f5", dark: "#1f1f1f" },
   zinc: { light: "#f4f4f5", dark: "#27272a" },
   slate: { light: "#f1f5f9", dark: "#1d293d" },
   stone: { light: "#f5f5f4", dark: "#292524" },

@@ -58,7 +58,8 @@
     <td width="50%" valign="top">🌿 <strong>Sub-agents work in their own worktree</strong><br/>The main agent can have a sub-agent change code in a separate git worktree and branch, so several working side by side stay out of each other's way; each delegation can set its own model and reasoning effort, and a sub-agent that has finished can be given more work in the same session.</td>
   </tr>
   <tr>
-    <td colspan="2" valign="top">🗣️ <strong>Steer while the agent works</strong><br/>While the agent replies, the send key puts your message into the running turn, and the agent reads it after the step at hand; hold ⌘/Ctrl to queue it for after the turn instead. Every agent can be steered. Queued messages live on the server, so they survive a reload and follow you to another device; a stop or an error pauses the queue until you say go.</td>
+    <td width="50%" valign="top">🗣️ <strong>Steer while the agent works</strong><br/>While the agent replies, the send key puts your message into the running turn, and the agent reads it after the step at hand; hold ⌘/Ctrl to queue it for after the turn instead. Every agent can be steered. Queued messages live on the server, so they survive a reload and follow you to another device; a stop or an error pauses the queue until you say go.</td>
+    <td width="50%" valign="top">✨ <strong>T3-style compact conversation view</strong><br/>Each reply’s work folds into a single “Worked for Xs” line, showing only the live step while running; a changed-files tree replaces artifact cards and the reply footer appears on hover. Adds four tool-visibility levels, a timeline minimap, whole-thread ⌘/Ctrl+F find, clickable backlink citations, code-block wrap &amp; “Run in terminal”, and a pure-black Carbon theme. Switch back to Timeline anytime in Settings.</td>
   </tr>
   <tr>
     <td colspan="2" valign="top">🔄 <strong>Follows upstream</strong><br/>Upstream is merged in regularly; anything not listed here works exactly as in the official build. The built-in Kiro CLI, the first thing this build added, has been part of the official build since 0.36.0. Claude Code thinking summaries use the official build's switch from 0.41.3-1 on: “Show Claude's thinking summaries” in Settings → Agents → Claude Code, off by default. From 0.46.0-1 the suggested next message is filled in the official way: Tab on a computer, the lightbulb button beside Send on a phone.</td>
@@ -261,6 +262,19 @@
 - The queue lives on the server: every window and device sees the same one, and it survives reloads and restarts. On a computer it shows as dashed bubbles at the end of the conversation, on a phone above the composer; each message can be sent now (into the running turn, or as a new turn when idle), edited, removed and dragged into order. The server sends the next one when a turn ends normally, even with every browser closed, and it carries any sub-task results not yet delivered.
 - A stop, a turn that ends in an error (rate limit, network…) or a server restart pauses the queue: “Queue paused” with “Continue” shows above the composer; Continue, Enter in an empty composer or a new message lets it go. A steer still on its way when you stop is reported as not delivered, with a button to put it back in the composer.
 - The official build's “Live Feedback” notes are gone: no switch in settings, and agents no longer get the `check_user_feedback` tool.
+
+</details>
+
+<details>
+<summary>Details on <strong>T3-style compact conversation view</strong></summary>
+<br/>
+
+- <strong>On by default, reversible anytime</strong>: switch between “Compact (T3 style)” and “Timeline (classic)” under Settings → Appearance → Conversation style (saved per device, takes effect immediately).
+- <strong>Live single-row &amp; auto-fold</strong>: while streaming, shows one “Working Xs” line plus the active step (with a 4-line thought preview); on completion, immediately folds into “Worked for Xs · N steps · M files +A −D”. Unrecovered failures, pending approvals, questions, plans, running sub-agents, and generated images stay visible outside the fold; a round you manually expanded while streaming stays open.
+- <strong>Four tool-call visibility levels</strong>: switch between Show all, Hide successful, Hide all, and Zen mode in Settings or the conversation header “…” menu.
+- <strong>Changed-files tree &amp; diff panel</strong>: replaces reply file cards with a sticky-header directory tree (single-child directory chains merged, auto-expanded up to 8 files, virtualized past 250 rows). Clicking any file opens its diff panel, previewable new files (HTML/Markdown/images) preview inline, and edit rows also offer a hover button to open the diff panel.
+- <strong>Quieter bubbles &amp; hover footer</strong>: consecutive user messages group tightly, images render as an in-bubble collage, long prompts fold only past 22rem, and hover reveals timestamp, copy, and Edit in composer (no file revert). Reply actions (copy, translate, fork, create task, model, tokens, time) appear on hover (always shown on the last reply); live tok/s speed is off by default. Sending pins your message 24px from the top so the reply grows downward.
+- <strong>Minimap, whole-thread find, citations &amp; Carbon theme</strong>: desktop shows a left-edge timeline minimap with hover preview and click-to-jump; ⌘/Ctrl+F (or header “…” menu) searches the entire conversation including unloaded history and auto-expands folded hits; quoting creates composer citation chips whose sent cards jump back and highlight for 2s; code blocks gain a line-wrap toggle and shell blocks add “Run in terminal” (pastes without executing); Appearance adds the pure-black “Carbon” theme preset.
 
 </details>
 

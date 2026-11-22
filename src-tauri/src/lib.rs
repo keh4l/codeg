@@ -1923,6 +1923,9 @@ mod tauri_app {
                 conversations::get_folder_conversation,
                 conversations::get_folder_conversation_turns,
                 conversations::get_folder_conversation_outline,
+                // keh4l build: whole-transcript find and minimap (T3-style chat view).
+                crate::commands::transcript_view::search_conversation,
+                crate::commands::transcript_view::get_conversation_minimap,
                 conversations::list_folders,
                 conversations::get_stats,
                 conversations::get_sidebar_data,

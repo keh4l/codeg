@@ -58,7 +58,8 @@
     <td width="50%" valign="top">🌿 <strong>Subagenten arbeiten in ihrem eigenen Worktree</strong><br/>Der Hauptagent kann einen Subagenten Code in einem eigenen Git-Worktree und Branch ändern lassen, sodass sich mehrere parallel nicht in die Quere kommen; jede Delegation kann ihr eigenes Modell und Reasoning festlegen, und einem fertigen Subagenten lässt sich in derselben Sitzung weitere Arbeit geben.</td>
   </tr>
   <tr>
-    <td colspan="2" valign="top">🗣️ <strong>Jederzeit einwerfen</strong><br/>Während der Agent antwortet, schickt die Sendetaste deine Nachricht in die laufende Runde, und der Agent liest sie nach dem aktuellen Schritt; mit gedrückter ⌘/Ctrl-Taste wird sie stattdessen für nach der Runde eingereiht. Jeder Agent nimmt Einwürfe an. Die Warteschlange liegt auf dem Server, übersteht also ein Neuladen und folgt dir aufs nächste Gerät; Stopp oder Fehler pausieren sie, bis du fortsetzt.</td>
+    <td width="50%" valign="top">🗣️ <strong>Jederzeit einwerfen</strong><br/>Während der Agent antwortet, schickt die Sendetaste deine Nachricht in die laufende Runde, und der Agent liest sie nach dem aktuellen Schritt; mit gedrückter ⌘/Ctrl-Taste wird sie stattdessen für nach der Runde eingereiht. Jeder Agent nimmt Einwürfe an. Die Warteschlange liegt auf dem Server, übersteht also ein Neuladen und folgt dir aufs nächste Gerät; Stopp oder Fehler pausieren sie, bis du fortsetzt.</td>
+    <td width="50%" valign="top">✨ <strong>Kompakte Gesprächsansicht im T3-Stil</strong><br/>Klappt die Arbeitsschritte jeder Antwort in eine „Xs gearbeitet“-Zeile ein und zeigt im Lauf nur den aktuellen Schritt; ersetzt Dateikarten durch einen Änderungsbaum und blendet die Antwort-Fußzeile erst bei Hover ein. Mit vier Tool-Sichtbarkeitsstufen, Zeitleisten-Minimap, ⌘/Ctrl+F-Suche über den gesamten Verlauf, rückverlinkten Zitaten, Code-Umbruch &amp; „Im Terminal ausführen“ sowie dem tiefschwarzen „Karbon“-Theme. Jederzeit in den Einstellungen umstellbar.</td>
   </tr>
   <tr>
     <td colspan="2" valign="top">🔄 <strong>Nah am Upstream</strong><br/>Upstream wird regelmäßig hineingemergt; was hier nicht steht, funktioniert genau wie in der offiziellen Version. Das eingebaute Kiro CLI, das diese Version als Erstes hinzugefügt hat, ist seit 0.36.0 Teil der offiziellen Version. Die Zusammenfassungen von Claudes Denken nutzen seit 0.41.3-1 den Schalter der offiziellen Version: „Zusammenfassungen von Claudes Denken anzeigen“ unter Einstellungen → Agenten → Claude Code, standardmäßig aus. Seit 0.46.0-1 wird die vorgeschlagene nächste Nachricht wie in der offiziellen Version übernommen: am Computer mit Tab, am Handy mit der Glühbirnen-Schaltfläche neben „Senden“.</td>
@@ -261,6 +262,19 @@
 - Die Warteschlange liegt auf dem Server: Alle Fenster und Geräte sehen dieselbe, und sie übersteht Neuladen und Neustarts. Am Computer erscheint sie als gestrichelte Blasen am Ende des Gesprächs, auf dem Handy über dem Eingabefeld; jede Nachricht lässt sich sofort senden (in die laufende Runde, oder als neue Runde, wenn nichts läuft), bearbeiten, entfernen und per Ziehen umsortieren. Der Server sendet die nächste, wenn eine Runde normal endet – auch wenn alle Browser geschlossen sind – und nimmt noch nicht zugestellte Ergebnisse von Teilaufgaben mit.
 - Stopp, eine Runde, die mit einem Fehler endet (Ratenlimit, Netzwerk …), oder ein Serverneustart pausiert die Warteschlange: Über dem Eingabefeld erscheint „Warteschlange pausiert“ mit „Fortsetzen“; Fortsetzen, Enter im leeren Eingabefeld oder eine neue Nachricht geben sie frei. Ein Einwurf, der beim Stopp noch unterwegs war, wird als nicht zugestellt gemeldet – mit einer Schaltfläche, die ihn ins Eingabefeld zurücklegt.
 - Das „Live-Feedback“ (Notizen) des offiziellen Builds ist entfallen: kein Schalter in den Einstellungen, und Agenten bekommen das Werkzeug `check_user_feedback` nicht mehr.
+
+</details>
+
+<details>
+<summary>Details zu <strong>Kompakte Gesprächsansicht im T3-Stil</strong></summary>
+<br/>
+
+- <strong>Standardmäßig aktiv, jederzeit umkehrbar</strong>: Unter Einstellungen → Erscheinungsbild → Gesprächsstil lässt sich ohne Neustart zwischen „Kompakt (T3-Stil)“ und „Zeitleiste (klassisch)“ wechseln (lokal pro Gerät gespeichert).
+- <strong>Einzelzeile im Lauf &amp; Auto-Einklappen</strong>: Zeigt während der Antwort „Arbeitet Xs“ samt aktuellem Schritt (mit 4-Zeilen-Denkvorschau) und klappt nach Abschluss sofort zusammen. Unbehobene Fehler, ausstehende Freigaben, Rückfragen, Pläne, laufende Sub-Agents und erzeugte Bilder bleiben immer sichtbar; manuell aufgeklappte Runden bleiben offen.
+- <strong>Vier Tool-Sichtbarkeitsstufen</strong>: Alle anzeigen, Erfolgreiche ausblenden, Alle ausblenden und Zen-Modus — in den Einstellungen oder im „…“-Menü der Kopfzeile.
+- <strong>Änderungsbaum &amp; Diff-Panel</strong>: Zusammengefasste Ordnerketten, bis 8 Dateien standardmäßig geöffnet, ab 250 Zeilen virtualisiert; Klick öffnet das Diff-Panel, neue HTML-/Markdown-/Bilddateien lassen sich inline voranzeigen, und Bearbeitungszeilen öffnen ebenfalls direkt den Diff.
+- <strong>Ruhigere Blasen &amp; Hover-Fußzeile</strong>: Aufeinanderfolgende Nutzernachrichten gruppieren sich dicht, Bilder sitzen als Collage in der Blase, Klappgrenze 22rem, Hover zeigt Zeit, Kopieren und Bearbeiten im Eingabefeld (ohne Datei-Rollback). Die Antwort-Fußzeile erscheint erst bei Hover (letzte Antwort dauerhaft); tok/s ist standardmäßig aus. Neue Nachrichten werden 24px unter dem oberen Rand verankert.
+- <strong>Minimap, Volltextsuche, Zitate &amp; Karbon-Theme</strong>: Desktop-Minimap am Rand mit Hover-Vorschau, ⌘/Ctrl+F durchsucht den gesamten Verlauf inkl. ungeladener Runden und klappt Treffer automatisch auf, Zitate werden als anklickbare Rücksprung-Karten gerendert (2s Highlight), Codeblöcke erhalten Umbruch-Schalter und „Im Terminal ausführen“ (fügt nur ein, führt nicht aus), plus das tiefschwarze Theme „Karbon“.
 
 </details>
 

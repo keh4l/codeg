@@ -46,7 +46,9 @@ import {
 import { computeRects, leafIds } from "@/lib/tab-group-layout"
 import { useTaskContext } from "@/contexts/task-context"
 import { cn, copyTextToClipboard, randomUUID } from "@/lib/utils"
-import { buildAskPrompt, buildQuotedMarkdown } from "@/lib/message-quote"
+import { buildAskPrompt } from "@/lib/message-quote"
+import { createCitationItem } from "@/components/message/compact/citation"
+import type { SelectionQuoteSource } from "@/components/message/selection-action-bubble"
 import {
   ASK_SELECTION_PARKED_EVENT,
   consumeAskSelectionPrompts,
@@ -1810,12 +1812,22 @@ const ConversationTabView = memo(function ConversationTabView({
     setComposerInject(null)
   }, [])
 
-  // Quote a transcript selection into the composer. A fresh object every time so
-  // quoting the same passage twice still re-fires the composer's inject effect.
-  const handleQuoteSelection = useCallback((selected: string) => {
-    const quoted = buildQuotedMarkdown(selected)
-    if (!quoted) return
-    setComposerInject({ text: quoted, mode: "append" })
+  // Quote a transcript selection into the composer as a backlink-capable
+  // citation chip. A fresh object every time so quoting twice still re-fires.
+  const handleQuoteSelection = useCallback(
+    (selected: string, source?: SelectionQuoteSource) => {
+      const cite = createCitationItem(selected, source)
+      if (!cite) return
+      setComposerInject({ cite })
+    },
+    []
+  )
+
+  // Put a previously sent user message back into the composer to edit & resend
+  // (does not revert files).
+  const handleEditUserMessage = useCallback((text: string) => {
+    if (!text.trim()) return
+    setComposerInject({ text, mode: "replace" })
   }, [])
 
   /**
@@ -2268,6 +2280,9 @@ const ConversationTabView = memo(function ConversationTabView({
           }
           onQuoteSelection={
             composerAvailable ? handleQuoteSelection : undefined
+          }
+          onEditUserMessage={
+            composerAvailable ? handleEditUserMessage : undefined
           }
           // Asking opens its own conversation, so it needs a folder to open it in
           // rather than a usable composer here — a transcript whose composer is

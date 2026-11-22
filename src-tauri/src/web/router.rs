@@ -261,6 +261,15 @@ pub fn build_router_with_srn(
             "/get_folder_conversation_outline",
             post(handlers::conversations::get_folder_conversation_outline),
         )
+        // keh4l build: whole-transcript find and minimap (T3-style chat view).
+        .route(
+            "/search_conversation",
+            post(handlers::transcript_view::search_conversation),
+        )
+        .route(
+            "/get_conversation_minimap",
+            post(handlers::transcript_view::get_conversation_minimap),
+        )
         .route(
             "/list_opened_tabs",
             post(handlers::conversations::list_opened_tabs),

@@ -8,6 +8,8 @@
 @import "@fontsource-variable/jetbrains-mono";
 @import "@fontsource-variable/fira-code";
 @import "@fontsource-variable/geist-mono";
+/* keh4l build: T3-style compact conversation view + code-block / find / cite styles */
+@import "../components/message/compact/compact-view.css";
 @custom-variant dark (&:is(.dark *));
 /* json-render's shadcn components (the cards in components/message/
    json-render-block.tsx) carry their Tailwind classes in node_modules, which
@@ -59,6 +61,8 @@
      在任何面板透明度下都稳定。全族统一用中性 --muted 染色（不再按角色分 card/secondary/primary），
      配 backdrop 磨砂 + 1px 描边（见下方 ws-msg-* 各规则），在忙碌背景图上仍看得清、分得出边界。 */
   --ws-msg-alpha: 0.5;
+  /* keh4l build: user message bubble surface (overridden in [data-theme="carbon"]). */
+  --message: var(--secondary);
 }
 
 /* ===========================================================================
@@ -1156,6 +1160,69 @@
 }
 [data-theme="violet"].dark {
   --activity-accent: oklch(0.8 0.111 293.009);
+}
+
+/* ---------- keh4l build: carbon (pure black / 墨黑) ---------- */
+[data-theme="carbon"] {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.145 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.955 0 0);
+  --secondary-foreground: oklch(0.145 0 0);
+  --message: oklch(0.955 0 0);
+  --muted: oklch(0.96 0 0);
+  --muted-foreground: oklch(0.48 0 0);
+  --accent: oklch(0.955 0 0);
+  --accent-foreground: oklch(0.145 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.9 0 0);
+  --input: oklch(0.9 0 0);
+  --ring: oklch(0.65 0 0);
+  --sidebar: oklch(0.98 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.145 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.95 0 0);
+  --sidebar-accent-foreground: oklch(0.145 0 0);
+  --sidebar-border: oklch(0.9 0 0);
+  --sidebar-ring: oklch(0.65 0 0);
+  --activity-accent: oklch(0.145 0 0);
+}
+
+[data-theme="carbon"].dark {
+  --background: #000000;
+  --foreground: oklch(0.95 0 0);
+  --card: #141414;
+  --card-foreground: oklch(0.95 0 0);
+  --popover: #141414;
+  --popover-foreground: oklch(0.95 0 0);
+  --primary: oklch(0.95 0 0);
+  --primary-foreground: #000000;
+  --secondary: #1a1a1a;
+  --secondary-foreground: oklch(0.95 0 0);
+  --message: #1a1a1a;
+  --muted: #141414;
+  --muted-foreground: oklch(0.66 0 0);
+  --accent: #1f1f1f;
+  --accent-foreground: oklch(0.95 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: rgb(255 255 255 / 8%);
+  --input: rgb(255 255 255 / 12%);
+  --ring: oklch(0.55 0 0);
+  --sidebar: #080808;
+  --sidebar-foreground: oklch(0.95 0 0);
+  --sidebar-primary: oklch(0.95 0 0);
+  --sidebar-primary-foreground: #000000;
+  --sidebar-accent: #181818;
+  --sidebar-accent-foreground: oklch(0.95 0 0);
+  --sidebar-border: rgb(255 255 255 / 8%);
+  --sidebar-ring: oklch(0.55 0 0);
+  --activity-accent: oklch(0.92 0 0);
 }
 
 @theme inline {

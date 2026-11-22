@@ -112,7 +112,8 @@
         "green": "Green",
         "blue": "Blue",
         "yellow": "Yellow",
-        "violet": "Violet"
+        "violet": "Violet",
+        "carbon": "Carbon"
       }
     },
     "customStyle": {
@@ -262,6 +263,24 @@
         "appliedToast": "Wallpaper applied",
         "credit": "Images from wallhaven.cc · SFW only"
       }
+    },
+    "chatView": {
+      "styleTitle": "Conversation style",
+      "styleDescription": "Compact folds each reply's steps into a single line (T3 Code style). Switch back to Timeline for the classic vertical rail.",
+      "styleCompact": "Compact (T3 style)",
+      "styleTimeline": "Timeline (classic)",
+      "toolVisibilityTitle": "Tool calls",
+      "toolVisibilityDescription": "Control how many tool rows appear inside replies in compact view.",
+      "toolVisibility": {
+        "showAll": "Show all",
+        "hideSuccessful": "Hide successful",
+        "hideAll": "Hide all",
+        "zen": "Zen mode"
+      },
+      "liveSpeedTitle": "Live output speed",
+      "liveSpeedDescription": "Show live token speed (tok/s) on the working line while the agent replies.",
+      "minimapTitle": "Timeline minimap",
+      "minimapDescription": "Show a compact jump-and-preview rail along the edge of the conversation on desktop."
     }
   },
   "SystemSettings": {
@@ -10390,5 +10409,43 @@
     "steer": "Steer",
     "queue": "Queue",
     "note": "Claude Code, Codex, Grok, Kiro and Antigravity take the message into the running turn and read it after the step at hand. Other agents stop the turn and start again with your message, which drops the step that was cut off; pick Queue if you'd rather they finish first."
+  },
+  "CompactView": {
+    "working": "Working",
+    "worked": "Worked",
+    "workedFor": "Worked for {time}",
+    "files": "{count, plural, one {# file} other {# files}}",
+    "expandSteps": "Expand steps",
+    "collapseSteps": "Collapse steps",
+    "openInDiffPanel": "Open in diff panel",
+    "changedFilesTitle": "{count, plural, one {1 file changed} other {# files changed}}",
+    "expandAllDirs": "Expand all",
+    "collapseAllDirs": "Collapse all",
+    "fileAddedBadge": "New",
+    "fileRemovedBadge": "Del",
+    "previewFile": "Preview",
+    "closePreview": "Close preview",
+    "loadingPreview": "Loading preview…",
+    "editMessage": "Edit in composer",
+    "citationJumpTitle": "Jump to quoted message",
+    "citationJumpAria": "Jump to quoted message",
+    "expandQuote": "Expand quote",
+    "collapseQuote": "Collapse quote",
+    "removeQuote": "Remove quote",
+    "minimapLabel": "Conversation timeline",
+    "minimapTurnAria": "Jump to message {index}",
+    "minimapEmptyPrompt": "(No text)",
+    "minimapNoReply": "(No reply yet)",
+    "findInConversation": "Find in conversation",
+    "findPlaceholder": "Find in conversation…",
+    "findCaseSensitive": "Match case",
+    "findPrevious": "Previous match",
+    "findNext": "Next match",
+    "findClose": "Close find",
+    "codeWrap": "Wrap lines",
+    "codeUnwrap": "Unwrap lines",
+    "runInTerminal": "Run in terminal",
+    "runInTerminalHint": "Paste command into a new terminal (press Enter to run)",
+    "pastedToTerminal": "Pasted command into new terminal — press Enter to run"
   }
 }

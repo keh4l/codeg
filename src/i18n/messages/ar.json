@@ -112,7 +112,8 @@
         "green": "Green",
         "blue": "Blue",
         "yellow": "Yellow",
-        "violet": "Violet"
+        "violet": "Violet",
+        "carbon": "كربوني"
       }
     },
     "customStyle": {
@@ -262,6 +263,24 @@
         "appliedToast": "تم تطبيق الخلفية",
         "credit": "الصور من wallhaven.cc · محتوى آمن فقط"
       }
+    },
+    "chatView": {
+      "styleTitle": "نمط المحادثة",
+      "styleDescription": "النمط المدمج يطوي خطوات كل رد في سطر واحد (نمط T3 Code). يمكنك العودة إلى الخط الزمني الكلاسيكي في أي وقت.",
+      "styleCompact": "مدمج (نمط T3)",
+      "styleTimeline": "الخط الزمني (كلاسيكي)",
+      "toolVisibilityTitle": "عرض استدعاءات الأدوات",
+      "toolVisibilityDescription": "تحكم في استدعاءات الأدوات الظاهرة داخل الردود في العرض المدمج.",
+      "toolVisibility": {
+        "showAll": "إظهار الكل",
+        "hideSuccessful": "إخفاء الناجحة",
+        "hideAll": "إخفاء الكل",
+        "zen": "وضع التركيز"
+      },
+      "liveSpeedTitle": "سرعة الإخراج المباشرة",
+      "liveSpeedDescription": "إظهار سرعة الرموز (tok/s) في سطر العمل أثناء رد الوكيل.",
+      "minimapTitle": "خريطة مصغّرة للخط الزمني",
+      "minimapDescription": "إظهار شريط مصغّر على حافة المحادثة للمعاينة والانتقال السريع على سطح المكتب."
     }
   },
   "SystemSettings": {
@@ -10390,5 +10409,43 @@
     "steer": "مداخلة",
     "queue": "انتظار",
     "note": "يستقبل Claude Code وCodex وGrok وKiro وAntigravity الرسالة داخل الدور الجاري ويقرؤونها بعد الخطوة الحالية. أما الوكلاء الآخرون فيوقفون الدور ويبدؤون من جديد برسالتك، فتضيع الخطوة التي قُطعت؛ اختر «انتظار» إن أردت أن يُنهوا أولًا."
+  },
+  "CompactView": {
+    "working": "جارٍ العمل",
+    "worked": "تم العمل",
+    "workedFor": "استغرق العمل {time}",
+    "files": "{count, plural, one {ملف واحد} other {# ملفات}}",
+    "expandSteps": "توسيع الخطوات",
+    "collapseSteps": "طي الخطوات",
+    "openInDiffPanel": "فتح في لوحة الفروقات",
+    "changedFilesTitle": "{count, plural, one {تم تعديل ملف واحد} other {تم تعديل # ملفات}}",
+    "expandAllDirs": "توسيع الكل",
+    "collapseAllDirs": "طي الكل",
+    "fileAddedBadge": "جديد",
+    "fileRemovedBadge": "محذوف",
+    "previewFile": "معاينة",
+    "closePreview": "إغلاق المعاينة",
+    "loadingPreview": "جارٍ تحميل المعاينة…",
+    "editMessage": "إعادة التحرير",
+    "citationJumpTitle": "الانتقال إلى الرسالة المقتبسة",
+    "citationJumpAria": "الانتقال إلى الرسالة المقتبسة",
+    "expandQuote": "توسيع الاقتباس",
+    "collapseQuote": "طي الاقتباس",
+    "removeQuote": "إزالة الاقتباس",
+    "minimapLabel": "الخط الزمني للمحادثة",
+    "minimapTurnAria": "الانتقال إلى الرسالة {index}",
+    "minimapEmptyPrompt": "(بدون نص)",
+    "minimapNoReply": "(لا يوجد رد بعد)",
+    "findInConversation": "بحث في المحادثة",
+    "findPlaceholder": "بحث في المحادثة…",
+    "findCaseSensitive": "مطابقة حالة الأحرف",
+    "findPrevious": "المطابقة السابقة",
+    "findNext": "المطابقة التالية",
+    "findClose": "إغلاق البحث",
+    "codeWrap": "تفعيل التفاف الأسطر",
+    "codeUnwrap": "إيقاف التفاف الأسطر",
+    "runInTerminal": "تشغيل في الطرفية",
+    "runInTerminalHint": "لصق الأمر في طرفية جديدة (اضغط Enter للتشغيل)",
+    "pastedToTerminal": "تم لصق الأمر في طرفية جديدة — اضغط Enter للتشغيل"
   }
 }

@@ -154,6 +154,11 @@ import {
 } from "@/lib/follow-up/dispatch-mode"
 import { useFollowUpBehavior } from "@/lib/follow-up/prefs"
 import { matchShortcutEvent } from "@/lib/keyboard-shortcuts"
+import {
+  prependCitationsToText,
+  type CitationItem,
+} from "@/components/message/compact/citation"
+import { ComposerCitationChips } from "@/components/message/compact/citation-card"
 
 /**
  * Payload pushed into the composer from outside (e.g. a welcome-page quick
@@ -186,6 +191,10 @@ export type ComposerInjectContent =
        * the user has started writing since is never replaced.
        */
       handBack: PromptInputBlock[]
+    }
+  | {
+      /** keh4l build: add a backlink-capable citation chip above the editor. */
+      cite: CitationItem
     }
 
 interface MessageInputProps {
@@ -492,6 +501,37 @@ export function MessageInput({
   // The editor owns the content now; this mirror of its empty state drives the
   // send button and `hasSendableContent`.
   const [composerEmpty, setComposerEmpty] = useState(true)
+  // keh4l build: pending backlink citations attached above the composer editor.
+  const [citationsState, setCitationsState] = useState<{
+    key: string | null
+    items: CitationItem[]
+  }>({ key: effectiveDraftStorageKey, items: [] })
+  if (citationsState.key !== effectiveDraftStorageKey) {
+    setCitationsState({ key: effectiveDraftStorageKey, items: [] })
+  }
+  const citations = useMemo(
+    () =>
+      citationsState.key === effectiveDraftStorageKey
+        ? citationsState.items
+        : [],
+    [citationsState, effectiveDraftStorageKey]
+  )
+  const setCitations = useCallback(
+    (updater: CitationItem[] | ((prev: CitationItem[]) => CitationItem[])) => {
+      setCitationsState((prev) => {
+        const base = prev.key === effectiveDraftStorageKey ? prev.items : []
+        const next = typeof updater === "function" ? updater(base) : updater
+        return { key: effectiveDraftStorageKey, items: next }
+      })
+    },
+    [effectiveDraftStorageKey]
+  )
+  const removeCitation = useCallback(
+    (id: string) => {
+      setCitations((prev) => prev.filter((item) => item.id !== id))
+    },
+    [setCitations]
+  )
   // Flips true once the RichComposer's async (immediatelyRender:false) editor has
   // mounted, so the hydration effect can use the imperative handle.
   const [composerReady, setComposerReady] = useState(false)
@@ -800,7 +840,10 @@ export function MessageInput({
     // and lets the cleanup cancel our own rAF before it runs.
     const raf = requestAnimationFrame(() => {
       const handle = editorRef.current
-      if ("handBack" in payload) {
+      if ("cite" in payload) {
+        setCitations((prev) => [...prev, payload.cite])
+        handle?.focus()
+      } else if ("handBack" in payload) {
         // Added after whatever the composer holds, never in its place. The
         // restore's edits reach `handleComposerChange` like typing does, so
         // the stored draft the send cleared is written again too.
@@ -856,6 +899,7 @@ export function MessageInput({
     skillPrefix,
     onInjectConsumed,
     hydrateFromBlocks,
+    setCitations,
   ])
 
   // A skill / expert badge freezes its invocation prefix (`$` for Codex, `/`
@@ -996,7 +1040,8 @@ export function MessageInput({
   const folderBranchPickerAttached = hasFolderBranchPicker
   const imageAttachments = attach.imageAttachments
   const hasAttachments = attachments.length > 0
-  const hasSendableContent = !composerEmpty || hasAttachments
+  const hasSendableContent =
+    !composerEmpty || hasAttachments || citations.length > 0
   // The committed half of the report above: what the composer holds, and
   // whether an intake is still in flight (once it settles, what it brought is
   // already in `hasSendableContent` here). `intakeRevision` re-runs this after
@@ -1635,7 +1680,31 @@ export function MessageInput({
         return true
       })
     }
-    if (blocks.length === 0 && attachments.length === 0) return null
+    if (
+      blocks.length === 0 &&
+      attachments.length === 0 &&
+      citations.length === 0
+    )
+      return null
+
+    if (citations.length > 0) {
+      const firstTextIdx = blocks.findIndex((b) => b.type === "text")
+      if (firstTextIdx >= 0) {
+        const cur = blocks[firstTextIdx] as Extract<
+          PromptInputBlock,
+          { type: "text" }
+        >
+        blocks[firstTextIdx] = {
+          type: "text",
+          text: prependCitationsToText(citations, cur.text),
+        }
+      } else {
+        blocks.unshift({
+          type: "text",
+          text: prependCitationsToText(citations, ""),
+        })
+      }
+    }
 
     // `attachments` holds only images now — files live inline as badges above.
     // The wire encoding is capability-driven inside the hook (native `image`
@@ -1644,21 +1713,32 @@ export function MessageInput({
     // accepts.
     blocks.push(...imagePromptBlocks())
 
+    const fullDisplayProse =
+      citations.length > 0
+        ? prependCitationsToText(citations, displayProse)
+        : displayProse
     const displayText =
-      displayProse ||
+      fullDisplayProse ||
       `Attached ${attachments.length} attachment${attachments.length > 1 ? "s" : ""}`
     return { blocks, displayText }
-  }, [attachments, skillPrefix, imagePromptBlocks, embeddedPayloadsRef])
+  }, [
+    attachments,
+    citations,
+    skillPrefix,
+    imagePromptBlocks,
+    embeddedPayloadsRef,
+  ])
 
   // Clear the editor + attachments after a send / enqueue / save.
   const resetComposer = useCallback(() => {
     editorRef.current?.clear()
     setComposerEmpty(true)
+    setCitations([])
     clearAttachments()
     closeSlashMenu()
     historyIndexRef.current = null
     historyDraftRef.current = null
-  }, [clearAttachments, closeSlashMenu])
+  }, [clearAttachments, closeSlashMenu, setCitations])
 
   // Async steering must compare against the current draft, including images
   // added or removed while delivery was awaiting confirmation.
@@ -2328,6 +2408,10 @@ export function MessageInput({
                     onRemove={attach.removeAttachment}
                   />
                 }
+              />
+              <ComposerCitationChips
+                citations={citations}
+                onRemove={removeCitation}
               />
               <RichComposer
                 ref={editorRef}

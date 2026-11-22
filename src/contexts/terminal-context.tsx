@@ -15,6 +15,7 @@ import {
   getSystemTerminalSettings,
   terminalKill,
   terminalSnapshot,
+  terminalWrite,
 } from "@/lib/api"
 import { getActiveRemoteConnectionId, getTransport } from "@/lib/transport"
 import { randomUUID } from "@/lib/utils"
@@ -209,6 +210,12 @@ interface TerminalContextValue {
     command: string,
     commandId?: number
   ) => Promise<string | null>
+  /** keh4l build: open a new interactive terminal in the active folder and
+   *  paste `command` into its input buffer WITHOUT executing it (no CR/LF). */
+  pasteCommandInNewTerminal: (
+    command: string,
+    title?: string
+  ) => Promise<string | null>
   closeTerminal: (id: string) => void
   closeOtherTerminals: (id: string) => void
   closeAllTerminals: () => void
@@ -217,6 +224,10 @@ interface TerminalContextValue {
 }
 
 const TerminalContext = createContext<TerminalContextValue | null>(null)
+
+export function useOptionalTerminalContext(): TerminalContextValue | null {
+  return useContext(TerminalContext)
+}
 
 export function useTerminalContext() {
   const ctx = useContext(TerminalContext)
@@ -328,12 +339,23 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
+  const pendingPasteRef = useRef<Map<string, string>>(new Map())
+
   const markTerminalStarted = useCallback((id: string) => {
     setTabs((current) =>
       current.map((tab) =>
         tab.id === id && !tab.restored ? { ...tab, restored: true } : tab
       )
     )
+    const pendingPaste = pendingPasteRef.current.get(id)
+    if (pendingPaste !== undefined) {
+      pendingPasteRef.current.delete(id)
+      // Give the interactive shell a beat to print its prompt before typing the
+      // pasted command into the input buffer (no trailing newline: user hits Enter).
+      window.setTimeout(() => {
+        terminalWrite(id, pendingPaste).catch(() => {})
+      }, 300)
+    }
   }, [])
 
   const markTerminalExited = useCallback((id: string) => {
@@ -519,6 +541,18 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
     await createTerminalInDirectory(folderPath)
   }, [folderPath, createTerminalInDirectory])
 
+  const pasteCommandInNewTerminal = useCallback(
+    async (command: string, title?: string) => {
+      if (!folderPath) return null
+      const cleaned = command.replace(/[\r\n]+$/, "")
+      if (!cleaned) return null
+      const id = await createTerminalInDirectory(folderPath, title)
+      if (id) pendingPasteRef.current.set(id, cleaned)
+      return id
+    },
+    [folderPath, createTerminalInDirectory]
+  )
+
   const setHeight = useCallback((h: number) => {
     setHeightState(Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, h)))
   }, [])
@@ -675,6 +709,7 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
       createTerminal,
       createTerminalInDirectory,
       createTerminalWithCommand,
+      pasteCommandInNewTerminal,
       closeTerminal,
       closeOtherTerminals,
       closeAllTerminals,
@@ -695,6 +730,7 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
       createTerminal,
       createTerminalInDirectory,
       createTerminalWithCommand,
+      pasteCommandInNewTerminal,
       closeTerminal,
       closeOtherTerminals,
       closeAllTerminals,

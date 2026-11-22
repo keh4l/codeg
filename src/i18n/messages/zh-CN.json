@@ -112,7 +112,8 @@
         "green": "Green",
         "blue": "Blue",
         "yellow": "Yellow",
-        "violet": "Violet"
+        "violet": "Violet",
+        "carbon": "墨黑"
       }
     },
     "customStyle": {
@@ -262,6 +263,24 @@
         "appliedToast": "壁纸已应用",
         "credit": "图片来源 wallhaven.cc · 仅 SFW 内容"
       }
+    },
+    "chatView": {
+      "styleTitle": "对话样式",
+      "styleDescription": "紧凑样式将每轮过程折叠为单行（T3 Code 风格）；可随时切回经典时间线样式。",
+      "styleCompact": "紧凑（T3 风格）",
+      "styleTimeline": "时间线（经典）",
+      "toolVisibilityTitle": "工具调用显示",
+      "toolVisibilityDescription": "控制紧凑样式下回复中显示哪些工具调用步骤。",
+      "toolVisibility": {
+        "showAll": "全部显示",
+        "hideSuccessful": "隐藏成功的",
+        "hideAll": "全部隐藏",
+        "zen": "禅模式"
+      },
+      "liveSpeedTitle": "实时输出速度",
+      "liveSpeedDescription": "智能体回复时在「正在工作」行显示实时速度（tok/s）。",
+      "minimapTitle": "时间轴缩略图",
+      "minimapDescription": "桌面端在对话边缘显示刻度缩略图，支持悬停预览和点击跳转。"
     }
   },
   "SystemSettings": {
@@ -10390,5 +10409,43 @@
     "steer": "插话",
     "queue": "排队",
     "note": "Claude Code、Codex、Grok、Kiro、Antigravity 会把消息插进正在进行的这一轮，做完手上这一步就读到。其它智能体会先停下这一轮，再带着你的话重新开始，被打断的那一步会丢掉；想让它们先做完，就选「排队」。"
+  },
+  "CompactView": {
+    "working": "正在工作",
+    "worked": "已工作",
+    "workedFor": "已工作 {time}",
+    "files": "{count} 个文件",
+    "expandSteps": "展开步骤",
+    "collapseSteps": "折叠步骤",
+    "openInDiffPanel": "在差异面板打开",
+    "changedFilesTitle": "已更改 {count} 个文件",
+    "expandAllDirs": "全部展开",
+    "collapseAllDirs": "全部折叠",
+    "fileAddedBadge": "新",
+    "fileRemovedBadge": "删",
+    "previewFile": "预览",
+    "closePreview": "关闭预览",
+    "loadingPreview": "正在加载预览…",
+    "editMessage": "重新编辑",
+    "citationJumpTitle": "跳回原文",
+    "citationJumpAria": "跳回引用原文",
+    "expandQuote": "展开引用",
+    "collapseQuote": "收起引用",
+    "removeQuote": "移除引用",
+    "minimapLabel": "对话时间轴",
+    "minimapTurnAria": "跳到第 {index} 条消息",
+    "minimapEmptyPrompt": "（无文字）",
+    "minimapNoReply": "（还没有回复）",
+    "findInConversation": "在对话中查找",
+    "findPlaceholder": "在对话中查找…",
+    "findCaseSensitive": "区分大小写",
+    "findPrevious": "上一个匹配",
+    "findNext": "下一个匹配",
+    "findClose": "关闭查找",
+    "codeWrap": "开启自动换行",
+    "codeUnwrap": "关闭自动换行",
+    "runInTerminal": "在终端运行",
+    "runInTerminalHint": "将命令粘贴到新终端（按回车执行）",
+    "pastedToTerminal": "已将命令粘贴到新终端，按回车执行"
   }
 }

@@ -59,6 +59,8 @@ pub mod tab_sync;
 pub mod terminal;
 pub mod token_usage;
 pub mod translation;
+// keh4l build: whole-transcript find and minimap for the T3-style chat view.
+pub mod transcript_view;
 mod upload_jail;
 pub mod version_control;
 pub mod web_server;

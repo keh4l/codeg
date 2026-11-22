@@ -1,7 +1,11 @@
 "use client"
 
-import { memo, useMemo, useState } from "react"
+import { memo, useCallback, useMemo, useState } from "react"
+import { ExternalLink } from "lucide-react"
 import { useTranslations } from "next-intl"
+
+import { useOptionalOpenFileTarget } from "@/hooks/use-open-file-target"
+import { useChatViewPrefs } from "@/lib/chat-view-prefs"
 
 import {
   parseUnifiedDiff,
@@ -57,8 +61,26 @@ function PathLabel({ path }: { path: string }) {
  * those operations), counts appear once it has finished, and the line range
  * only when the payload carried real positions. Folded by default.
  */
+function EditRowOpenDiffButton({ onOpen }: { onOpen: () => void }) {
+  const tCompact = useTranslations("CompactView")
+  return (
+    <button
+      type="button"
+      data-compact-edit-open-diff=""
+      onClick={onOpen}
+      title={tCompact("openInDiffPanel")}
+      aria-label={tCompact("openInDiffPanel")}
+      className="compact-edit-open-diff mt-0.5 inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <ExternalLink aria-hidden="true" className="size-3" />
+    </button>
+  )
+}
+
 export const EditRow = memo(function EditRow({ step }: { step: ToolStep }) {
   const t = useTranslations("Folder.chat.activity")
+  const { view } = useChatViewPrefs()
+  const openFileTarget = useOptionalOpenFileTarget()
   const statusText = useStatusText()
   const { recoveredKeys } = useActivityRender()
   const { tool, part } = step
@@ -89,6 +111,16 @@ export const EditRow = memo(function EditRow({ step }: { step: ToolStep }) {
           ? t("row.moved")
           : t("row.edited")
 
+  const openInDiffPanel = useCallback(() => {
+    if (!openFileTarget || !single || !diff) return
+    void openFileTarget(single.path, {
+      diff: {
+        content: diff.text,
+        groupLabel: step.key,
+      },
+    })
+  }, [openFileTarget, single, diff, step.key])
+
   return (
     <ActivityRow
       stepKey={step.key}
@@ -106,6 +138,11 @@ export const EditRow = memo(function EditRow({ step }: { step: ToolStep }) {
       onExpandedChange={setOpen}
       title={single?.path}
       trailing={<ToolFigure tool={tool} />}
+      headerAction={
+        view === "compact" && openFileTarget && single && diff && !live ? (
+          <EditRowOpenDiffButton onOpen={openInDiffPanel} />
+        ) : undefined
+      }
       detail={() => (
         <div className="space-y-2">
           {errorText ? (

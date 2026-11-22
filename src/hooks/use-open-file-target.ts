@@ -4,7 +4,10 @@ import { useCallback } from "react"
 
 import { useSessionViewerHost } from "@/components/message/session-viewer-host-context"
 import { useOptionalWorkbenchRoute } from "@/contexts/workbench-route-context"
-import { useWorkspaceActions } from "@/contexts/workspace-context"
+import {
+  useOptionalWorkspaceActions,
+  useWorkspaceActions,
+} from "@/contexts/workspace-context"
 
 interface OpenFileTargetOptions {
   line?: number | null
@@ -76,4 +79,45 @@ export function useOpenFileTarget() {
     },
     [fileColumnVisible, openFilePreview, openSessionFileDiff, viewerHost]
   )
+}
+
+/** keh4l build: null outside `WorkspaceProvider` so shared rows degrade cleanly
+ *  in isolated tests or standalone viewers. */
+export function useOptionalOpenFileTarget() {
+  const actions = useOptionalWorkspaceActions()
+  const route = useOptionalWorkbenchRoute()
+  const viewerHost = useSessionViewerHost()
+  const fileColumnVisible = route ? route.isConversations : true
+
+  const opener = useCallback(
+    async (path: string, options?: OpenFileTargetOptions): Promise<void> => {
+      if (!fileColumnVisible && viewerHost) {
+        viewerHost.open({
+          kind: "file",
+          path,
+          line: options?.line ?? null,
+          folderId: options?.folderId,
+          diff: options?.diff,
+        })
+        return
+      }
+      if (!actions) return
+      if (options?.diff) {
+        actions.openSessionFileDiff(
+          path,
+          options.diff.content,
+          options.diff.groupLabel,
+          { folderId: options.folderId }
+        )
+        return
+      }
+      await actions.openFilePreview(path, {
+        line: options?.line ?? undefined,
+        folderId: options?.folderId,
+      })
+    },
+    [actions, fileColumnVisible, viewerHost]
+  )
+
+  return actions || viewerHost ? opener : null
 }

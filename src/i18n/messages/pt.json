@@ -112,7 +112,8 @@
         "green": "Green",
         "blue": "Blue",
         "yellow": "Yellow",
-        "violet": "Violet"
+        "violet": "Violet",
+        "carbon": "Carbono"
       }
     },
     "customStyle": {
@@ -262,6 +263,24 @@
         "appliedToast": "Papel de parede aplicado",
         "credit": "Imagens de wallhaven.cc · apenas SFW"
       }
+    },
+    "chatView": {
+      "styleTitle": "Estilo da conversa",
+      "styleDescription": "Compacto recolhe os passos de cada resposta em uma linha (estilo T3 Code). Volte para a linha do tempo clássica quando quiser.",
+      "styleCompact": "Compacto (estilo T3)",
+      "styleTimeline": "Linha do tempo (clássico)",
+      "toolVisibilityTitle": "Chamadas de ferramentas",
+      "toolVisibilityDescription": "Controla quais chamadas de ferramentas aparecem no modo compacto.",
+      "toolVisibility": {
+        "showAll": "Mostrar tudo",
+        "hideSuccessful": "Ocultar bem-sucedidas",
+        "hideAll": "Ocultar tudo",
+        "zen": "Modo zen"
+      },
+      "liveSpeedTitle": "Velocidade em tempo real",
+      "liveSpeedDescription": "Mostra a velocidade de tokens (tok/s) na linha de trabalho durante a resposta.",
+      "minimapTitle": "Minimapa da linha do tempo",
+      "minimapDescription": "Exibe uma barra lateral compacta para pré-visualizar e navegar entre mensagens no desktop."
     }
   },
   "SystemSettings": {
@@ -10390,5 +10409,43 @@
     "steer": "Intervir",
     "queue": "Fila",
     "note": "Claude Code, Codex, Grok, Kiro e Antigravity recebem a mensagem no turno em andamento e a leem depois da etapa atual. Os outros agentes param o turno e recomeçam com a sua mensagem, descartando a etapa interrompida; escolha Fila se preferir que terminem antes."
+  },
+  "CompactView": {
+    "working": "Trabalhando",
+    "worked": "Concluído",
+    "workedFor": "Trabalhou por {time}",
+    "files": "{count, plural, one {# arquivo} other {# arquivos}}",
+    "expandSteps": "Expandir etapas",
+    "collapseSteps": "Recolher etapas",
+    "openInDiffPanel": "Abrir no painel de diff",
+    "changedFilesTitle": "{count, plural, one {1 arquivo alterado} other {# arquivos alterados}}",
+    "expandAllDirs": "Expandir tudo",
+    "collapseAllDirs": "Recolher tudo",
+    "fileAddedBadge": "Novo",
+    "fileRemovedBadge": "Rem",
+    "previewFile": "Visualizar",
+    "closePreview": "Fechar visualização",
+    "loadingPreview": "Carregando visualização…",
+    "editMessage": "Editar no compositor",
+    "citationJumpTitle": "Ir para a mensagem citada",
+    "citationJumpAria": "Ir para a mensagem citada",
+    "expandQuote": "Expandir citação",
+    "collapseQuote": "Recolher citação",
+    "removeQuote": "Remover citação",
+    "minimapLabel": "Linha do tempo da conversa",
+    "minimapTurnAria": "Ir para a mensagem {index}",
+    "minimapEmptyPrompt": "(Sem texto)",
+    "minimapNoReply": "(Ainda sem resposta)",
+    "findInConversation": "Localizar na conversa",
+    "findPlaceholder": "Localizar na conversa…",
+    "findCaseSensitive": "Diferenciar maiúsculas",
+    "findPrevious": "Resultado anterior",
+    "findNext": "Próximo resultado",
+    "findClose": "Fechar busca",
+    "codeWrap": "Quebrar linhas",
+    "codeUnwrap": "Desativar quebra de linhas",
+    "runInTerminal": "Executar no terminal",
+    "runInTerminalHint": "Cola o comando em um novo terminal (pressione Enter para executar)",
+    "pastedToTerminal": "Comando colado em um novo terminal — pressione Enter para executar"
   }
 }

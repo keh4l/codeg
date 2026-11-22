@@ -9,6 +9,11 @@ import { cn } from "@/lib/utils"
 import { FileReferenceActions } from "./file-reference-actions"
 import { useKnownInvocations } from "./known-invocations-context"
 import { parseUserMessageSegments } from "./user-message-segments"
+import {
+  hasUserMessageCitations,
+  parseUserMessageCitations,
+} from "./compact/citation"
+import { CitationCard } from "./compact/citation-card"
 
 /**
  * One prose run: literal text with the five built-in reference kinds (file /
@@ -103,11 +108,37 @@ export const PlainTextWithBadges = memo(function PlainTextWithBadges({
   text: string
   className?: string
 }) {
-  const blocks = useMemo(() => parseQuoteBlocks(text), [text])
+  const hasCites = useMemo(() => hasUserMessageCitations(text), [text])
+  const citedSegments = useMemo(
+    () => (hasCites ? parseUserMessageCitations(text) : null),
+    [hasCites, text]
+  )
+  const blocks = useMemo(
+    () => (hasCites ? null : parseQuoteBlocks(text)),
+    [hasCites, text]
+  )
+
+  if (citedSegments) {
+    return (
+      <div className={cn("break-words", className)} dir="auto">
+        {citedSegments.map((seg, idx) =>
+          seg.kind === "citation" ? (
+            <CitationCard key={`cite-${idx}`} citation={seg} />
+          ) : (
+            <div key={`txt-${idx}`} className="my-1.5 first:mt-0 last:mb-0">
+              {parseQuoteBlocks(seg.text).map((block, bIdx) =>
+                renderBlock(block, bIdx)
+              )}
+            </div>
+          )
+        )}
+      </div>
+    )
+  }
 
   // Fast path for the overwhelming majority of messages, which quote nothing:
   // one prose run, rendered by exactly the markup this component always emitted.
-  if (blocks.length === 1 && blocks[0].kind === "text") {
+  if (blocks && blocks.length === 1 && blocks[0].kind === "text") {
     return (
       <div
         className={cn("whitespace-pre-wrap break-words", className)}
@@ -120,7 +151,7 @@ export const PlainTextWithBadges = memo(function PlainTextWithBadges({
 
   return (
     <div className={cn("break-words", className)} dir="auto">
-      {blocks.map(renderBlock)}
+      {(blocks ?? []).map(renderBlock)}
     </div>
   )
 })

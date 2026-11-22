@@ -67,6 +67,10 @@ import {
 } from "./mermaid-view"
 import { renderPlantUml } from "./plantuml-engine"
 import { useMermaidEngine } from "./streamdown-plugins"
+import {
+  CodeBlockEnhancer,
+  languageFromClassName,
+} from "@/components/message/compact/code-block-extras"
 
 // --- Why this file exists ----------------------------------------------------
 //
@@ -940,12 +944,28 @@ export function MermaidAwarePre({ children }: { children?: ReactNode }) {
   if (mermaid !== null) return <MermaidBlock source={mermaid} />
   const plantUml = plantUmlSourceFromPre(children)
   if (plantUml !== null) return <PlantUmlBlock source={plantUml} />
-  return cloneElement(
+  const codeProps = children.props as {
+    className?: string
+    children?: unknown
+    node?: { data?: { meta?: string } }
+  }
+  const language = languageFromClassName(codeProps.className)
+  const rawCode =
+    typeof codeProps.children === "string" ? codeProps.children : ""
+  const meta = codeProps.node?.data?.meta ?? ""
+  const titleMatch = /(?:^|\s)(?:title|file)=["']?([^"'\s]+)["']?/i.exec(meta)
+  const filename = titleMatch ? titleMatch[1]! : null
+  const block = cloneElement(
     children as ReactElement<{
       "data-block"?: string
       ref?: typeof overlayScrollportRef
     }>,
     { "data-block": "true", ref: overlayScrollportRef }
+  )
+  return (
+    <CodeBlockEnhancer language={language} code={rawCode} filename={filename}>
+      {block}
+    </CodeBlockEnhancer>
   )
 }
 

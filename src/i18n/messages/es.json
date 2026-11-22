@@ -112,7 +112,8 @@
         "green": "Green",
         "blue": "Blue",
         "yellow": "Yellow",
-        "violet": "Violet"
+        "violet": "Violet",
+        "carbon": "Carbón"
       }
     },
     "customStyle": {
@@ -262,6 +263,24 @@
         "appliedToast": "Fondo aplicado",
         "credit": "Imágenes de wallhaven.cc · solo SFW"
       }
+    },
+    "chatView": {
+      "styleTitle": "Estilo de conversación",
+      "styleDescription": "Compacto pliega los pasos de cada respuesta en una línea (estilo T3 Code). Puedes volver a la línea de tiempo clásica cuando quieras.",
+      "styleCompact": "Compacto (estilo T3)",
+      "styleTimeline": "Línea de tiempo (clásico)",
+      "toolVisibilityTitle": "Llamadas a herramientas",
+      "toolVisibilityDescription": "Controla qué llamadas a herramientas aparecen en la vista compacta.",
+      "toolVisibility": {
+        "showAll": "Mostrar todo",
+        "hideSuccessful": "Ocultar exitosas",
+        "hideAll": "Ocultar todo",
+        "zen": "Modo zen"
+      },
+      "liveSpeedTitle": "Velocidad en vivo",
+      "liveSpeedDescription": "Muestra la velocidad de tokens (tok/s) en la línea de trabajo mientras responde el agente.",
+      "minimapTitle": "Minimapa de línea de tiempo",
+      "minimapDescription": "Muestra una barra lateral compacta para previsualizar y saltar entre mensajes en escritorio."
     }
   },
   "SystemSettings": {
@@ -10390,5 +10409,43 @@
     "steer": "Intervenir",
     "queue": "En cola",
     "note": "Claude Code, Codex, Grok, Kiro y Antigravity reciben el mensaje en el turno en curso y lo leen tras el paso actual. Los demás agentes detienen el turno y empiezan de nuevo con tu mensaje, lo que descarta el paso interrumpido; elige En cola si prefieres que terminen antes."
+  },
+  "CompactView": {
+    "working": "Trabajando",
+    "worked": "Trabajado",
+    "workedFor": "Trabajó durante {time}",
+    "files": "{count, plural, one {# archivo} other {# archivos}}",
+    "expandSteps": "Expandir pasos",
+    "collapseSteps": "Contraer pasos",
+    "openInDiffPanel": "Abrir en panel de diferencias",
+    "changedFilesTitle": "{count, plural, one {1 archivo modificado} other {# archivos modificados}}",
+    "expandAllDirs": "Expandir todo",
+    "collapseAllDirs": "Contraer todo",
+    "fileAddedBadge": "Nuevo",
+    "fileRemovedBadge": "Elim",
+    "previewFile": "Vista previa",
+    "closePreview": "Cerrar vista previa",
+    "loadingPreview": "Cargando vista previa…",
+    "editMessage": "Editar en el compositor",
+    "citationJumpTitle": "Ir al mensaje citado",
+    "citationJumpAria": "Ir al mensaje citado",
+    "expandQuote": "Expandir cita",
+    "collapseQuote": "Contraer cita",
+    "removeQuote": "Quitar cita",
+    "minimapLabel": "Línea de tiempo de la conversación",
+    "minimapTurnAria": "Ir al mensaje {index}",
+    "minimapEmptyPrompt": "(Sin texto)",
+    "minimapNoReply": "(Sin respuesta aún)",
+    "findInConversation": "Buscar en la conversación",
+    "findPlaceholder": "Buscar en la conversación…",
+    "findCaseSensitive": "Distinguir mayúsculas",
+    "findPrevious": "Coincidencia anterior",
+    "findNext": "Siguiente coincidencia",
+    "findClose": "Cerrar búsqueda",
+    "codeWrap": "Ajustar líneas",
+    "codeUnwrap": "Desactivar ajuste de líneas",
+    "runInTerminal": "Ejecutar en terminal",
+    "runInTerminalHint": "Pega el comando en una nueva terminal (pulsa Enter para ejecutar)",
+    "pastedToTerminal": "Comando pegado en una nueva terminal — pulsa Enter para ejecutar"
   }
 }

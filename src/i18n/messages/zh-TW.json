@@ -112,7 +112,8 @@
         "green": "Green",
         "blue": "Blue",
         "yellow": "Yellow",
-        "violet": "Violet"
+        "violet": "Violet",
+        "carbon": "墨黑"
       }
     },
     "customStyle": {
@@ -262,6 +263,24 @@
         "appliedToast": "桌布已套用",
         "credit": "圖片來源 wallhaven.cc · 僅 SFW 內容"
       }
+    },
+    "chatView": {
+      "styleTitle": "對話樣式",
+      "styleDescription": "精簡樣式將每輪過程摺疊為單行（T3 Code 風格）；可隨時切回經典時間線樣式。",
+      "styleCompact": "精簡（T3 風格）",
+      "styleTimeline": "時間線（經典）",
+      "toolVisibilityTitle": "工具呼叫顯示",
+      "toolVisibilityDescription": "控制精簡樣式下回覆中顯示哪些工具呼叫步驟。",
+      "toolVisibility": {
+        "showAll": "全部顯示",
+        "hideSuccessful": "隱藏成功的",
+        "hideAll": "全部隱藏",
+        "zen": "禪模式"
+      },
+      "liveSpeedTitle": "即時輸出速度",
+      "liveSpeedDescription": "代理回覆時在「正在工作」列顯示即時速度（tok/s）。",
+      "minimapTitle": "時間軸縮略圖",
+      "minimapDescription": "桌面端在對話邊緣顯示刻度縮略圖，支援懸停預覽與點擊跳轉。"
     }
   },
   "SystemSettings": {
@@ -10390,5 +10409,43 @@
     "steer": "插話",
     "queue": "排隊",
     "note": "Claude Code、Codex、Grok、Kiro、Antigravity 會把訊息插進正在進行的這一輪，做完手上這一步就讀到。其他智慧體會先停下這一輪，再帶著你的話重新開始，被打斷的那一步會丟掉；想讓它們先做完，就選「排隊」。"
+  },
+  "CompactView": {
+    "working": "正在工作",
+    "worked": "已工作",
+    "workedFor": "已工作 {time}",
+    "files": "{count} 個檔案",
+    "expandSteps": "展開步驟",
+    "collapseSteps": "摺疊步驟",
+    "openInDiffPanel": "在差異面板開啟",
+    "changedFilesTitle": "已變更 {count} 個檔案",
+    "expandAllDirs": "全部展開",
+    "collapseAllDirs": "全部摺疊",
+    "fileAddedBadge": "新",
+    "fileRemovedBadge": "刪",
+    "previewFile": "預覽",
+    "closePreview": "關閉預覽",
+    "loadingPreview": "正在載入預覽…",
+    "editMessage": "重新編輯",
+    "citationJumpTitle": "跳回原文",
+    "citationJumpAria": "跳回引用原文",
+    "expandQuote": "展開引用",
+    "collapseQuote": "收起引用",
+    "removeQuote": "移除引用",
+    "minimapLabel": "對話時間軸",
+    "minimapTurnAria": "跳到第 {index} 則訊息",
+    "minimapEmptyPrompt": "（無文字）",
+    "minimapNoReply": "（尚未回覆）",
+    "findInConversation": "在對話中尋找",
+    "findPlaceholder": "在對話中尋找…",
+    "findCaseSensitive": "區分大小寫",
+    "findPrevious": "上一個符合項目",
+    "findNext": "下一個符合項目",
+    "findClose": "關閉尋找",
+    "codeWrap": "開啟自動換行",
+    "codeUnwrap": "關閉自動換行",
+    "runInTerminal": "在終端機執行",
+    "runInTerminalHint": "將指令貼到新終端機（按 Enter 執行）",
+    "pastedToTerminal": "已將指令貼到新終端機，按 Enter 執行"
   }
 }

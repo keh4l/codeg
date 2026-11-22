@@ -41,6 +41,10 @@ const MARKER_POSITION = {
     ring: "start-0 top-1.5 size-4",
     dot: "start-[0.3125rem] top-[0.6875rem] size-1.5",
   },
+  flat: {
+    ring: "start-0 top-1 size-4",
+    dot: "start-[0.3125rem] top-[0.6875rem] size-1.5",
+  },
 } as const
 
 /**
@@ -64,6 +68,7 @@ export function ActivityRow({
   variant = "main",
   children,
   trailing,
+  headerAction,
   approval,
   expandable = false,
   expanded = false,
@@ -81,11 +86,14 @@ export function ActivityRow({
   status?: StepStatus
   marker: ReactNode
   markerKind?: "ring" | "dot"
-  variant?: "main" | "child"
+  variant?: "main" | "child" | "flat"
   /** The header's label. Single line unless the row lets it wrap. */
   children: ReactNode
   /** The right-hand figure: `84 lines`, `+3 −1`, `exit 1`. */
   trailing?: ReactNode
+  /** keh4l build: interactive button rendered beside the header button (never
+   *  nested inside it), e.g. EditRow's "open in diff panel" button. */
+  headerAction?: ReactNode
   /** How the call's permission request was answered: a chip ahead of the
    *  figure. */
   approval?: ToolApproval | null
@@ -208,7 +216,35 @@ export function ActivityRow({
       >
         {marker}
       </span>
-      {expandable ? (
+      {headerAction ? (
+        <div className="activity-row-header-wrap flex min-w-0 items-start gap-1">
+          {expandable ? (
+            <button
+              type="button"
+              className={cn(
+                headerClass,
+                "activity-row-toggle min-w-0 flex-1 cursor-pointer rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              )}
+              aria-expanded={open}
+              aria-controls={open ? detailId : undefined}
+              title={title}
+              onClick={() => onExpandedChange?.(!open)}
+              data-motion-key={headerMotionKey}
+            >
+              {header}
+            </button>
+          ) : (
+            <div
+              className={cn(headerClass, "min-w-0 flex-1")}
+              title={title}
+              data-motion-key={headerMotionKey}
+            >
+              {header}
+            </div>
+          )}
+          {headerAction}
+        </div>
+      ) : expandable ? (
         <button
           type="button"
           className={cn(

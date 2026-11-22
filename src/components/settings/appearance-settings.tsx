@@ -55,6 +55,7 @@ import { FontSettingsSection } from "./font-settings-section"
 import { WorkspaceBackgroundSection } from "./workspace-background-section"
 import { CustomStyleSection } from "./custom-style-section"
 import { ChatHtmlSettingsSection } from "./chat-html-settings"
+import { ChatViewSettingsSection } from "./chat-view-settings-section"
 
 /**
  * 屏幕可用宽度（CSS px），用作聊天宽度滑块上限的依据——主窗口铺满屏幕时聊天列
@@ -265,6 +266,9 @@ export function AppearanceSettings() {
               />
             }
           />
+
+          {/* ===== Chat view (keh4l: T3-style compact / timeline) ===== */}
+          <ChatViewSettingsSection />
 
           {/* ===== Chat animations ===== */}
           <SettingsSection
