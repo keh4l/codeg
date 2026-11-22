@@ -292,6 +292,9 @@ mod tests {
         let repo = tmp.path().join("proj");
         std::fs::create_dir_all(repo.join("app/src")).unwrap();
         run(&repo, &["init", "-q", "-b", "main"]);
+        // Files read back byte for byte: no CRLF checkouts (Windows runners
+        // have core.autocrlf on).
+        run(&repo, &["config", "core.autocrlf", "false"]);
         std::fs::write(repo.join("app/src/lib.rs"), "fn a() {}\n").unwrap();
         run(&repo, &["add", "."]);
         run(&repo, &["commit", "-q", "-m", "init"]);
