@@ -13,6 +13,7 @@ import { NextIntlClientProvider, type AbstractIntlMessages } from "next-intl"
 import { Direction } from "radix-ui"
 import { getFallbackMessages, getMessagesForLocale } from "@/i18n/messages"
 import {
+  DEFAULT_LANGUAGE_SETTINGS,
   fromIntlLocale,
   getSystemLocaleCandidates,
   LANGUAGE_COOKIE_KEY,
@@ -54,6 +55,36 @@ function getSystemLocaleSnapshot(): string {
 function getSystemLocaleServerSnapshot(): string {
   return ""
 }
+
+/**
+ * Fork: the language settings this browser last read from the server
+ * (`persistLanguageSettings` keeps them), so the app renders in that language
+ * without waiting for the server's answer — over a slow link that wait held
+ * the whole app, the health check and the workspace page behind it.
+ */
+function readCachedLanguageSettings(): SystemLanguageSettings | null {
+  if (typeof window === "undefined") return null
+  try {
+    const raw = window.localStorage.getItem(LANGUAGE_SETTINGS_STORAGE_KEY)
+    return raw
+      ? normalizeLanguageSettings(JSON.parse(raw) as SystemLanguageSettings)
+      : null
+  } catch {
+    return null
+  }
+}
+
+// Fork: start loading the cached locale's messages before React mounts.
+if (typeof window !== "undefined") {
+  const cached = readCachedLanguageSettings()
+  if (cached) {
+    void getMessagesForLocale(
+      resolveAppLocale(cached, getSystemLocaleCandidates())
+    ).catch(() => {})
+  }
+}
+
+const subscribeNothing = () => () => {}
 
 function persistLanguageSettings(settings: SystemLanguageSettings) {
   if (typeof window === "undefined") return
@@ -99,11 +130,17 @@ export function AppI18nProvider({
   initialMessages,
 }: AppI18nProviderProps) {
   const initialAppLocale = fromIntlLocale(initialLocale)
+  // Fork: what this browser last read, else the server's own default; the
+  // server's answer replaces it when it comes. (Rendered output does not
+  // depend on it until after hydration — see `cacheKnown`.)
   const [languageSettings, setLanguageSettingsState] =
-    useState<SystemLanguageSettings>({
-      mode: "manual",
-      language: initialAppLocale,
-    })
+    useState<SystemLanguageSettings>(
+      () =>
+        readCachedLanguageSettings() ??
+        (initialAppLocale === "en"
+          ? DEFAULT_LANGUAGE_SETTINGS
+          : { mode: "manual", language: initialAppLocale })
+    )
   const [languageSettingsLoaded, setLanguageSettingsLoaded] = useState(false)
   const [messages, setMessages] = useState<AbstractIntlMessages>(
     initialMessages ?? getFallbackMessages()
@@ -250,7 +287,24 @@ export function AppI18nProvider({
   }, [appLocale, messagesLocale])
 
   const localeReady = appLocale === messagesLocale
-  const appReady = languageSettingsLoaded && localeReady
+  // Fork: rendering waits for the server's language settings only until the
+  // page has hydrated — from then on the settings above (cached, or the
+  // default) are good enough to render with; the server's answer switches the
+  // language if it differs. The static HTML and the hydration render stay the
+  // boot screen either way (`false` on the server snapshot).
+  const cacheKnown = useSyncExternalStore(
+    subscribeNothing,
+    () => true,
+    () => false
+  )
+  const ready = (languageSettingsLoaded || cacheKnown) && localeReady
+  // Fork: once the app is up it stays up. A language switch (the server's
+  // answer, or the user's choice) keeps rendering with the old messages until
+  // the new ones load, rather than unmounting the workspace for the boot
+  // screen.
+  const [booted, setBooted] = useState(false)
+  if (ready && !booted) setBooted(true)
+  const appReady = ready || booted
   const activeIntlLocale = toIntlLocale(messagesLocale)
   const dir = activeIntlLocale === "ar" ? "rtl" : "ltr"
 

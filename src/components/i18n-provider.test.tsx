@@ -1,5 +1,6 @@
-import { render, screen, waitFor } from "@testing-library/react"
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { useEffect } from "react"
+import { act, render, screen, waitFor } from "@testing-library/react"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { SystemLanguageSettings } from "@/lib/types"
 
@@ -54,5 +55,60 @@ describe("AppI18nProvider direction", () => {
     renderTabs()
     await waitFor(() => expect(tabsRoot()).toHaveAttribute("dir", "ltr"))
     expect(document.documentElement.dir).toBe("ltr")
+  })
+})
+
+describe("AppI18nProvider boot (fork)", () => {
+  const forget = () => {
+    window.localStorage.clear()
+    document.cookie = "codeg.locale=; Max-Age=0; Path=/"
+    document.cookie = "codeg.language_mode=; Max-Age=0; Path=/"
+  }
+  beforeEach(forget)
+  afterEach(forget)
+
+  it("renders without waiting for the server's language settings", async () => {
+    window.localStorage.setItem(
+      "codeg.system_language_settings",
+      JSON.stringify({ mode: "manual", language: "en" })
+    )
+    api.getSystemLanguageSettings.mockReturnValue(new Promise(() => {}))
+    render(
+      <AppI18nProvider>
+        <p>workspace</p>
+      </AppI18nProvider>
+    )
+    expect(await screen.findByText("workspace")).toBeTruthy()
+    // Nothing from the server yet: no cookies written on a guess.
+    expect(document.cookie).not.toContain("codeg.locale=")
+  })
+
+  it("switches language without unmounting what it renders", async () => {
+    let answer!: (settings: SystemLanguageSettings) => void
+    api.getSystemLanguageSettings.mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve
+      })
+    )
+    let mounts = 0
+    function Probe() {
+      useEffect(() => {
+        mounts += 1
+      }, [])
+      return <p>workspace</p>
+    }
+    render(
+      <AppI18nProvider>
+        <Probe />
+      </AppI18nProvider>
+    )
+    await screen.findByText("workspace")
+    await act(async () => {
+      answer({ mode: "manual", language: "ar" })
+    })
+    await waitFor(() => expect(document.documentElement.dir).toBe("rtl"))
+    expect(screen.getByText("workspace")).toBeTruthy()
+    expect(mounts).toBe(1)
+    expect(document.cookie).toContain("codeg.locale=ar")
   })
 })
