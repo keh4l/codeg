@@ -2426,9 +2426,15 @@ pub fn build_router_with_srn(
     // We use a middleware to rewrite "/folder" → "/folder.html" before ServeDir.
     let fallback =
         ServeDir::new(&static_dir).fallback(ServeFile::new(static_dir.join("index.html")));
+    let static_dir_for_cache = static_dir.clone();
     let static_files: Router = Router::new()
         .fallback_service(fallback)
-        .layer(middleware::from_fn(static_cache_control));
+        .layer(middleware::from_fn(static_cache_control))
+        // Fork: hashed assets kept for good, a missing one a 404, ETags for
+        // the rest (`web::static_cache`).
+        .layer(middleware::from_fn(move |req, next| {
+            crate::web::static_cache::serve(static_dir_for_cache.clone(), req, next)
+        }));
 
     let static_dir_for_mw = static_dir.clone();
     let html_rewrite = middleware::from_fn(move |req: axum::extract::Request, next: Next| {

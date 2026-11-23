@@ -385,14 +385,19 @@ async fn static_files_revalidate_except_fingerprinted_assets() {
         assert_eq!(cache_control(&resp).as_deref(), Some("no-cache"), "{path}");
     }
 
-    // A fingerprinted asset never changes under its name.
+    // A fingerprinted asset never changes under its name: kept for good
+    // (fork, `web::static_cache`).
     let chunk = server.get("/_next/static/chunks/app-1a2b.js").await;
     assert_eq!(chunk.status_code(), 200);
-    assert_eq!(cache_control(&chunk), None);
-    // The index.html standing in for a missing one is still a document.
+    assert_eq!(
+        cache_control(&chunk).as_deref(),
+        Some("public, max-age=31536000, immutable")
+    );
+    // A missing one is a 404 nothing keeps — not index.html, which an open
+    // page of the previous release would run as its script.
     let missing = server.get("/_next/static/chunks/gone.js").await;
-    assert_eq!(missing.text(), "<html>index</html>");
-    assert_eq!(cache_control(&missing).as_deref(), Some("no-cache"));
+    assert_eq!(missing.status_code(), 404);
+    assert_eq!(cache_control(&missing).as_deref(), Some("no-store"));
 
     // Revalidating keeps the copy: it is not modified, so nothing is resent.
     let first = server.get("/").await;
@@ -408,6 +413,33 @@ async fn static_files_revalidate_except_fingerprinted_assets() {
         .await;
     assert_eq!(again.status_code(), 304);
     assert_eq!(cache_control(&again).as_deref(), Some("no-cache"));
+
+    // Fork: and by content — an ETag answers If-None-Match with 304, and a
+    // changed document is sent again whatever its date says.
+    let etag = first
+        .headers()
+        .get("etag")
+        .and_then(|v| v.to_str().ok())
+        .expect("etag")
+        .to_owned();
+    let by_tag = server
+        .get("/")
+        .add_header("if-none-match", etag.clone())
+        .await;
+    assert_eq!(by_tag.status_code(), 304);
+    assert_eq!(cache_control(&by_tag).as_deref(), Some("no-cache"));
+    std::fs::write(root.join("index.html"), "<html>index, v2</html>").expect("rewrite index");
+    let changed = server
+        .get("/")
+        .add_header("if-none-match", etag.clone())
+        .add_header("if-modified-since", "Fri, 31 Dec 2100 00:00:00 GMT")
+        .await;
+    assert_eq!(changed.status_code(), 200);
+    assert_eq!(changed.text(), "<html>index, v2</html>");
+    assert_ne!(
+        changed.headers().get("etag").and_then(|v| v.to_str().ok()),
+        Some(etag.as_str())
+    );
 
     let api = server
         .post("/api/health")
