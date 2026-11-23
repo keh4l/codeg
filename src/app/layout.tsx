@@ -3,11 +3,11 @@ import "katex/dist/katex.min.css"
 import "./globals.css"
 import { NextIntlClientProvider } from "next-intl"
 import { AppI18nProvider } from "@/components/i18n-provider"
-import { getMessagesForLocale } from "@/i18n/messages"
 import { resolveRequestLocale } from "@/i18n/resolve-request-locale"
 import { ThemeProvider } from "@/components/theme-provider"
 import { toIntlLocale } from "@/lib/i18n"
 import { APPEARANCE_INIT_SCRIPT } from "@/lib/appearance-script"
+import { BOOT_INIT_SCRIPT } from "@/lib/boot/boot-script"
 import {
   THEME_COLOR_DARK,
   THEME_COLOR_LIGHT,
@@ -61,11 +61,13 @@ export default async function RootLayout({
 }) {
   const appLocale = await resolveRequestLocale()
   const initialLocale = toIntlLocale(appLocale)
-  const initialMessages = await getMessagesForLocale(appLocale)
 
   return (
     <html lang={initialLocale} suppressHydrationWarning>
       <head>
+        {/* Fork: first, so "/" leaves for "/workspace" before any chunk
+            loads (`lib/boot/boot-script.ts`). */}
+        <script dangerouslySetInnerHTML={{ __html: BOOT_INIT_SCRIPT }} />
         {/* Written by hand rather than via `metadata.manifest`: Next only adds
             `crossOrigin="use-credentials"` there on Vercel preview builds.
             Without it the browser fetches the manifest without cookies, and
@@ -88,14 +90,13 @@ export default async function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: APPEARANCE_INIT_SCRIPT }} />
         {/* Suppress benign ResizeObserver loop warnings (W3C spec §3.3) */}
         <script>{`window.addEventListener("error",function(e){if(e.message&&e.message.indexOf("ResizeObserver")!==-1){e.stopImmediatePropagation();e.preventDefault()}});window.onerror=function(m){if(typeof m==="string"&&m.indexOf("ResizeObserver")!==-1)return true}`}</script>
-        <NextIntlClientProvider
-          locale={initialLocale}
-          messages={initialMessages}
-        >
-          <AppI18nProvider
-            initialLocale={initialLocale}
-            initialMessages={initialMessages}
-          >
+        {/* Fork: no messages in the page. Passed here, the whole English
+            catalog (~490 KB) was written into every HTML document and RSC
+            payload, on top of the copy the client chunk already imports
+            (`i18n/messages.ts`), which `AppI18nProvider` uses. `null`, not
+            absent: absent, next-intl loads them itself. */}
+        <NextIntlClientProvider locale={initialLocale} messages={null}>
+          <AppI18nProvider initialLocale={initialLocale}>
             <ThemeProvider
               attribute="class"
               defaultTheme="system"
