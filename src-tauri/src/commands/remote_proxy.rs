@@ -95,6 +95,15 @@ const WS_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const WS_SEND_TIMEOUT: Duration = Duration::from_secs(8);
 const WS_PING_INTERVAL: Duration = Duration::from_secs(15);
 const WS_SILENCE_LIMIT: Duration = Duration::from_secs(45);
+/// On protocol v2 (fork) the server lets pongs through between the parts of a
+/// large frame, so silence means a dead socket sooner: ping every 5 s, give
+/// up after 15 s with nothing inbound. A v1 server keeps the slower pair.
+const WS_V2_PING_INTERVAL: Duration = Duration::from_secs(5);
+const WS_V2_SILENCE_LIMIT: Duration = Duration::from_secs(15);
+/// The first retry after losing a socket that was up waits this long plus up
+/// to `WS_FIRST_RETRY_JITTER_MS` (fork), instead of the 1 s backoff step.
+const WS_FIRST_RETRY_MIN_MS: u64 = 125;
+const WS_FIRST_RETRY_JITTER_MS: u64 = 125;
 
 /// Exponential backoff bounds for WS reconnect. 1s/2s/4s/8s/16s/32s.
 const WS_BACKOFF_INITIAL_SECS: u64 = 1;
@@ -104,6 +113,9 @@ const WS_BACKOFF_MAX_SECS: u64 = 32;
 /// `src/lib/transport/ws-auth.ts`. The server's auth middleware reads the
 /// `sec-websocket-protocol` header looking for `codeg-token.{base64url}`.
 const WS_EVENT_PROTOCOL: &str = "codeg-events";
+/// What the event socket offers (fork): protocol v2 first (compressed, split
+/// frames, `web::ws_frame`), v1 for a server that does not know v2.
+const WS_EVENT_PROTOCOLS_OFFERED: &str = "codeg-events.v2, codeg-events";
 const WS_TOKEN_PROTOCOL_PREFIX: &str = "codeg-token.";
 const WS_EVENTS_PATH: &str = "/ws/events";
 
@@ -1914,11 +1926,11 @@ async fn run_ws_connection<R, RFut, F, Fut>(
                 }
                 continue;
             }
-            res = connect_with_subprotocol_auth(&target.url, WS_EVENT_PROTOCOL, &target.token, &target.headers) => res,
+            res = connect_with_subprotocol_auth(&target.url, WS_EVENT_PROTOCOLS_OFFERED, &target.token, &target.headers) => res,
         };
 
-        let mut socket = match connect_result {
-            Ok(s) => s,
+        let (mut socket, selected_protocol) = match connect_result {
+            Ok(connected) => connected,
             Err(err) => {
                 *entry.ready.write().await = false;
                 if matches!(err, WsConnectError::Unauthorized) {
@@ -1930,12 +1942,18 @@ async fn run_ws_connection<R, RFut, F, Fut>(
                 tracing::warn!("[RemoteProxy] WS connect failed: {err}");
                 emit(lifecycle_frame(WS_DISCONNECTED_CHANNEL)).await;
                 fail_count = fail_count.saturating_add(1);
-                if backoff_sleep(shutdown_rx, fail_count).await {
+                if backoff_sleep(shutdown_rx, fail_count, false).await {
                     break;
                 }
                 continue;
             }
         };
+        let codec = crate::web::ws_frame::Codec::from_selected(selected_protocol.as_deref());
+        let (ping_interval, silence_limit) = match codec {
+            crate::web::ws_frame::Codec::V2 => (WS_V2_PING_INTERVAL, WS_V2_SILENCE_LIMIT),
+            crate::web::ws_frame::Codec::V1 => (WS_PING_INTERVAL, WS_SILENCE_LIMIT),
+        };
+        let mut joiner = crate::web::ws_frame::FrameJoiner::default();
 
         // Connect succeeded — reset fail count. We do not emit `__ready__`
         // here; the remote server emits the real `__ready__` only after it
@@ -1947,7 +1965,7 @@ async fn run_ws_connection<R, RFut, F, Fut>(
         // frames must not cancel those renewed subscriptions.
         while outbound_rx.try_recv().is_ok() {}
         let mut last_received = tokio::time::Instant::now();
-        let mut ping = tokio::time::interval_at(last_received + WS_PING_INTERVAL, WS_PING_INTERVAL);
+        let mut ping = tokio::time::interval_at(last_received + ping_interval, ping_interval);
         ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         // Read loop. Exits on shutdown, error, or remote close.
@@ -1960,7 +1978,7 @@ async fn run_ws_connection<R, RFut, F, Fut>(
                     }
                 }
                 _ = ping.tick() => {
-                    if last_received.elapsed() >= WS_SILENCE_LIMIT
+                    if last_received.elapsed() >= silence_limit
                         || !send_ws_message(&mut socket, Message::Ping(Vec::new().into())).await
                     {
                         break;
@@ -1981,19 +1999,21 @@ async fn run_ws_connection<R, RFut, F, Fut>(
                 msg = socket.next() => match msg {
                     Some(Ok(Message::Text(text))) => {
                         last_received = tokio::time::Instant::now();
-                        match serde_json::from_str::<Value>(&text) {
-                            Ok(frame) => {
-                                if frame.get("channel").and_then(Value::as_str) == Some(WS_READY_CHANNEL) {
-                                    *entry.ready.write().await = true;
-                                }
-                                emit(frame).await;
-                            }
-                            Err(_) => tracing::warn!("[RemoteProxy] invalid WS JSON frame"),
-                        }
+                        deliver_frame(&text, entry, &mut emit).await;
                     }
-                    Some(Ok(Message::Binary(_))) => {
+                    Some(Ok(Message::Binary(bytes))) => {
                         last_received = tokio::time::Instant::now();
-                        // Server only emits text frames today; ignore binary.
+                        // Protocol v2: a compressed frame, whole or in parts.
+                        match joiner.push(&bytes) {
+                            Some(Ok(text)) => deliver_frame(&text, entry, &mut emit).await,
+                            Some(Err(err)) => {
+                                // A frame is lost; a fresh socket's attaches
+                                // catch up from their cursors.
+                                tracing::warn!("[RemoteProxy] dropping the event socket: {err}");
+                                break;
+                            }
+                            None => {}
+                        }
                     }
                     Some(Ok(Message::Ping(payload))) => {
                         last_received = tokio::time::Instant::now();
@@ -2012,11 +2032,12 @@ async fn run_ws_connection<R, RFut, F, Fut>(
             }
         }
 
-        // Disconnected (not via shutdown). Notify and try again.
+        // Disconnected (not via shutdown). Notify and try again — the first
+        // time straight away (fork: `quick`), the socket was just up.
         *entry.ready.write().await = false;
         emit(lifecycle_frame(WS_DISCONNECTED_CHANNEL)).await;
         fail_count = fail_count.saturating_add(1);
-        if backoff_sleep(shutdown_rx, fail_count).await {
+        if backoff_sleep(shutdown_rx, fail_count, fail_count == 1).await {
             break;
         }
     }
@@ -2034,20 +2055,49 @@ async fn send_ws_message(socket: &mut RemoteWsSocket, message: Message) -> bool 
     )
 }
 
+/// One frame's JSON from the remote socket: mark readiness on `__ready__`
+/// and hand it to the subscribers.
+async fn deliver_frame<F, Fut>(text: &str, entry: &WsTaskEntry, emit: &mut F)
+where
+    F: FnMut(Value) -> Fut,
+    Fut: Future<Output = ()>,
+{
+    match serde_json::from_str::<Value>(text) {
+        Ok(frame) => {
+            if frame.get("channel").and_then(Value::as_str) == Some(WS_READY_CHANNEL) {
+                *entry.ready.write().await = true;
+            }
+            emit(frame).await;
+        }
+        Err(_) => tracing::warn!("[RemoteProxy] invalid WS JSON frame"),
+    }
+}
+
 /// Sleep for the exponential-backoff duration corresponding to
-/// `fail_count` (1s, 2s, 4s, … capped at `WS_BACKOFF_MAX_SECS`). Returns
-/// `true` if shutdown was requested during the wait — caller should exit
-/// its loop in that case.
-async fn backoff_sleep(shutdown_rx: &mut watch::Receiver<bool>, fail_count: u32) -> bool {
+/// `fail_count` (1s, 2s, 4s, … capped at `WS_BACKOFF_MAX_SECS`), or — when
+/// `quick` (fork: the first retry after losing a socket that was up) — for
+/// 125–250 ms. Returns `true` if shutdown was requested during the wait —
+/// caller should exit its loop in that case.
+async fn backoff_sleep(
+    shutdown_rx: &mut watch::Receiver<bool>,
+    fail_count: u32,
+    quick: bool,
+) -> bool {
     if *shutdown_rx.borrow() {
         return true;
     }
-    let shift = fail_count.saturating_sub(1).min(8) as u64;
-    let secs = (WS_BACKOFF_INITIAL_SECS << shift).min(WS_BACKOFF_MAX_SECS);
+    let wait = if quick {
+        use rand::Rng as _;
+        let jitter = rand::thread_rng().gen_range(0..=WS_FIRST_RETRY_JITTER_MS);
+        Duration::from_millis(WS_FIRST_RETRY_MIN_MS + jitter)
+    } else {
+        let shift = fail_count.saturating_sub(1).min(8) as u64;
+        Duration::from_secs((WS_BACKOFF_INITIAL_SECS << shift).min(WS_BACKOFF_MAX_SECS))
+    };
     tokio::select! {
         biased;
         changed = shutdown_rx.changed() => changed.is_err() || *shutdown_rx.borrow(),
-        _ = tokio::time::sleep(Duration::from_secs(secs)) => false,
+        _ = tokio::time::sleep(wait) => false,
     }
 }
 
@@ -2119,8 +2169,10 @@ async fn snapshot_subscribers(entry: &Arc<WsTaskEntry>) -> Vec<String> {
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
-/// Connect to a remote WebSocket with subprotocol-based token auth, speaking
-/// `protocol` (`codeg-events`, or the browser tunnel's). The remote server's
+/// Connect to a remote WebSocket with subprotocol-based token auth, offering
+/// `protocol` (`codeg-events` and v2, or the browser tunnel's; a
+/// comma-separated list). Returns the socket and the subprotocol the server
+/// selected. The remote server's
 /// auth middleware (see `web/auth.rs`) accepts either `Authorization: Bearer …`
 /// or a subprotocol entry shaped `codeg-token.{base64url(token)}`. The latter
 /// is what browser WebSocket clients use because browsers cannot set arbitrary
@@ -2131,14 +2183,19 @@ async fn connect_with_subprotocol_auth(
     protocol: &str,
     token: &str,
     custom_headers: &HeaderMap,
-) -> Result<RemoteWsSocket, WsConnectError> {
+) -> Result<(RemoteWsSocket, Option<String>), WsConnectError> {
     let request = ws_request_with_subprotocol_auth(ws_url, protocol, token, custom_headers)
         .map_err(|_| WsConnectError::Retryable("invalid WebSocket request".into()))?;
-    let (stream, _resp) = tokio::time::timeout(WS_CONNECT_TIMEOUT, connect_remote_ws(request))
+    let (stream, resp) = tokio::time::timeout(WS_CONNECT_TIMEOUT, connect_remote_ws(request))
         .await
         .map_err(|_| WsConnectError::Retryable("WebSocket connect timed out".into()))?
         .map_err(WsConnectError::from)?;
-    Ok(stream)
+    let selected = resp
+        .headers()
+        .get("sec-websocket-protocol")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    Ok((stream, selected))
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -2959,6 +3016,107 @@ mod tests {
         server.abort();
     }
 
+    /// Protocol v2 (fork): the proxy offers it, reads a compressed frame sent
+    /// in parts with a text frame between them, delivers every frame in the
+    /// order it was completed, and gives a silent v2 socket up after 15 s.
+    #[tokio::test]
+    async fn ws_loop_reads_v2_frames_and_uses_v2_liveness() {
+        use crate::web::ws_frame::{compress, TAG_LAST, TAG_PART};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        // Pseudo-random letters: compresses to something worth splitting.
+        let mut x: u64 = 0x2545_f491_4f6c_dd1d;
+        let body: String = (0..200 * 1024)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                char::from(b'a' + (x % 26) as u8)
+            })
+            .collect();
+        let snapshot = serde_json::json!({ "type": "snapshot", "body": body });
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            // tungstenite fixes the handshake callback's error type to an HTTP response.
+            #[allow(clippy::result_large_err)]
+            let callback = |request: &Request,
+                            mut response: tokio_tungstenite::tungstenite::handshake::server::Response| {
+                let offered = request
+                    .headers()
+                    .get("sec-websocket-protocol")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or_default()
+                    .to_string();
+                assert!(
+                    offered.starts_with("codeg-events.v2, codeg-events, codeg-token."),
+                    "offered: {offered}"
+                );
+                response.headers_mut().insert(
+                    "sec-websocket-protocol",
+                    HeaderValue::from_static("codeg-events.v2"),
+                );
+                Ok(response)
+            };
+            let mut socket = tokio_tungstenite::accept_hdr_async(stream, callback)
+                .await
+                .unwrap();
+            socket
+                .send(Message::Text(
+                    lifecycle_frame(WS_READY_CHANNEL).to_string().into(),
+                ))
+                .await
+                .unwrap();
+            let stream = compress(snapshot.to_string().as_bytes());
+            let (head, tail) = stream.split_at(stream.len() / 2);
+            let mut part = vec![TAG_PART];
+            part.extend_from_slice(head);
+            let mut last = vec![TAG_LAST];
+            last.extend_from_slice(tail);
+            let between = serde_json::json!({ "type": "event", "envelope": { "seq": 1 } });
+            let after = serde_json::json!({ "type": "event", "envelope": { "seq": 2 } });
+            socket.send(Message::Binary(part.into())).await.unwrap();
+            socket
+                .send(Message::Text(between.to_string().into()))
+                .await
+                .unwrap();
+            socket.send(Message::Binary(last.into())).await.unwrap();
+            socket
+                .send(Message::Text(after.to_string().into()))
+                .await
+                .unwrap();
+            // Then silence, pongs included: never read again.
+            std::future::pending::<()>().await;
+            drop(socket);
+        });
+        let mut client = start_test_socket_loop(format!("ws://{address}/ws/events"));
+        assert_eq!(
+            next_test_frame(&mut client.frames).await["channel"],
+            WS_READY_CHANNEL
+        );
+        assert_eq!(
+            next_test_frame(&mut client.frames).await["envelope"]["seq"],
+            1
+        );
+        let big = next_test_frame(&mut client.frames).await;
+        assert_eq!(big["type"], "snapshot");
+        assert_eq!(big["body"].as_str().map(str::len), Some(200 * 1024));
+        assert_eq!(
+            next_test_frame(&mut client.frames).await["envelope"]["seq"],
+            2
+        );
+
+        tokio::time::pause();
+        tokio::time::advance(WS_V2_SILENCE_LIMIT).await;
+        assert_eq!(
+            next_test_frame(&mut client.frames).await["channel"],
+            WS_DISCONNECTED_CHANNEL
+        );
+        client.shutdown.send(true).unwrap();
+        client.task.await.unwrap();
+        server.abort();
+    }
+
     /// The connection is edited to a new address, token and headers while its
     /// socket is down, then deleted: the retry dials the edited connection,
     /// and the deletion ends the loop without claiming the token expired.
@@ -3234,7 +3392,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let server = serve_ready_socket(listener);
-        let mut socket = connect_with_subprotocol_auth(
+        let (mut socket, _) = connect_with_subprotocol_auth(
             &format!("ws://localhost:{port}{WS_EVENTS_PATH}"),
             WS_EVENT_PROTOCOL,
             "private-token-sentinel",
@@ -3252,7 +3410,7 @@ mod tests {
         };
         let port = listener.local_addr().unwrap().port();
         let server = serve_ready_socket(listener);
-        let mut socket = connect_with_subprotocol_auth(
+        let (mut socket, _) = connect_with_subprotocol_auth(
             &format!("ws://[::1]:{port}{WS_EVENTS_PATH}"),
             WS_EVENT_PROTOCOL,
             "private-token-sentinel",

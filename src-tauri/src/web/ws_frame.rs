@@ -125,6 +125,76 @@ pub fn split(stream: &[u8]) -> Vec<Message> {
         .collect()
 }
 
+/// Largest frame a client inflates; past it the frame is treated as corrupt
+/// rather than exhausting memory.
+pub const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
+
+/// A v2 binary message that could not be turned into a frame.
+#[derive(Debug, thiserror::Error)]
+pub enum FrameError {
+    #[error("compressed frame did not inflate: {0}")]
+    Inflate(std::io::Error),
+    #[error("frame larger than {MAX_FRAME_BYTES} bytes")]
+    TooLarge,
+    #[error("frame is not UTF-8")]
+    NotUtf8,
+}
+
+/// The receiving side of v2 for a Rust client (the desktop's proxy to a
+/// remote server): binary messages in, complete JSON frames out. Text
+/// messages are frames already and do not go through it.
+#[derive(Debug, Default)]
+pub struct FrameJoiner {
+    stream: Vec<u8>,
+}
+
+impl FrameJoiner {
+    /// Feed one binary message. `Some` once a frame is complete (or failed);
+    /// `None` while more parts are due, or for a reserved tag (dropped).
+    pub fn push(&mut self, message: &[u8]) -> Option<Result<String, FrameError>> {
+        let (&tag, body) = message.split_first()?;
+        match tag {
+            TAG_WHOLE => {
+                self.stream.clear();
+                Some(inflate(body))
+            }
+            TAG_PART => {
+                if self.stream.len() + body.len() > MAX_FRAME_BYTES {
+                    self.stream.clear();
+                    return Some(Err(FrameError::TooLarge));
+                }
+                self.stream.extend_from_slice(body);
+                None
+            }
+            TAG_LAST => {
+                self.stream.extend_from_slice(body);
+                let stream = std::mem::take(&mut self.stream);
+                Some(inflate(&stream))
+            }
+            _ => None,
+        }
+    }
+
+    /// Forget a partly received frame (the socket is gone).
+    pub fn reset(&mut self) {
+        self.stream.clear();
+    }
+}
+
+/// Inflate one zlib stream into a frame's text, bounded by `MAX_FRAME_BYTES`.
+pub fn inflate(stream: &[u8]) -> Result<String, FrameError> {
+    use std::io::Read as _;
+    let mut out = Vec::with_capacity(stream.len().saturating_mul(4));
+    flate2::read::ZlibDecoder::new(stream)
+        .take(MAX_FRAME_BYTES as u64 + 1)
+        .read_to_end(&mut out)
+        .map_err(FrameError::Inflate)?;
+    if out.len() > MAX_FRAME_BYTES {
+        return Err(FrameError::TooLarge);
+    }
+    String::from_utf8(out).map_err(|_| FrameError::NotUtf8)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,6 +277,36 @@ mod tests {
         let messages = encode(noisy.clone(), Codec::V2).await;
         assert!(messages.len() > 2, "{} messages", messages.len());
         assert_eq!(decode(&messages), noisy);
+    }
+
+    #[tokio::test]
+    async fn the_joiner_reads_what_encode_writes() {
+        let big = json_of(300 * 1024);
+        let mut joiner = FrameJoiner::default();
+        let mut out = Vec::new();
+        for message in encode(big.clone(), Codec::V2).await {
+            let Message::Binary(bytes) = message else {
+                panic!("binary expected")
+            };
+            if let Some(frame) = joiner.push(&bytes) {
+                out.push(frame.unwrap());
+            }
+        }
+        assert_eq!(out, vec![big]);
+
+        // A reserved tag is dropped; garbage reports an error; a reset forgets
+        // a half-received frame.
+        assert!(joiner.push(&[0x7f, 1, 2]).is_none());
+        assert!(matches!(
+            joiner.push(&[TAG_WHOLE, 1, 2, 3]),
+            Some(Err(FrameError::Inflate(_)))
+        ));
+        assert!(joiner.push(&[TAG_PART, 9, 9, 9]).is_none());
+        joiner.reset();
+        let small = compress(b"{\"ok\":true}");
+        let mut last = vec![TAG_LAST];
+        last.extend_from_slice(&small);
+        assert_eq!(joiner.push(&last).unwrap().unwrap(), "{\"ok\":true}");
     }
 
     #[test]
