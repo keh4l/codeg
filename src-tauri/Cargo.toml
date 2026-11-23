@@ -50,7 +50,7 @@ tauri-runtime = [
 # this feature the items are physically uncompiled in release builds. It
 # also builds the four standalone binaries below, so the test and lint runs
 # cover them.
-test-utils = ["computer-helper", "server-bin", "mcp-bin", "cli-bin"]
+test-utils = ["computer-helper", "server-bin", "mcp-bin", "cli-bin", "fake-agent-bin"]
 # The `codeg-computer-helper` binary. Off unless asked for: the Tauri CLI puts
 # every binary target whose features are on into a bundle, and the copy
 # `tauri build` would compile is not the helper that ships. That is the one
@@ -70,6 +70,9 @@ cli-bin = ["dep:clap"]
 # build` would compile — with them, WebKit and all — would replace it in the
 # bundle.
 mcp-bin = []
+# The `codeg-fake-acp` binary: a scripted ACP agent for tests and performance
+# runs (fork). Never shipped: no bundle or release build turns this on.
+fake-agent-bin = []
 # Built-in browser. `browser-child` compiles the embedded surface: a wry child
 # webview created directly through tauri-runtime-wry's re-exported `wry`
 # (`WebViewBuilder::build_as_child`), which is exactly how tauri-runtime-wry
@@ -107,6 +110,11 @@ required-features = ["mcp-bin"]
 # The command-line client: a thin HTTP client of a running desktop app or
 # codeg-server. Built only with `cli-bin` (and, for the real thing, without the
 # default features).
+[[bin]]
+name = "codeg-fake-acp"
+path = "src/bin/codeg_fake_acp.rs"
+required-features = ["fake-agent-bin"]
+
 [[bin]]
 name = "codeg-cli"
 path = "src/bin/codeg_cli.rs"
