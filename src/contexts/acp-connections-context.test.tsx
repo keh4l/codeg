@@ -8654,6 +8654,156 @@ describe("AcpConnectionsProvider retry banner (turn_retrying)", () => {
 // that has no tabs at all — so a second live card would have its agent
 // disconnected out from under the user after a minute of working in the first
 // one, while the card sat there still rendering as connected.
+describe("parked connections (a view let go, the connection stays)", () => {
+  async function connectKeys(keys: string[]): Promise<void> {
+    let n = 0
+    h.acpConnect.mockImplementation(async () => `conn-${++n}`)
+    h.acpFindConnectionForConversation.mockResolvedValue(null)
+    await mountProvider()
+    for (const [i, key] of keys.entries()) {
+      await act(async () => {
+        await h.actions!.connect(key, "claude_code", "/tmp/x", `sess-${i}`)
+      })
+    }
+  }
+
+  it("keeps a parked connection, and connect() takes it back without a spawn", async () => {
+    await connectKeys([TAB])
+    h.denormalizeSnapshot.mockReturnValue({
+      ...snapshotBase(),
+      connectionId: "conn-1",
+    })
+    hydrateSnapshot(latestAttachHandlers(), {
+      event_seq: 0,
+    } as unknown as LiveSessionSnapshot)
+
+    act(() => h.actions!.parkConnection(TAB))
+    expect(h.acpDisconnect).not.toHaveBeenCalled()
+    expect(h.store!.getConnection(TAB)?.status).toBe("connected")
+
+    h.acpConnect.mockClear()
+    await act(async () => {
+      await h.actions!.connect(TAB, "claude_code", "/tmp/x", "sess-0")
+    })
+    expect(h.acpConnect).not.toHaveBeenCalled()
+    expect(h.acpGetAgentStatus).toHaveBeenCalledTimes(1)
+  })
+
+  it("releases the oldest parked connection past the budget", async () => {
+    const keys = ["k1", "k2", "k3", "k4", "k5"]
+    await connectKeys(keys)
+    act(() => h.actions!.setActiveKey("some-other-surface"))
+    for (const key of keys.slice(0, 4)) {
+      act(() => h.actions!.parkConnection(key))
+    }
+    expect(h.acpDisconnect).not.toHaveBeenCalled()
+
+    await act(async () => {
+      h.actions!.parkConnection("k5")
+      await Promise.resolve()
+    })
+    expect(h.acpDisconnect).toHaveBeenCalledExactlyOnceWith("conn-1")
+    expect(h.store!.getConnection("k1")).toBeUndefined()
+    expect(h.store!.getConnection("k5")).toBeDefined()
+  })
+
+  it("spares a busy owner when the budget releases it", async () => {
+    const keys = ["k1", "k2", "k3", "k4", "k5"]
+    await connectKeys(keys)
+    emitAcpEvent(latestAttachHandlers(), {
+      seq: 1,
+      connection_id: "conn-5",
+      type: "status_changed",
+      status: "prompting",
+    })
+    // The first one is mid-turn: its handlers are the first attach's.
+    const firstAttach = h.attach.mock.calls[0] as unknown as unknown[]
+    emitAcpEvent(firstAttach[2] as AttachHandlers, {
+      seq: 1,
+      connection_id: "conn-1",
+      type: "status_changed",
+      status: "prompting",
+    })
+    act(() => h.actions!.setActiveKey("some-other-surface"))
+    await act(async () => {
+      for (const key of keys) h.actions!.parkConnection(key)
+      await Promise.resolve()
+    })
+    expect(h.acpDisconnect).not.toHaveBeenCalledWith("conn-1")
+    expect(h.store!.getConnection("k1")?.status).toBe("prompting")
+  })
+
+  it("detaches a parked viewer after a while (no sweep reclaims viewers)", async () => {
+    vi.useFakeTimers()
+    try {
+      h.acpFindConnectionForConversation.mockResolvedValue({
+        connection_id: "owner-conn",
+        event_seq: 0,
+      })
+      await mountProvider()
+      await act(async () => {
+        await h.actions!.connect(TAB, "claude_code", "/tmp/x", "sess-1", 42)
+      })
+      expect(h.store!.getConnection(TAB)?.isViewer).toBe(true)
+      act(() => h.actions!.parkConnection(TAB))
+      expect(h.store!.getConnection(TAB)).toBeDefined()
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(
+          CONNECTION_IDLE_TIMEOUT_MS + IDLE_SWEEP_INTERVAL_MS + 1000
+        )
+      })
+      expect(h.store!.getConnection(TAB)).toBeUndefined()
+      expect(h.acpDisconnect).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("keeps feeding the runtime session it was parked with, while it exists", async () => {
+    const { useConversationRuntimeStore, resetConversationRuntimeStore } =
+      await import("@/stores/conversation-runtime-store")
+    resetConversationRuntimeStore()
+    await connectKeys([TAB])
+    const handlers = latestAttachHandlers()
+    const runtime = useConversationRuntimeStore.getState()
+    // The session the view drew (its detail loaded).
+    runtime.actions.setLiveMessage(
+      42,
+      { id: "lm-0", role: "assistant", content: [], startedAt: 0 },
+      false
+    )
+    vi.useFakeTimers()
+    try {
+      act(() => h.actions!.parkConnection(TAB, 42))
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1)
+      })
+      emitAcpEvent(handlers, {
+        seq: 1,
+        connection_id: "conn-1",
+        type: "status_changed",
+        status: "prompting",
+      })
+      emitAcpEvent(handlers, {
+        seq: 2,
+        connection_id: "conn-1",
+        type: "content_delta",
+        text: "while away",
+      } as EventEnvelope)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(STREAM_FLUSH_MAX_MS + 10)
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+    const live = useConversationRuntimeStore
+      .getState()
+      .byConversationId.get(42)?.liveMessage
+    expect(JSON.stringify(live)).toContain("while away")
+  })
+})
+
 describe("live surfaces that are not tabs", () => {
   /** An owner sitting at `connected` — the only state the sweep reclaims. */
   async function connectOwner(): Promise<void> {

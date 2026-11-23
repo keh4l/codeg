@@ -120,7 +120,7 @@ import {
   getConversationIdByExternalIdFromStore,
   getRuntimeSession,
   getTimelineTurns,
-  releaseRuntimeSession,
+  parkRuntimeSession,
   useConversationRuntimeActions,
   useConversationRuntimeStore,
 } from "@/stores/conversation-runtime-store"
@@ -262,6 +262,10 @@ function buildUserTurnFromMessageBlocks(
     timestamp: new Date().toISOString(),
   }
 }
+
+/** Fork: a parked session kept longer than this is re-read when a view takes
+ *  it back, changed or not (the agent may have written outside codeg). */
+const PARKED_SESSION_STALE_MS = 10 * 60 * 1000
 
 function buildVirtualConversationId(seed: string): number {
   let hash = 0
@@ -418,11 +422,22 @@ const ConversationTabView = memo(function ConversationTabView({
   ])
 
   // Clear pendingCleanup when tab is (re)opened, and take the session back from
-  // a release the view just before this one scheduled on it.
+  // a release the view just before this one scheduled on it — or from the
+  // parked sessions (fork): shown as it was kept, and re-read in the
+  // background when something changed it meanwhile (a turn ended, live text
+  // arrived) or it was kept long enough for the transcript to have moved on.
   useEffect(() => {
-    claimRuntimeSession(effectiveConversationId)
+    const reclaimed = claimRuntimeSession(effectiveConversationId)
     setPendingCleanup(effectiveConversationId, false)
-  }, [effectiveConversationId, setPendingCleanup])
+    if (
+      reclaimed &&
+      (reclaimed.changed ||
+        Date.now() - reclaimed.parkedAt > PARKED_SESSION_STALE_MS) &&
+      getRuntimeSession(effectiveConversationId)?.detail
+    ) {
+      refetchDetail(effectiveConversationId, { preserveLive: true })
+    }
+  }, [effectiveConversationId, setPendingCleanup, refetchDetail])
 
   const latestReloadSignal = useRef(reloadSignal)
   const pendingReloadState = useRef<{
@@ -722,6 +737,8 @@ const ConversationTabView = memo(function ConversationTabView({
       () => isReparentUnmount(useTabStore.getState(), tabId, groupId),
       [tabId, groupId]
     ),
+    // Fork: a parked connection keeps feeding this runtime session.
+    runtimeConversationId: effectiveConversationId,
   })
   const { status: connStatus, sessionId: connSessionId } = conn
   const messageQueue = useFollowUpQueue({
@@ -746,10 +763,6 @@ const ConversationTabView = memo(function ConversationTabView({
   useEffect(() => {
     connStatusRef.current = connStatus
   }, [connStatus])
-  const isViewerRef = useRef(conn.isViewer)
-  useEffect(() => {
-    isViewerRef.current = conn.isViewer
-  }, [conn.isViewer])
   // The tab's connection is keyed by a stable tabId, but agent switching is
   // async — and for a not-installed target, connect()'s preflight throws BEFORE
   // it tears down the old connection. So `conn` can still describe the PREVIOUS
@@ -997,7 +1010,7 @@ const ConversationTabView = memo(function ConversationTabView({
   // rekey path: close+reopen mid-turn, where detail.turns may already hold user
   // turns that would otherwise drop the live assistant stream). Turn-end clearing
   // is owned by COMPLETE_TURN (nulls liveMessage); unmount clearing by
-  // releaseRuntimeSession. `tabId` is the connection contextKey.
+  // parkRuntimeSession. `tabId` is the connection contextKey.
   useEffect(() => {
     return acpActions.registerLiveMessageSink(tabId, (liveMessage, isLive) =>
       setLiveMessage(effectiveConversationId, liveMessage, isLive)
@@ -1126,23 +1139,18 @@ const ConversationTabView = memo(function ConversationTabView({
         // drag came within its retry window of a reply finishing.
         return
       }
-      syncCancelRef.current?.()
-      if (connStatusRef.current === "prompting" && !isViewerRef.current) {
-        // Owner, agent still responding — keep the session for deferred cleanup
-        // (the background turn_complete handler removes it once done).
-        setPendingCleanup(effectiveConversationId, true)
-      } else {
-        // Idle owner, or a VIEWER (any status): remove now rather than on a
-        // turn_complete. A viewer's unmount detaches its attach subscription,
-        // so no turn_complete will arrive to resolve a deferred cleanup —
-        // waiting for one would leak the runtime session (especially in web
-        // mode, which has no event firehose after detach). "Now" is the end of
-        // this task, so a view mounting straight back onto the session can
-        // still claim it (see `releaseRuntimeSession`).
-        releaseRuntimeSession(effectiveConversationId)
-      }
+      // Fork: the session is PARKED, not dropped — kept (the most recent few)
+      // so opening the conversation again draws it with no fetch. Its
+      // connection is parked too (`useConnectionLifecycle`) and keeps feeding
+      // it: a turn still running goes on landing in it, and the background
+      // turn_complete handler below promotes it when it ends. The post-turn
+      // metadata sync is left running for the same reason as on a reparent:
+      // it patches the session, not this view. A session with nothing to show
+      // is released as before; "now" is the end of this task, so a view
+      // mounting straight back onto it can still claim it.
+      parkRuntimeSession(effectiveConversationId)
     }
-  }, [effectiveConversationId, groupId, setPendingCleanup, tabId])
+  }, [effectiveConversationId, groupId, tabId])
 
   const handleSend = useCallback(
     (
@@ -2628,13 +2636,8 @@ export function ConversationDetailPanel() {
   // Narrow: only the drop-TARGET group id (for the shell highlight ring) — the
   // per-frame x/y writes during a drag never re-render the panel.
   const dragOverGroupId = useTabStore((s) => s.tabDrag?.overGroupId ?? null)
-  const {
-    openNewConversationTab,
-    closeTab,
-    switchTab,
-    resizeGroupSplit,
-    onPreviewTabReplaced,
-  } = useTabActions()
+  const { openNewConversationTab, closeTab, switchTab, resizeGroupSplit } =
+    useTabActions()
   const newConversation = useMemo(() => {
     const activeTab = tabs.find((tab) => tab.id === activeTabId)
     if (!activeTab || activeTab.conversationId != null) return null
@@ -2642,25 +2645,16 @@ export function ConversationDetailPanel() {
     if (!workingDir) return null
     return { workingDir, folderId: activeTab.folderId }
   }, [tabs, activeTabId, folder?.path])
-  const { disconnectIfIdle } = useAcpActions()
   const { addTask, updateTask } = useTaskContext()
   const [reloadByTabId, setReloadByTabId] = useState<Record<string, number>>({})
   const [detailsOpen, setDetailsOpen] = useState(false)
 
   const exportLabels = useExportLabels()
 
-  // Release the old connection as soon as a preview tab is replaced (the next
-  // single-click in the sidebar takes its slot) instead of waiting for a sweep.
-  // Idle-gated on purpose: the replaced tab may hold a session that is still
-  // working — often one the user only clicked in to watch — and disconnecting
-  // an owner mid-turn kills the agent CLI, which lands in the transcript as an
-  // interrupted request. Busy owners keep running; the idle sweep reclaims them
-  // once they settle.
-  useEffect(() => {
-    return onPreviewTabReplaced((replacedTabId) => {
-      disconnectIfIdle(replacedTabId).catch(() => {})
-    })
-  }, [onPreviewTabReplaced, disconnectIfIdle])
+  // Fork: a preview tab replaced by the next single-click in the sidebar no
+  // longer releases its connection here. Its view's unmount parks it
+  // (`useConnectionLifecycle`), so clicking back is instant; the parked
+  // budget releases it later, sparing an owner that is still working.
 
   // Background turn_complete handler: for conversations not open in tabs.
   // Subscribes via the context's primary `acp://event` listener (single

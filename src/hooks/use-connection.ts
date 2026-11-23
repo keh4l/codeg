@@ -128,9 +128,9 @@ export interface UseConnectionReturn {
   isDelegationChild: boolean
   /** Launched-but-unresolved background tasks on this connection (async
    *  sub-agents / background shells, accounted from the transcript by the
-   *  backend watcher). The count is never rendered — it exists so the unmount
-   *  teardown (`shouldDisconnectOnUnmount`) spares a connection whose agent CLI
-   *  still has background work to finish. */
+   *  backend watcher). The count is never rendered — it exists so the
+   *  teardowns no one asked for (`isConnectionBusy`) spare a connection whose
+   *  agent CLI still has background work to finish. */
   backgroundOutstanding: number
   /** Those tasks one by one — the background sub-agents the composer's
    *  running list shows after their turn ended. See

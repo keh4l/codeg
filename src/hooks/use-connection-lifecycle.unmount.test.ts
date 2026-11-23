@@ -1,13 +1,14 @@
 /**
  * The view's unmount cleanup (tab closed, preview slot taken, the conversation
- * surface swapped out) must hand the teardown gate EVERYTHING the connection
- * knows about its live work. The gate used to see only the turn status and the
- * transcript watcher's count, so work announced on the AIR async-task channel
- * alone — a codex background terminal, a Claude Monitor task — was killed with
- * the agent CLI the moment its view went away.
+ * surface swapped out) PARKS its connection (fork): kept, attach and agent
+ * alive, so opening the conversation again is instant — never disconnected on
+ * the spot, so no work the agent still has in flight is killed with it. The
+ * parked budget releases it later, through the same busy gate the sweeps use
+ * (`isConnectionBusy`, tested on its own).
  *
- * It must also give back the active key the view claimed, or the busy owner it
- * leaves running stays out of both sweeps after its work settles.
+ * It must also give back the active key the view claimed — before parking, or
+ * the parked connection would count as taken back — or the connection it
+ * leaves running stays out of both sweeps.
  */
 
 import { renderHook } from "@testing-library/react"
@@ -22,6 +23,7 @@ const acp = vi.hoisted(() => ({
   setActiveKey: (() => {}) as (key: string | null) => void,
   releaseActiveKey: (() => {}) as (key: string) => void,
   touchActivity: (() => {}) as (key: string) => void,
+  parkConnection: (() => {}) as (key: string, runtimeId?: number) => void,
 }))
 
 vi.mock("@/contexts/acp-connections-context", () => ({
@@ -84,92 +86,82 @@ function backgroundTerminal(state: string): AsyncTaskRecord {
 
 const KEY = "conv-1-codex-42"
 
-function closeView(opts: { isActive?: boolean; transient?: boolean } = {}) {
+function closeView(
+  opts: { isActive?: boolean; transient?: boolean; runtimeId?: number } = {}
+) {
   const view = renderHook(() =>
     useConnectionLifecycle({
       contextKey: KEY,
       agentType: "codex",
       isActive: opts.isActive ?? false,
       isTransientUnmount: () => opts.transient === true,
+      runtimeConversationId: opts.runtimeId,
     })
   )
   view.unmount()
 }
 
-describe("useConnectionLifecycle unmount teardown", () => {
+describe("useConnectionLifecycle unmount", () => {
   let disconnect: ReturnType<typeof vi.fn>
   let releaseActiveKey: ReturnType<typeof vi.fn>
+  let parkConnection: ReturnType<typeof vi.fn>
+  let calls: string[]
 
   beforeEach(() => {
+    calls = []
     disconnect = vi.fn().mockResolvedValue(undefined)
     conn.disconnect = disconnect as unknown as () => Promise<void>
     conn.isViewer = false
     conn.asyncTasks = []
     conn.remoteControl = null
     conn.delegatedChildren = []
-    releaseActiveKey = vi.fn()
+    releaseActiveKey = vi.fn(() => calls.push("release"))
+    parkConnection = vi.fn(() => calls.push("park"))
     acp.setActiveKey = vi.fn()
     acp.releaseActiveKey = releaseActiveKey as unknown as (key: string) => void
+    acp.parkConnection = parkConnection as unknown as (key: string) => void
     acp.touchActivity = vi.fn()
   })
 
-  it("keeps an owner alive while an async task is still running", () => {
-    // Between turns, with nothing in the watcher's count: only the AIR channel
-    // knows the terminal is running.
+  it("parks an idle owner with the session it feeds, never disconnecting", () => {
+    closeView({ runtimeId: 42 })
+
+    expect(parkConnection).toHaveBeenCalledExactlyOnceWith(KEY, 42)
+    expect(disconnect).not.toHaveBeenCalled()
+  })
+
+  it("parks an owner with work in flight the same way", () => {
     conn.asyncTasks = [backgroundTerminal("running")]
-
-    closeView()
-
-    expect(disconnect).not.toHaveBeenCalled()
-  })
-
-  it("keeps an owner alive while Remote Control is on", () => {
     conn.remoteControl = { session_url: "https://claude.ai/code/session_01" }
-
-    closeView()
-
-    expect(disconnect).not.toHaveBeenCalled()
-  })
-
-  it("keeps an owner alive while a delegated sub-agent is running", () => {
-    // Ending the parent would cancel the sub-agent with it.
     conn.delegatedChildren = ["child-conn"]
 
     closeView()
 
+    expect(parkConnection).toHaveBeenCalledTimes(1)
     expect(disconnect).not.toHaveBeenCalled()
   })
 
-  it("disconnects an owner whose tasks have all settled", () => {
-    conn.asyncTasks = [backgroundTerminal("completed")]
-
-    closeView()
-
-    expect(disconnect).toHaveBeenCalledTimes(1)
-  })
-
-  it("still tears a viewer down, busy or not — its disconnect only detaches", () => {
+  it("parks a viewer too (its budget detaches it later)", () => {
     conn.isViewer = true
-    conn.asyncTasks = [backgroundTerminal("running")]
 
     closeView()
 
-    expect(disconnect).toHaveBeenCalledTimes(1)
+    expect(parkConnection).toHaveBeenCalledTimes(1)
+    expect(disconnect).not.toHaveBeenCalled()
   })
 
-  it("gives back the active key it claimed, even while the owner keeps running", () => {
-    conn.asyncTasks = [backgroundTerminal("running")]
-
+  it("gives back the active key it claimed before parking", () => {
     closeView({ isActive: true })
 
     expect(acp.setActiveKey).toHaveBeenCalledWith(KEY)
-    expect(disconnect).not.toHaveBeenCalled()
+    expect(calls).toEqual(["release", "park"])
     expect(releaseActiveKey).toHaveBeenCalledWith(KEY)
   })
 
-  it("keeps the claim across a transient (reparent) unmount", () => {
+  it("keeps the claim and parks nothing across a transient (reparent) unmount", () => {
     closeView({ isActive: true, transient: true })
 
+    expect(parkConnection).not.toHaveBeenCalled()
     expect(disconnect).not.toHaveBeenCalled()
     expect(releaseActiveKey).not.toHaveBeenCalled()
   })

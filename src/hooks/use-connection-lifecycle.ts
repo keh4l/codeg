@@ -7,10 +7,6 @@ import { useTaskContext } from "@/contexts/task-context"
 import { useConnection, type UseConnectionReturn } from "@/hooks/use-connection"
 import { extractAppCommandError } from "@/lib/app-error"
 import { notify } from "@/lib/notify"
-import {
-  isConnectionBusy,
-  type ConnectionWork,
-} from "@/lib/connection-teardown"
 import { TurnBusyError } from "@/lib/turn-busy"
 import { ConversationMovedError } from "@/lib/conversation-moved"
 import { useAppWorkspaceStore } from "@/stores/app-workspace-store"
@@ -55,6 +51,12 @@ interface UseConnectionLifecycleOptions {
    * connection under the same contextKey.
    */
   isTransientUnmount?: () => boolean
+  /**
+   * The runtime session (conversation-runtime store key) this view draws
+   * (fork). When the view goes away its connection is parked with this, so
+   * live text keeps reaching that session while nothing shows it.
+   */
+  runtimeConversationId?: number
 }
 
 export interface UseConnectionLifecycleReturn {
@@ -94,35 +96,6 @@ export interface UseConnectionLifecycleReturn {
   handleRespondPermission: (requestId: string, optionId: string) => void
 }
 
-/**
- * Unmount-cleanup decision: disconnect unless this client OWNS a connection
- * that still has work in flight — a prompting turn, launched-but-unresolved
- * background tasks (async sub-agents / background shells, on either the
- * watcher's count or the AIR task table), Remote Control, or a codeg
- * delegation whose sub-agent is still running. Disconnecting an
- * owner kills the agent CLI, and that work with it; busy owners are left to
- * the idle sweeps, which exempt them until the work settles (or the backend
- * max-age valve expires it). Viewers always tear down: their disconnect only
- * detaches (never kills the owner's agent), and the sweep skips viewers so
- * leaving one attached would leak its subscription.
- * EXCEPT on a transient unmount (tab reparented across split groups, not
- * closed): the remounted view re-attaches to the same connection, so neither
- * owners nor viewers tear down.
- * Shares `isConnectionBusy` with the preview-replacement release
- * (`disconnectIfIdle`) and the sweeps so the teardown paths can't drift apart.
- * Exported for tests.
- */
-export function shouldDisconnectOnUnmount(
-  args: ConnectionWork & {
-    isViewer: boolean
-    transientUnmount?: boolean
-  }
-): boolean {
-  if (args.transientUnmount) return false
-  if (args.isViewer) return true
-  return !isConnectionBusy(args)
-}
-
 function normalizeErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error)
@@ -142,9 +115,11 @@ export function useConnectionLifecycle({
   conversationId,
   preparing = false,
   isTransientUnmount,
+  runtimeConversationId,
 }: UseConnectionLifecycleOptions): UseConnectionLifecycleReturn {
   const t = useTranslations("Folder.chat.connectionLifecycle")
-  const { setActiveKey, releaseActiveKey, touchActivity } = useAcpActions()
+  const { setActiveKey, releaseActiveKey, touchActivity, parkConnection } =
+    useAcpActions()
   const { addTask, updateTask, removeTask } = useTaskContext()
   const conn = useConnection(contextKey)
 
@@ -154,7 +129,6 @@ export function useConnectionLifecycle({
     status,
     selectorsReady,
     connect: connConnect,
-    disconnect: connDisconnect,
     sendPrompt,
     setMode: connSetMode,
     setConfigOption: connSetConfigOption,
@@ -198,32 +172,6 @@ export function useConnectionLifecycle({
   useEffect(() => {
     statusRef.current = status
   }, [status])
-  const isViewerRef = useRef(conn.isViewer)
-  useEffect(() => {
-    isViewerRef.current = conn.isViewer
-  }, [conn.isViewer])
-  // The rest of what the unmount teardown gate weighs, kept whole: the gate's
-  // type names every kind of work, so one can't be dropped on the way here.
-  const {
-    backgroundOutstanding,
-    asyncTasks,
-    remoteControl,
-    delegatedChildren,
-  } = conn
-  const liveWorkRef = useRef({
-    backgroundOutstanding,
-    asyncTasks,
-    remoteControl,
-    delegatedChildren,
-  })
-  useEffect(() => {
-    liveWorkRef.current = {
-      backgroundOutstanding,
-      asyncTasks,
-      remoteControl,
-      delegatedChildren,
-    }
-  }, [backgroundOutstanding, asyncTasks, remoteControl, delegatedChildren])
   const contextKeyRef = useRef(contextKey)
   useEffect(() => {
     contextKeyRef.current = contextKey
@@ -483,12 +431,14 @@ export function useConnectionLifecycle({
     t,
   ])
 
-  // Keep a ref to disconnect so the unmount cleanup always calls the
-  // latest version without adding it as a dependency.
-  const connDisconnectRef = useRef(connDisconnect)
+  const parkConnectionRef = useRef(parkConnection)
   useEffect(() => {
-    connDisconnectRef.current = connDisconnect
-  }, [connDisconnect])
+    parkConnectionRef.current = parkConnection
+  }, [parkConnection])
+  const runtimeConversationIdRef = useRef(runtimeConversationId)
+  useEffect(() => {
+    runtimeConversationIdRef.current = runtimeConversationId
+  }, [runtimeConversationId])
   const releaseActiveKeyRef = useRef(releaseActiveKey)
   useEffect(() => {
     releaseActiveKeyRef.current = releaseActiveKey
@@ -498,43 +448,32 @@ export function useConnectionLifecycle({
     isTransientUnmountRef.current = isTransientUnmount
   }, [isTransientUnmount])
 
-  // Clean up on unmount (e.g. tab closed): disconnect the ACP connection
-  // so it doesn't leak, and remove lingering tasks.
-  // However, if the agent is actively prompting (generating a response),
-  // keep it alive so it can finish in the background — the idle sweep
-  // will clean it up once it transitions back to "connected".
+  // Clean up on unmount (the tab closed, or a preview tab was replaced).
+  // Fork: the connection is PARKED, not disconnected — kept, attach, agent
+  // and all, so opening the conversation again is instant, and fed into the
+  // view's runtime session meanwhile. The parked budget releases it later
+  // (`parkConnection`): oldest beyond the budget, viewers after a while,
+  // owners through the idle sweep — always sparing an owner with work in
+  // flight (a prompting turn, background tasks, Remote Control, a running
+  // delegation), whose disconnect would kill that work.
   useEffect(() => {
     return () => {
       const transientUnmount = isTransientUnmountRef.current?.() === true
-      // Owners keep a prompting agent alive in the background to finish the
-      // turn (the idle sweep reclaims it once it returns to "connected"), and
-      // likewise while background work is still live (async sub-agents /
-      // background shells / monitors, Remote Control, delegated codeg
-      // sub-agents) — disconnecting kills the agent CLI and that work with
-      // it. Both sweeps already exempt such connections; once the work
-      // settles (or the max-age valve expires it) the normal idle sweep
-      // reclaims the connection.
-      // Viewers are different: disconnect() only DETACHES them (it never
-      // acpDisconnects — that belongs to the owner), so tearing a viewer down
-      // mid-turn is safe and leaves the owner's agent untouched. And it's
-      // necessary: the idle sweep skips viewers, so a viewer left attached
-      // here would leak its WS subscription until the whole provider unmounts.
-      if (
-        shouldDisconnectOnUnmount({
-          ...liveWorkRef.current,
-          status: statusRef.current,
-          isViewer: isViewerRef.current,
-          transientUnmount,
-        })
-      ) {
-        connDisconnectRef.current().catch(() => {})
-      }
       // The active key names the view on screen, and this one is gone. Left
-      // claimed, it would hold the busy owner kept running above out of both
-      // sweeps for good: the keepalive touches the active key and the idle
-      // sweep skips it. Not on a transient unmount — the remounted view claims
-      // the same key, and a release that landed after its claim would undo it.
-      if (!transientUnmount) releaseActiveKeyRef.current(contextKeyRef.current)
+      // claimed, it would hold the connection parked below out of both sweeps
+      // for good: the keepalive touches the active key and the idle sweep
+      // skips it. Not on a transient unmount — the remounted view claims the
+      // same key, and a release that landed after its claim would undo it.
+      // A reparented view remounts onto the same live connection at once, so
+      // nothing is parked either. Released first: a parked key that is still
+      // the active one counts as taken back.
+      if (!transientUnmount) {
+        releaseActiveKeyRef.current(contextKeyRef.current)
+        parkConnectionRef.current(
+          contextKeyRef.current,
+          runtimeConversationIdRef.current
+        )
+      }
       // Task cleanup stays unconditional even on transient unmounts — the
       // remounted instance mints fresh task ids, so stale ones would orphan.
       if (taskIdRef.current) {

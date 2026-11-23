@@ -59,6 +59,7 @@ import {
 } from "@/lib/connection-teardown"
 import {
   getConversationIdByExternalIdFromStore,
+  getRuntimeSession,
   useConversationRuntimeStore,
 } from "@/stores/conversation-runtime-store"
 import type {
@@ -3630,6 +3631,14 @@ export type LiveMessageSink = (
   isLive: boolean
 ) => void
 
+/**
+ * Fork: connections kept after their view went away (`parkConnection`), and
+ * how long a parked VIEWER stays attached (an owner is reclaimed by the idle
+ * sweep, which skips viewers).
+ */
+const MAX_PARKED_CONNECTIONS = 4
+const PARKED_VIEWER_TTL_MS = CONNECTION_IDLE_TIMEOUT_MS
+
 export interface AcpActionsValue {
   connect(
     contextKey: string,
@@ -3659,6 +3668,17 @@ export interface AcpActionsValue {
    * stop.
    */
   disconnectIfIdle(contextKey: string): Promise<void>
+  /**
+   * Fork: a view let go of `contextKey` (its tab closed or replaced) — keep
+   * the connection (attach, agent and all) so opening the conversation again
+   * is instant, while `liveMessage` keeps flowing to `runtimeConversationId`'s
+   * runtime session if it is still there. Parked connections past
+   * `MAX_PARKED_CONNECTIONS` are released oldest first (`disconnectIfIdle`),
+   * parked viewers after `PARKED_VIEWER_TTL_MS`, and parked owners by the idle
+   * sweep like any connection no view holds. `connect()` on the key takes it
+   * back.
+   */
+  parkConnection(contextKey: string, runtimeConversationId?: number): void
   disconnectAll(): Promise<void>
   sendPrompt(
     contextKey: string,
@@ -4158,6 +4178,12 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
     }
     return all
   }, [])
+
+  // Fork: connections a view let go of, oldest first (insertion order), with
+  // when they were parked. See `parkConnection`.
+  const parkedAtRef = useRef(new Map<string, number>())
+  // The sinks parked connections keep their runtime session current with.
+  const parkedSinkCleanupsRef = useRef(new Map<string, () => void>())
 
   // Guard against concurrent connect() calls
   const connectingKeysRef = useRef(new Set<string>())
@@ -7708,6 +7734,10 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       // throw: a connect that never produced a store entry is precisely when
       // `reconnect()` has nothing else to go on.
       lastConnectParamsRef.current.set(contextKey, request)
+      // Fork: a view takes back a connection it parked.
+      parkedAtRef.current.delete(contextKey)
+      parkedSinkCleanupsRef.current.get(contextKey)?.()
+      parkedSinkCleanupsRef.current.delete(contextKey)
       if (connectingKeysRef.current.has(contextKey)) {
         // Parked: the call in flight runs this next, unless a newer request
         // replaces it first. The surface is waiting on THIS request from now
@@ -8390,14 +8420,14 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
     ]
   )
 
-  // Lifecycle release for a surface that vanished on its own — currently the
-  // preview tab replaced by the next single-click in the sidebar. `disconnect`
-  // stays unconditional because its other callers express user INTENT (agent
-  // switch, restart-to-apply, an explicit close); this one must not destroy
-  // work nobody asked to stop. Same policy as the unmount cleanup
-  // (`shouldDisconnectOnUnmount`): a busy owner keeps running and the idle
-  // sweep reclaims it once its turn / background work settles — it is no
-  // longer in `openTabKeys`, so nothing else keeps it alive.
+  // Lifecycle release for a surface that vanished on its own — a parked
+  // connection past its budget (`parkConnection`; a closed or replaced tab
+  // parks its connection). `disconnect` stays unconditional because its other
+  // callers express user INTENT (agent switch, restart-to-apply, an explicit
+  // close); this one must not destroy work nobody asked to stop: a busy owner
+  // keeps running and the idle sweep reclaims it once its turn / background
+  // work settles — it is no longer in `openTabKeys`, so nothing else keeps it
+  // alive.
   const disconnectIfIdle = useCallback(
     async (contextKey: string) => {
       const conn = storeRef.current.connections.get(contextKey)
@@ -8409,6 +8439,91 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
     },
     [disconnect]
   )
+
+  const unparkConnection = useCallback((contextKey: string) => {
+    parkedAtRef.current.delete(contextKey)
+    parkedSinkCleanupsRef.current.get(contextKey)?.()
+    parkedSinkCleanupsRef.current.delete(contextKey)
+  }, [])
+
+  /** Release parked connections past the budget: the oldest beyond
+   *  `MAX_PARKED_CONNECTIONS`, and viewers parked longer than
+   *  `PARKED_VIEWER_TTL_MS` (no sweep reclaims a viewer) — never one a
+   *  surface holds open or shows (it is being taken back). A parked key
+   *  whose connection is gone just stops being parked. */
+  const enforceParkedBudget = useCallback(() => {
+    const now = Date.now()
+    for (const contextKey of [...parkedAtRef.current.keys()]) {
+      if (
+        !storeRef.current.connections.has(contextKey) &&
+        !connectingKeysRef.current.has(contextKey)
+      ) {
+        unparkConnection(contextKey)
+      }
+    }
+    const held = heldOpenKeys()
+    const activeKey = storeRef.current.activeKey
+    let overflow = parkedAtRef.current.size - MAX_PARKED_CONNECTIONS
+    for (const [contextKey, parkedAt] of [...parkedAtRef.current]) {
+      if (held.has(contextKey) || contextKey === activeKey) continue
+      const conn = storeRef.current.connections.get(contextKey)
+      const expiredViewer =
+        conn?.isViewer === true && now - parkedAt > PARKED_VIEWER_TTL_MS
+      if (overflow <= 0 && !expiredViewer) continue
+      overflow -= 1
+      unparkConnection(contextKey)
+      disconnectIfIdle(contextKey).catch(() => {})
+    }
+  }, [disconnectIfIdle, heldOpenKeys, unparkConnection])
+
+  const parkConnection = useCallback(
+    (contextKey: string, runtimeConversationId?: number) => {
+      if (
+        !storeRef.current.connections.has(contextKey) &&
+        !connectingKeysRef.current.has(contextKey)
+      ) {
+        return
+      }
+      unparkConnection(contextKey)
+      parkedAtRef.current.set(contextKey, Date.now())
+      // Keep the conversation's runtime session current while nothing shows
+      // it, so a turn that ends meanwhile is promoted with its final text and
+      // going back shows it. Registered after the leaving view's own sink is
+      // gone, and only while that session still exists (a write would
+      // otherwise recreate one with live data and no detail).
+      if (runtimeConversationId != null) {
+        const timer = setTimeout(() => {
+          if (!parkedAtRef.current.has(contextKey)) return
+          if (liveMessageSinksRef.current.has(contextKey)) return
+          const sink: LiveMessageSink = (liveMessage, isLive) => {
+            if (!getRuntimeSession(runtimeConversationId)) return
+            useConversationRuntimeStore
+              .getState()
+              .actions.setLiveMessage(
+                runtimeConversationId,
+                liveMessage,
+                isLive
+              )
+          }
+          liveMessageSinksRef.current.set(contextKey, sink)
+          parkedSinkCleanupsRef.current.set(contextKey, () => {
+            if (liveMessageSinksRef.current.get(contextKey) === sink) {
+              liveMessageSinksRef.current.delete(contextKey)
+            }
+          })
+        }, 0)
+        parkedSinkCleanupsRef.current.set(contextKey, () => clearTimeout(timer))
+      }
+      enforceParkedBudget()
+    },
+    [enforceParkedBudget, unparkConnection]
+  )
+
+  // Parked viewers time out, and the budget is re-checked, on the sweep's beat.
+  useEffect(() => {
+    const timer = setInterval(enforceParkedBudget, IDLE_SWEEP_INTERVAL_MS)
+    return () => clearInterval(timer)
+  }, [enforceParkedBudget])
 
   const reapplyConfig = useCallback(
     async (contextKey: string): Promise<boolean> => {
@@ -8964,6 +9079,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       connect,
       disconnect,
       disconnectIfIdle,
+      parkConnection,
       disconnectAll,
       sendPrompt,
       setMode,
@@ -8993,6 +9109,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       connect,
       disconnect,
       disconnectIfIdle,
+      parkConnection,
       disconnectAll,
       sendPrompt,
       setMode,

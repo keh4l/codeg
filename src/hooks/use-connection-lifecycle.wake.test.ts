@@ -8,6 +8,7 @@ vi.mock("next-intl", () => ({
 const actions = vi.hoisted(() => ({
   setActiveKey: vi.fn(),
   releaseActiveKey: vi.fn(),
+  parkConnection: vi.fn(),
   touchActivity: vi.fn(),
 }))
 

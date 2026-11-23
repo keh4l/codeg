@@ -5396,12 +5396,80 @@ export function releaseRuntimeSession(conversationId: number): void {
   )
 }
 
-/** Keep a session a view is mounting on: cancels its pending release. */
-export function claimRuntimeSession(conversationId: number): void {
+// Fork: sessions a view let go of, kept so opening the conversation again
+// shows it at once (oldest first, insertion order). See `parkRuntimeSession`.
+interface ParkedSession {
+  parkedAt: number
+  /** The session as it was parked: a different object on reclaim means
+   *  something wrote to it meanwhile (a turn ended, live text arrived). */
+  session: ConversationRuntimeSession
+}
+const parkedSessions = new Map<number, ParkedSession>()
+const MAX_PARKED_SESSIONS = 8
+const PARKED_SESSION_TTL_MS = 30 * 60 * 1000
+
+function dropParkedSessions(): void {
+  const now = Date.now()
+  let overflow = parkedSessions.size - MAX_PARKED_SESSIONS
+  for (const [conversationId, parked] of [...parkedSessions]) {
+    const expired = now - parked.parkedAt > PARKED_SESSION_TTL_MS
+    if (overflow <= 0 && !expired) continue
+    overflow -= 1
+    parkedSessions.delete(conversationId)
+    useConversationRuntimeStore
+      .getState()
+      .actions.removeConversation(conversationId)
+  }
+}
+
+/**
+ * Fork: give a session up the way a closed or replaced tab does, but keep it
+ * — the most recent `MAX_PARKED_SESSIONS`, for `PARKED_SESSION_TTL_MS` — so
+ * the next view of the conversation draws it with no fetch. A session with
+ * nothing to show yet is released as before (`releaseRuntimeSession`).
+ */
+export function parkRuntimeSession(conversationId: number): void {
+  const session = getRuntimeSession(conversationId)
+  if (!session || (!session.detail && session.localTurns.length === 0)) {
+    releaseRuntimeSession(conversationId)
+    return
+  }
   const pending = pendingSessionReleases.get(conversationId)
-  if (pending == null) return
-  clearTimeout(pending)
-  pendingSessionReleases.delete(conversationId)
+  if (pending != null) {
+    clearTimeout(pending)
+    pendingSessionReleases.delete(conversationId)
+  }
+  parkedSessions.delete(conversationId)
+  parkedSessions.set(conversationId, { parkedAt: Date.now(), session })
+  dropParkedSessions()
+}
+
+/** What a view mounting on a parked session needs to decide whether to
+ *  re-read it: how long it was parked, and whether anything changed it. */
+export interface ReclaimedSession {
+  parkedAt: number
+  changed: boolean
+}
+
+/**
+ * Keep a session a view is mounting on: cancels its pending release, and
+ * takes it out of the parked sessions (fork), saying how it was left.
+ */
+export function claimRuntimeSession(
+  conversationId: number
+): ReclaimedSession | null {
+  const pending = pendingSessionReleases.get(conversationId)
+  if (pending != null) {
+    clearTimeout(pending)
+    pendingSessionReleases.delete(conversationId)
+  }
+  const parked = parkedSessions.get(conversationId)
+  if (!parked) return null
+  parkedSessions.delete(conversationId)
+  return {
+    parkedAt: parked.parkedAt,
+    changed: getRuntimeSession(conversationId) !== parked.session,
+  }
 }
 
 /** Resolve a runtime conversation id from an agent's external session id. */
@@ -5463,6 +5531,7 @@ export function resetConversationRuntimeStore(): void {
   unseenTurnResyncCancels.clear()
   for (const pending of pendingSessionReleases.values()) clearTimeout(pending)
   pendingSessionReleases.clear()
+  parkedSessions.clear()
   timelineCache = new WeakMap()
   timelinePrefixCache = new WeakMap()
   lastStreamingBuilds.clear()

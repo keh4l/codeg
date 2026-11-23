@@ -70,6 +70,7 @@ const stubs = vi.hoisted(() => {
     acp: {
       setActiveKey: vi.fn(),
       releaseActiveKey: vi.fn(),
+      parkConnection: vi.fn(),
       touchActivity: vi.fn(),
     },
     tasks: { addTask: vi.fn(), updateTask: vi.fn(), removeTask: vi.fn() },

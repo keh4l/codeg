@@ -2,9 +2,9 @@
  * Shared gate for the ACP connection teardowns that fire on their own — no
  * user asked for them — so they can't drift apart:
  *
- *   * the tab-unmount cleanup (`shouldDisconnectOnUnmount`)
- *   * the preview-tab release (`disconnectIfIdle`), fired when the next
- *     single-click in the sidebar takes the preview slot
+ *   * the release of a parked connection (`disconnectIfIdle`, from
+ *     `parkConnection`'s budget) — a closed or replaced tab parks its
+ *     connection instead of disconnecting it
  *   * the provider's own unmount cleanup
  *   * the frontend idle sweep, alongside guards this predicate can't express
  *     (`connecting`, viewers, delegation children, the idle timer)

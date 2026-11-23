@@ -204,20 +204,19 @@ describe("a reparented conversation view keeps its runtime session", () => {
     expect(cleanupEnd).toBeGreaterThan(cleanupStart)
     const cleanup = source.slice(cleanupStart, cleanupEnd)
     const guardIdx = cleanup.indexOf("isReparentUnmount(useTabStore.getState()")
-    const cancelSyncIdx = cleanup.indexOf("syncCancelRef.current?.()")
-    const deferIdx = cleanup.indexOf("setPendingCleanup(")
-    const removeIdx = cleanup.indexOf("releaseRuntimeSession(")
+    const parkIdx = cleanup.indexOf("parkRuntimeSession(")
     expect(guardIdx).toBeGreaterThan(-1)
-    // Both ways of ending a session sit behind the classifier.
-    expect(deferIdx).toBeGreaterThan(guardIdx)
-    expect(removeIdx).toBeGreaterThan(guardIdx)
-    // So does cancelling its post-turn metadata sync: the sync patches the
-    // session the reparent keeps, and a reply whose sync was cancelled never
-    // gets its usage, model or fork-point name while the tab stays open.
-    expect(cancelSyncIdx).toBeGreaterThan(guardIdx)
+    // Giving the session up (fork: parking it) sits behind the classifier.
+    expect(parkIdx).toBeGreaterThan(guardIdx)
+    // Neither path cancels its post-turn metadata sync any more: the sync
+    // patches the session, which a reparent keeps and a close now parks, and
+    // a reply whose sync was cancelled never gets its usage, model or
+    // fork-point name.
+    expect(cleanup).not.toContain("syncCancelRef.current?.()")
+    expect(cleanup).not.toContain("releaseRuntimeSession(")
     // Same inputs the connection's own guard uses, so the two agree on what a
     // reparent is.
-    expect(cleanup.slice(guardIdx, deferIdx)).toContain("tabId, groupId")
+    expect(cleanup.slice(guardIdx, parkIdx)).toContain("tabId, groupId")
   })
 
   it("cannot reload the transcript once a live sink has recreated the session", async () => {

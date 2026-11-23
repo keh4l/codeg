@@ -41,6 +41,7 @@ vi.mock("@/contexts/acp-connections-context", () => ({
   useAcpActions: () => ({
     setActiveKey: vi.fn(),
     releaseActiveKey: vi.fn(),
+    parkConnection: vi.fn(),
     touchActivity: vi.fn(),
   }),
 }))

@@ -825,10 +825,9 @@ function CanvasFlow({
    * nothing and adopts nothing.
    *
    * Drafts are deliberately not scanned. A draft that was merely connected is
-   * disconnected by its own unmount (`shouldDisconnectOnUnmount` keeps only
-   * BUSY connections), so by the time the board comes back there is nothing
-   * left to adopt; a draft that was mid-first-send is a card that should have
-   * become a pinned one already.
+   * parked by its own unmount and released within minutes (`parkConnection`),
+   * so a board coming back has nothing of it worth adopting; a draft that was
+   * mid-first-send is a card that should have become a pinned one already.
    */
   const connectionStore = useConnectionStore()
   const adoptedLiveRef = useRef(false)

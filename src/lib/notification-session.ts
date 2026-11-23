@@ -17,8 +17,8 @@ import { useTabStore } from "@/stores/tab-store"
  * tab's label for a draft that has no row yet.
  *
  * A key no tab owns is reached through the conversation its connection serves
- * instead. That is not only a canvas card: closing a tab whose agent is still
- * busy keeps its connection (see `shouldDisconnectOnUnmount`), so the turn
+ * instead. That is not only a canvas card: closing a tab keeps its connection
+ * (parked, see `parkConnection`), so the turn
  * that finishes in the background — exactly when a notification is the only
  * way to learn of it — arrives under a tab id that no longer exists. A
  * connection with no known conversation (a delegated sub-agent's own
