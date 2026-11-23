@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
+import * as transport from "@/lib/transport"
 import {
+  __setRemoteImageBaseForTests,
   base64ByteLength,
   hasImage,
   imageIdentity,
@@ -31,8 +33,33 @@ describe("conversation-images", () => {
       `${window.location.origin}/api/img/${REF.id}`
     )
     expect(imageSrc(null)).toBe("")
+    // Inline display uses the thumbnail when there is one; the preview the
+    // full image.
+    const big = { blob: { ...REF, thumb: true }, mime_type: "image/png" }
+    expect(imageSrc(big, "thumb")).toBe(
+      `${window.location.origin}/api/img/${REF.id}?thumb=512`
+    )
+    expect(imageSrc(big)).toBe(`${window.location.origin}/api/img/${REF.id}`)
+    expect(imageSrc({ blob: REF, mime_type: "image/png" }, "thumb")).toBe(
+      `${window.location.origin}/api/img/${REF.id}`
+    )
     expect(hasImage({ blob: REF, mime_type: "image/png" })).toBe(true)
     expect(hasImage({ mime_type: "image/png" })).toBe(false)
+  })
+
+  it("in a remote-desktop window, loads references through the app's listener", () => {
+    vi.spyOn(transport, "isRemoteDesktopMode").mockReturnValue(true)
+    vi.spyOn(transport, "getActiveRemoteConnectionId").mockReturnValue(7)
+    try {
+      __setRemoteImageBaseForTests("http://127.0.0.1:5555/secret")
+      expect(wantsImageRefs()).toBe(true)
+      expect(imageSrc({ blob: REF, mime_type: "image/png" })).toBe(
+        `http://127.0.0.1:5555/secret/7/${REF.id}`
+      )
+    } finally {
+      __setRemoteImageBaseForTests(null)
+      vi.restoreAllMocks()
+    }
   })
 
   it("gives an image the same identity inline and by reference", () => {
@@ -72,7 +99,7 @@ describe("conversation-images", () => {
     const inline = await withInlineImages(turns)
     expect(inline[0].blocks[1]).toMatchObject({ data: PNG_B64, blob: REF })
     expect(
-      (inline[0].blocks[2] as { image: { data: string } }).image.data
+      (inline[0].blocks[2] as unknown as { image: { data: string } }).image.data
     ).toBe(PNG_B64)
     // The input is left as it was.
     expect(turns[0].blocks[1]).not.toHaveProperty("data")

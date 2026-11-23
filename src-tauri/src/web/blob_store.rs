@@ -157,6 +157,13 @@ impl BlobStore {
         self.root.join(&id[..2]).join(file_name(id, kind))
     }
 
+    /// Where image `id`'s thumbnail is (or will be) kept.
+    fn thumb_path(&self, id: &str) -> PathBuf {
+        self.root
+            .join(&id[..2])
+            .join(format!("{id}-t{THUMB_EDGE}.img"))
+    }
+
     fn note_write(&self) {
         let due = match self.writes.lock() {
             Ok(mut writes) => {
@@ -183,40 +190,55 @@ impl BlobStore {
     }
 
     fn prune_to(&self, max_bytes: u64, max_entries: usize) -> std::io::Result<()> {
-        let mut entries = Vec::new();
-        for shard in std::fs::read_dir(&self.root)? {
-            let shard = shard?;
-            if !shard.file_type()?.is_dir() {
-                continue;
-            }
-            for item in std::fs::read_dir(shard.path())? {
-                let item = item?;
-                let Ok(metadata) = item.metadata() else {
-                    continue;
-                };
-                if !metadata.is_file() {
-                    continue;
-                }
-                let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-                entries.push((modified, metadata.len(), item.path()));
-            }
-        }
-        entries.sort_by_key(|(modified, _, _)| *modified);
-        let mut total: u64 = entries.iter().map(|(_, bytes, _)| bytes).sum();
-        let mut count = entries.len();
-        for (_, bytes, path) in entries {
-            if total <= max_bytes && count <= max_entries {
-                break;
-            }
-            let _ = std::fs::remove_file(&path);
-            total = total.saturating_sub(bytes);
-            count -= 1;
-        }
+        prune_tree(&self.root, max_bytes, max_entries)?;
         if let Ok(mut known) = self.known.lock() {
             known.clear();
         }
         Ok(())
     }
+}
+
+/// Evict blob files (`*.img`, `*.txt`) anywhere under `root` (two levels
+/// deep), least recently read first, until at most `max_bytes` and
+/// `max_entries` remain. Other files (the key) are never touched.
+pub(crate) fn prune_tree(root: &Path, max_bytes: u64, max_entries: usize) -> std::io::Result<()> {
+    fn collect(dir: &Path, depth: u8, out: &mut Vec<(SystemTime, u64, PathBuf)>) {
+        let Ok(items) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for item in items.flatten() {
+            let path = item.path();
+            let Ok(metadata) = item.metadata() else {
+                continue;
+            };
+            if metadata.is_dir() {
+                if depth > 0 {
+                    collect(&path, depth - 1, out);
+                }
+            } else if metadata.is_file()
+                && path
+                    .extension()
+                    .is_some_and(|ext| ext == "img" || ext == "txt")
+            {
+                let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                out.push((modified, metadata.len(), path));
+            }
+        }
+    }
+    let mut entries = Vec::new();
+    collect(root, 2, &mut entries);
+    entries.sort_by_key(|(modified, _, _)| *modified);
+    let mut total: u64 = entries.iter().map(|(_, bytes, _)| bytes).sum();
+    let mut count = entries.len();
+    for (_, bytes, path) in entries {
+        if total <= max_bytes && count <= max_entries {
+            break;
+        }
+        let _ = std::fs::remove_file(&path);
+        total = total.saturating_sub(bytes);
+        count -= 1;
+    }
+    Ok(())
 }
 
 fn file_name(id: &str, kind: BlobKind) -> String {
@@ -228,7 +250,7 @@ pub fn valid_id(id: &str) -> bool {
     id.len() == ID_LEN && id.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-fn touch(path: &Path) {
+pub(crate) fn touch(path: &Path) {
     if let Ok(file) = std::fs::File::options().write(true).open(path) {
         let _ = file.set_modified(SystemTime::now());
     }
@@ -317,6 +339,81 @@ fn looks_like_svg(bytes: &[u8]) -> bool {
     (text.starts_with("<svg") || text.starts_with("<?xml")) && text.contains("<svg")
 }
 
+// ─── Thumbnails ──────────────────────────────────────────────────────
+
+/// Longest edge of a thumbnail.
+pub const THUMB_EDGE: u32 = 512;
+/// Images at least this big, or with an edge longer than `THUMB_MIN_EDGE`,
+/// get a thumbnail for inline display (the preview still loads the original).
+pub const THUMB_MIN_BYTES: usize = 96 * 1024;
+pub const THUMB_MIN_EDGE: u32 = 1024;
+
+/// Whether an image of `bytes` and `dimensions` should be shown inline as a
+/// thumbnail.
+pub fn wants_thumb(bytes: usize, dimensions: Option<(u32, u32)>) -> bool {
+    bytes >= THUMB_MIN_BYTES
+        || dimensions.is_some_and(|(w, h)| w > THUMB_MIN_EDGE || h > THUMB_MIN_EDGE)
+}
+
+/// A JPEG (quality 80) of `bytes` scaled to fit `THUMB_EDGE`, transparency
+/// flattened onto white. `None` for what cannot be decoded within the limits
+/// (formats not built in, decompression bombs).
+pub fn make_thumbnail(bytes: &[u8]) -> Option<Vec<u8>> {
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(16_384);
+    limits.max_image_height = Some(16_384);
+    limits.max_alloc = Some(256 * 1024 * 1024);
+    reader.limits(limits);
+    let decoded = reader.decode().ok()?;
+    let small = decoded.thumbnail(THUMB_EDGE, THUMB_EDGE).to_rgba8();
+    let flat = image::RgbImage::from_fn(small.width(), small.height(), |x, y| {
+        let [r, g, b, a] = small.get_pixel(x, y).0;
+        let over_white = |c: u8| ((c as u16 * a as u16 + 255 * (255 - a as u16)) / 255) as u8;
+        image::Rgb([over_white(r), over_white(g), over_white(b)])
+    });
+    let mut out = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 80)
+        .encode_image(&flat)
+        .ok()?;
+    Some(out)
+}
+
+/// One thumbnail is made at a time: decoding a big image takes a lot of
+/// memory and the only core.
+static THUMB_LOCK: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
+/// The thumbnail of image `id`, made on first request and kept beside it.
+/// `None` when it cannot be made (the caller serves the original).
+async fn thumbnail(store: &'static BlobStore, id: &str) -> Option<Vec<u8>> {
+    let path = store.thumb_path(id);
+    if let Ok(bytes) = tokio::fs::read(&path).await {
+        touch(&path);
+        return Some(bytes);
+    }
+    let _permit = THUMB_LOCK.acquire().await.ok()?;
+    if let Ok(bytes) = tokio::fs::read(&path).await {
+        return Some(bytes);
+    }
+    let original = store.existing_path(BlobKind::Image, id)?;
+    tokio::task::spawn_blocking(move || {
+        let bytes = std::fs::read(original).ok()?;
+        let thumb = make_thumbnail(&bytes)?;
+        let dir = path.parent()?;
+        if let Ok(mut tmp) = tempfile::NamedTempFile::new_in(dir) {
+            if tmp.write_all(&thumb).is_ok() {
+                let _ = tmp.persist(&path);
+            }
+        }
+        Some(thumb)
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 // ─── HTTP ────────────────────────────────────────────────────────────
 
 use axum::extract::Path as AxumPath;
@@ -326,11 +423,54 @@ use axum::response::{IntoResponse, Response};
 /// `GET /api/img/{id}` (public: an `<img>` cannot send a bearer header; the
 /// id is the capability). Serves only images, typed by their bytes, cached by
 /// the browser for good (`immutable`: an id always names the same bytes).
-pub async fn serve_image(AxumPath(id): AxumPath<String>, headers: HeaderMap) -> Response {
-    match global() {
-        Some(store) => serve_image_from(store, &id, &headers).await,
-        None => StatusCode::NOT_FOUND.into_response(),
+pub async fn serve_image(
+    AxumPath(id): AxumPath<String>,
+    axum::extract::Query(query): axum::extract::Query<ImageQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(store) = global() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if query.thumb == Some(THUMB_EDGE)
+        && valid_id(&id)
+        && store.existing_path(BlobKind::Image, &id).is_some()
+    {
+        let etag = format!("\"{id}-t{THUMB_EDGE}\"");
+        if if_none_match(&headers, &etag) {
+            return not_modified(&etag);
+        }
+        if let Some(thumb) = thumbnail(store, &id).await {
+            return image_response("image/jpeg", &etag, thumb);
+        }
+        // No thumbnail possible (an SVG, a format not built in): the original.
     }
+    serve_image_from(store, &id, &headers).await
+}
+
+/// `?thumb=512` asks for the thumbnail.
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct ImageQuery {
+    #[serde(default)]
+    pub thumb: Option<u32>,
+}
+
+fn if_none_match(headers: &HeaderMap, etag: &str) -> bool {
+    headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| {
+            v.split(',')
+                .any(|tag| tag.trim() == etag || tag.trim() == "*")
+        })
+}
+
+fn not_modified(etag: &str) -> Response {
+    Response::builder()
+        .status(StatusCode::NOT_MODIFIED)
+        .header(header::ETAG, etag)
+        .header(header::CACHE_CONTROL, IMAGE_CACHE_CONTROL)
+        .body(axum::body::Body::empty())
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
 pub async fn serve_image_from(store: &BlobStore, id: &str, headers: &HeaderMap) -> Response {
@@ -338,23 +478,11 @@ pub async fn serve_image_from(store: &BlobStore, id: &str, headers: &HeaderMap) 
         return StatusCode::NOT_FOUND.into_response();
     }
     let etag = format!("\"{id}\"");
-    let cached = headers
-        .get(header::IF_NONE_MATCH)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| {
-            v.split(',')
-                .any(|tag| tag.trim() == etag || tag.trim() == "*")
-        });
     let Some(path) = store.existing_path(BlobKind::Image, id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    if cached {
-        return Response::builder()
-            .status(StatusCode::NOT_MODIFIED)
-            .header(header::ETAG, &etag)
-            .header(header::CACHE_CONTROL, IMAGE_CACHE_CONTROL)
-            .body(axum::body::Body::empty())
-            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+    if if_none_match(headers, &etag) {
+        return not_modified(&etag);
     }
     let Ok(Ok(bytes)) = tokio::task::spawn_blocking(move || std::fs::read(path)).await else {
         return StatusCode::NOT_FOUND.into_response();
@@ -367,7 +495,7 @@ pub async fn serve_image_from(store: &BlobStore, id: &str, headers: &HeaderMap) 
 
 const IMAGE_CACHE_CONTROL: &str = "private, max-age=31536000, immutable";
 
-fn image_response(mime: &str, etag: &str, bytes: Vec<u8>) -> Response {
+pub(crate) fn image_response(mime: &str, etag: &str, bytes: Vec<u8>) -> Response {
     Response::builder()
         .header(header::CONTENT_TYPE, mime)
         .header(header::CONTENT_LENGTH, bytes.len())
@@ -443,6 +571,35 @@ mod tests {
             serve_image_from(&store, "nope", &none).await.status(),
             StatusCode::NOT_FOUND
         );
+    }
+
+    #[test]
+    fn thumbnails_fit_the_edge_and_flatten_transparency() {
+        let img = image::RgbaImage::from_fn(2048, 1024, |x, _| {
+            image::Rgba([0, 0, 0, if x < 1024 { 0 } else { 255 }])
+        });
+        let mut png = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let thumb = make_thumbnail(png.get_ref()).expect("a thumbnail");
+        let decoded = image::load_from_memory(&thumb).unwrap().to_rgb8();
+        assert_eq!(
+            (decoded.width(), decoded.height()),
+            (THUMB_EDGE, THUMB_EDGE / 2)
+        );
+        assert!(
+            decoded.get_pixel(10, 10).0.iter().all(|&c| c > 240),
+            "transparent became white"
+        );
+        assert!(
+            decoded.get_pixel(500, 10).0.iter().all(|&c| c < 15),
+            "opaque black stays black"
+        );
+        assert_eq!(sniff_image_type(&thumb), Some("image/jpeg"));
+
+        assert!(wants_thumb(THUMB_MIN_BYTES, None));
+        assert!(wants_thumb(10, Some((2000, 10))));
+        assert!(!wants_thumb(10, Some((800, 600))));
+        assert!(make_thumbnail(b"<svg xmlns='x'/>").is_none());
     }
 
     #[test]

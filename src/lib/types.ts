@@ -197,6 +197,8 @@ export interface ImageBlobRef {
   bytes: number
   w?: number
   h?: number
+  /** A 512 px thumbnail exists for inline display (`?thumb=512`). */
+  thumb?: boolean
 }
 
 /**

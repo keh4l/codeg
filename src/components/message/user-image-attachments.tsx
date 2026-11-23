@@ -44,7 +44,7 @@ export function UserImageAttachments({
               className="block cursor-pointer transition-opacity hover:opacity-80"
             >
               <Image
-                src={imageSrc(image)}
+                src={imageSrc(image, "thumb")}
                 alt={image.name}
                 width={56}
                 height={56}

@@ -94,6 +94,8 @@ pub mod quick_messages;
 #[cfg(feature = "tauri-runtime")]
 pub mod remote_proxy;
 #[cfg(feature = "tauri-runtime")]
+pub mod remote_images;
+#[cfg(feature = "tauri-runtime")]
 pub mod remote_workspace;
 pub mod science;
 pub mod session_info;

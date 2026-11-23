@@ -192,7 +192,7 @@ const UserMediaCollage = memo(function UserMediaCollage({
                 className="block w-full cursor-pointer transition-opacity hover:opacity-90"
               >
                 <Image
-                  src={imageSrc(image)}
+                  src={imageSrc(image, "thumb")}
                   alt={image.name}
                   width={visible.length === 1 ? 320 : 160}
                   height={visible.length === 1 ? 220 : 120}

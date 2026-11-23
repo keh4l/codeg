@@ -85,9 +85,13 @@ fn replace(map: &mut Map<String, Value>, store: &BlobStore) -> bool {
         }
     };
     let mut blob = json!({ "id": id, "bytes": bytes.len() });
-    if let Some((w, h)) = dimensions(&bytes) {
+    let dims = dimensions(&bytes);
+    if let Some((w, h)) = dims {
         blob["w"] = json!(w);
         blob["h"] = json!(h);
+    }
+    if super::blob_store::wants_thumb(bytes.len(), dims) {
+        blob["thumb"] = json!(true);
     }
     map.remove("data");
     map.insert("blob".into(), blob);

@@ -9,6 +9,7 @@
 // so it works with either form.
 
 import {
+  getActiveRemoteConnectionId,
   getServerBaseUrl,
   isDesktop,
   isRemoteDesktopMode,
@@ -21,13 +22,46 @@ export interface ImageSource {
   mime_type: string
 }
 
+// A remote-desktop window loads referenced images through the app's own
+// loopback listener (`remote_image_base`, `commands/remote_images.rs`), which
+// fetches them from the remote server with the connection's credentials. Its
+// base URL is asked for once; until it is known, requests ask for inline data.
+let remoteImageBase: string | null = null
+let remoteImageBaseRequested = false
+
+function remoteImageUrlBase(): string | null {
+  const connectionId = getActiveRemoteConnectionId()
+  if (connectionId === null) return null
+  if (remoteImageBase) return `${remoteImageBase}/${connectionId}`
+  if (!remoteImageBaseRequested) {
+    remoteImageBaseRequested = true
+    void import("@tauri-apps/api/core")
+      .then(({ invoke }) => invoke<string>("remote_image_base"))
+      .then((base) => {
+        remoteImageBase = base
+      })
+      .catch(() => {
+        // An app without the command (older build): keep inline images.
+      })
+  }
+  return null
+}
+
 /**
- * Whether this client asks the server for image references. The web client
- * only: the desktop app reads its own disk (nothing crosses a network), and a
- * remote-desktop window cannot load the remote host's URLs directly.
+ * Whether this client asks the server for image references: the web client,
+ * and a remote-desktop window once its image listener is up. The local
+ * desktop app reads its own disk; nothing crosses a network.
  */
 export function wantsImageRefs(): boolean {
-  return typeof window !== "undefined" && !isDesktop() && !isRemoteDesktopMode()
+  if (typeof window === "undefined") return false
+  if (isRemoteDesktopMode()) return remoteImageUrlBase() !== null
+  return !isDesktop()
+}
+
+/** @internal Test-only. */
+export function __setRemoteImageBaseForTests(base: string | null): void {
+  remoteImageBase = base
+  remoteImageBaseRequested = base !== null
 }
 
 /** Whether the image carries anything to show. */
@@ -35,11 +69,26 @@ export function hasImage(img: ImageSource | null | undefined): boolean {
   return !!img && (!!img.data || !!img.blob)
 }
 
-/** `src` for an `<img>`: a `data:` URL, or the blob's URL on the server. */
-export function imageSrc(img: ImageSource | null | undefined): string {
+/**
+ * `src` for an `<img>`: a `data:` URL, or the blob's URL on the server.
+ * `"thumb"` (inline chips and cards) asks for the server's 512 px thumbnail
+ * when the image has one; the preview dialog and every byte consumer use the
+ * full image.
+ */
+export function imageSrc(
+  img: ImageSource | null | undefined,
+  variant: "full" | "thumb" = "full"
+): string {
   if (!img) return ""
   if (img.data) return `data:${img.mime_type};base64,${img.data}`
-  if (img.blob) return `${getServerBaseUrl()}/api/img/${img.blob.id}`
+  if (img.blob) {
+    const query = variant === "thumb" && img.blob.thumb ? "?thumb=512" : ""
+    if (isRemoteDesktopMode()) {
+      const base = remoteImageUrlBase()
+      return base ? `${base}/${img.blob.id}${query}` : ""
+    }
+    return `${getServerBaseUrl()}/api/img/${img.blob.id}${query}`
+  }
   return ""
 }
 

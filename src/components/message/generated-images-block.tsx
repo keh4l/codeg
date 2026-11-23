@@ -129,10 +129,12 @@ export const GeneratedImagesBlock = memo(function GeneratedImagesBlock({
               className="block cursor-pointer transition-opacity hover:opacity-80"
             >
               <Image
-                src={imageSrc(image)}
+                src={imageSrc(image, "thumb")}
                 alt={image.name}
-                width={256}
-                height={256}
+                // The real size, when known (fork): the box keeps its shape
+                // while a referenced image loads, so the list does not jump.
+                width={image.blob?.w ?? 256}
+                height={image.blob?.h ?? 256}
                 unoptimized
                 className="h-auto max-h-64 w-auto max-w-full object-contain"
               />

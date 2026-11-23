@@ -2121,6 +2121,7 @@ mod tauri_app {
                 workspace_windows::take_workspace_restore_failures,
                 remote_proxy_commands::remote_http_call,
                 remote_proxy_commands::remote_cache_forge_image,
+                crate::commands::remote_images::remote_image_base,
                 remote_proxy_commands::remote_upload_attachment,
                 remote_proxy_commands::remote_upload_workspace_paths,
                 remote_proxy_commands::remote_cancel_workspace_transfer,
