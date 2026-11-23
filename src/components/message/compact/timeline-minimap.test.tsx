@@ -5,7 +5,10 @@ import { NextIntlClientProvider } from "next-intl"
 
 import enMessages from "@/i18n/messages/en.json"
 import type { ConversationMinimapEntry } from "@/lib/transcript-view-api"
-import { TimelineMinimap } from "./timeline-minimap"
+import {
+  TimelineMinimap,
+  __resetMinimapCacheForTests,
+} from "./timeline-minimap"
 
 const h = vi.hoisted(() => ({
   getConversationMinimap: vi.fn<() => Promise<ConversationMinimapEntry[]>>(
@@ -28,6 +31,7 @@ function wrap(ui: React.ReactNode) {
 describe("TimelineMinimap", () => {
   beforeEach(() => {
     h.getConversationMinimap.mockReset()
+    __resetMinimapCacheForTests()
   })
 
   it("stays hidden when fewer than 2 user turns exist", async () => {
@@ -45,7 +49,8 @@ describe("TimelineMinimap", () => {
       wrap(
         <TimelineMinimap
           conversationId={1}
-          refreshKey="k1"
+          turnsOffset={10}
+          prefixHash="p10"
           localTurns={[]}
           activeTurnId="u0"
           onJump={vi.fn()}
@@ -55,6 +60,105 @@ describe("TimelineMinimap", () => {
 
     await waitFor(() => expect(h.getConversationMinimap).toHaveBeenCalled())
     expect(container.querySelector("[data-compact-minimap]")).toBeNull()
+  })
+
+  it("asks the server once per conversation, and not at all for a whole history", async () => {
+    h.getConversationMinimap.mockResolvedValue([])
+    const props = { localTurns: [], activeTurnId: null, onJump: vi.fn() }
+    const view = render(
+      wrap(
+        <TimelineMinimap
+          conversationId={2}
+          turnsOffset={0}
+          prefixHash={null}
+          {...props}
+        />
+      )
+    )
+    // The loaded turns are the whole history.
+    expect(h.getConversationMinimap).not.toHaveBeenCalled()
+
+    view.rerender(
+      wrap(
+        <TimelineMinimap
+          conversationId={2}
+          turnsOffset={40}
+          prefixHash="p40"
+          {...props}
+        />
+      )
+    )
+    await waitFor(() =>
+      expect(h.getConversationMinimap).toHaveBeenCalledTimes(1)
+    )
+    // Older pages loading in, a remount: the list already covers them.
+    view.rerender(
+      wrap(
+        <TimelineMinimap
+          conversationId={2}
+          turnsOffset={20}
+          prefixHash="p20"
+          {...props}
+        />
+      )
+    )
+    view.unmount()
+    render(
+      wrap(
+        <TimelineMinimap
+          conversationId={2}
+          turnsOffset={40}
+          prefixHash="p40"
+          {...props}
+        />
+      )
+    )
+    await Promise.resolve()
+    expect(h.getConversationMinimap).toHaveBeenCalledTimes(1)
+  })
+
+  it("asks again when the window starts later or the history before it changed", async () => {
+    h.getConversationMinimap.mockResolvedValue([])
+    const props = { localTurns: [], activeTurnId: null, onJump: vi.fn() }
+    const view = render(
+      wrap(
+        <TimelineMinimap
+          conversationId={3}
+          turnsOffset={40}
+          prefixHash="a"
+          {...props}
+        />
+      )
+    )
+    await waitFor(() =>
+      expect(h.getConversationMinimap).toHaveBeenCalledTimes(1)
+    )
+    view.rerender(
+      wrap(
+        <TimelineMinimap
+          conversationId={3}
+          turnsOffset={40}
+          prefixHash="b"
+          {...props}
+        />
+      )
+    )
+    await waitFor(() =>
+      expect(h.getConversationMinimap).toHaveBeenCalledTimes(2)
+    )
+    view.rerender(
+      wrap(
+        <TimelineMinimap
+          conversationId={3}
+          turnsOffset={60}
+          prefixHash="c"
+          {...props}
+        />
+      )
+    )
+    await waitFor(() =>
+      expect(h.getConversationMinimap).toHaveBeenCalledTimes(3)
+    )
   })
 
   it("shows glass preview on hover and jumps to clicked turn", async () => {
@@ -81,7 +185,8 @@ describe("TimelineMinimap", () => {
       wrap(
         <TimelineMinimap
           conversationId={1}
-          refreshKey="k1"
+          turnsOffset={10}
+          prefixHash="p10"
           localTurns={[]}
           activeTurnId="u4"
           onJump={onJump}

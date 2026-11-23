@@ -9,6 +9,48 @@ import {
 } from "@/lib/transcript-view-api"
 import { cn } from "@/lib/utils"
 
+/**
+ * Server lists kept per conversation (fork), so a remount, a reconnect or a
+ * page of older history loading in does not ask the server again. A list
+ * covers every turn before the window it was fetched for; it is fetched again
+ * only when the window starts later than that (turns it does not know sit
+ * between), or starts at the same turn over a different history (the
+ * window's `prefixHash` changed: the history before it was rewritten).
+ */
+interface CachedMinimap {
+  entries: ConversationMinimapEntry[]
+  offset: number
+  prefixHash: string | null
+}
+const MAX_CACHED_MINIMAPS = 32
+const minimapCache = new Map<number, CachedMinimap>()
+
+function cachedMinimap(
+  conversationId: number,
+  offset: number,
+  prefixHash: string | null
+): ConversationMinimapEntry[] | null {
+  const cached = minimapCache.get(conversationId)
+  if (!cached) return null
+  if (offset > cached.offset) return null
+  if (offset === cached.offset && prefixHash !== cached.prefixHash) return null
+  return cached.entries
+}
+
+function rememberMinimap(conversationId: number, value: CachedMinimap) {
+  minimapCache.delete(conversationId)
+  minimapCache.set(conversationId, value)
+  if (minimapCache.size > MAX_CACHED_MINIMAPS) {
+    const oldest = minimapCache.keys().next().value
+    if (oldest !== undefined) minimapCache.delete(oldest)
+  }
+}
+
+/** @internal Test-only. */
+export function __resetMinimapCacheForTests() {
+  minimapCache.clear()
+}
+
 export interface MinimapLocalTurn {
   turnIndex: number
   turnId: string
@@ -31,14 +73,18 @@ export interface MinimapLocalTurn {
  */
 export const TimelineMinimap = memo(function TimelineMinimap({
   conversationId,
-  refreshKey,
+  turnsOffset,
+  prefixHash,
   localTurns,
   activeTurnId,
   onJump,
 }: {
   conversationId: number
-  /** Changes whenever new turns settle so the server list refreshes. */
-  refreshKey: string
+  /** Global index of the first loaded turn. At 0 the loaded turns are the
+   *  whole history and the server is not asked. */
+  turnsOffset: number
+  /** The loaded window's fingerprint of the history before it. */
+  prefixHash: string | null
   /** Loaded / optimistic user turns from the current viewport window, merged on
    *  top of the server list so fresh sends appear before DB reparse completes. */
   localTurns: readonly MinimapLocalTurn[]
@@ -56,14 +102,27 @@ export const TimelineMinimap = memo(function TimelineMinimap({
   const railRef = useRef<HTMLDivElement | null>(null)
   const tickRefs = useRef<Array<HTMLButtonElement | null>>([])
 
+  // Only the turns before the loaded window come from the server (the loaded
+  // and live ones are `localTurns`), so the list is asked for once per
+  // conversation, not per settled turn (fork, `cachedMinimap`).
   useEffect(() => {
-    if (conversationId <= 0) {
+    if (conversationId <= 0 || turnsOffset <= 0) {
       setServerEntries([])
+      return
+    }
+    const cached = cachedMinimap(conversationId, turnsOffset, prefixHash)
+    if (cached) {
+      setServerEntries(cached)
       return
     }
     let cancelled = false
     getConversationMinimap(conversationId)
       .then((rows) => {
+        rememberMinimap(conversationId, {
+          entries: rows,
+          offset: turnsOffset,
+          prefixHash,
+        })
         if (!cancelled) setServerEntries(rows)
       })
       .catch(() => {
@@ -72,7 +131,7 @@ export const TimelineMinimap = memo(function TimelineMinimap({
     return () => {
       cancelled = true
     }
-  }, [conversationId, refreshKey])
+  }, [conversationId, turnsOffset, prefixHash])
 
   // Merge server entries (full conversation history) with any newer local turns
   // not yet persisted by the parser. Keyed by `turnIndex` first because

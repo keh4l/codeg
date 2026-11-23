@@ -3041,9 +3041,6 @@ export function MessageListView({
     }),
     [compactRound, turnLive, liveMessage, onEditUserMessage, holdInPlace]
   )
-  const minimapRefreshKey = `${turnsOffset}:${timelineTurns.length}:${
-    timelineTurns[timelineTurns.length - 1]?.turn.id ?? ""
-  }:${connStatus}`
 
   const hasRenderableContent = threadItems.length > 0 || Boolean(liveMessage)
 
@@ -3239,7 +3236,8 @@ export function MessageListView({
         {showMinimap && (
           <TimelineMinimap
             conversationId={fetchConversationId}
-            refreshKey={minimapRefreshKey}
+            turnsOffset={turnsOffset}
+            prefixHash={windowedDetail?.prefix_hash ?? null}
             localTurns={turnIndexData.localMinimapTurns}
             activeTurnId={currentNavTurnId}
             onJump={handleMinimapJump}
