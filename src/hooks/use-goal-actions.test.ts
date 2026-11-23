@@ -4,13 +4,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { ConnectionStatus, LiveSessionSnapshot } from "@/lib/types"
 
 vi.mock("@/lib/api", () => ({
-  acpGetSessionSnapshot: vi.fn(),
+  acpGetSessionFlags: vi.fn(),
 }))
 
-import { acpGetSessionSnapshot } from "@/lib/api"
+import { acpGetSessionFlags } from "@/lib/api"
 import { useAdvertisedGoalActions } from "./use-goal-actions"
 
-const mockedFetch = vi.mocked(acpGetSessionSnapshot)
+const mockedFetch = vi.mocked(acpGetSessionFlags)
 
 function snapshotWith(
   goalActions: string[] | null | undefined

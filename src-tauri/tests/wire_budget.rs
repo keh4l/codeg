@@ -829,3 +829,51 @@ fn longest_string(v: &Value) -> usize {
         _ => 0,
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The flags the conversation UI reads at open (fork, 2.7): the goal controls
+// and the feedback bar used to read them off a full HTTP snapshot.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn session_flags_instead_of_the_snapshot() {
+    let (server, state, _d, _s) = build_server().await;
+    new_connection(&state, "flags").await;
+    emit_all(&state, "flags", live_turn_with_tools()).await;
+
+    let post = |cmd: &'static str, conn: &'static str| {
+        server
+            .post(&format!("/api/{cmd}"))
+            .add_header("authorization", format!("Bearer {TOKEN}"))
+            .json(&json!({ "connectionId": conn }))
+    };
+    let snapshot = post("acp_get_session_snapshot", "flags").await;
+    assert_eq!(snapshot.status_code(), 200);
+    let flags = post("acp_get_session_flags", "flags").await;
+    assert_eq!(flags.status_code(), 200, "{}", flags.text());
+    let body: Value = flags.json();
+    let snap: Value = snapshot.json();
+    for field in [
+        "goal_actions",
+        "feedback_tool_available",
+        "native_steering_available",
+        "feedback",
+    ] {
+        assert_eq!(body[field], snap[field], "{field} as on the snapshot");
+    }
+    let gone: Value = post("acp_get_session_flags", "no-such-connection")
+        .await
+        .json();
+    assert!(gone.is_null());
+
+    println!(
+        "open flags: snapshot {} bytes -> flags {} bytes",
+        snapshot.as_bytes().len(),
+        flags.as_bytes().len()
+    );
+    check(&[Measured {
+        name: "open: session flags bytes (was a full snapshot)",
+        value: flags.as_bytes().len() as u64,
+        budget: 200,
+    }]);
+}

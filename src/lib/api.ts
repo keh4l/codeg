@@ -232,6 +232,7 @@ import type {
   TokenUsageSyncStatus,
 } from "./types"
 import { wantsImageRefs } from "@/lib/conversation-images"
+import { isUnsupportedCommandError } from "@/lib/harness/errors"
 
 export async function listConversations(params?: {
   agent_type?: AgentType | null
@@ -509,6 +510,47 @@ export async function acpGetSessionSnapshot(
   connectionId: string
 ): Promise<LiveSessionSnapshot | null> {
   return getTransport().call("acp_get_session_snapshot", { connectionId })
+}
+
+/**
+ * The fields of a live session the conversation UI reads when it opens (fork):
+ * the goal-action vocabulary and the feedback bar's flags and notes, with the
+ * snapshot's meaning (`goal_actions: null` = not answered yet).
+ */
+export type SessionFlags = Pick<
+  LiveSessionSnapshot,
+  | "goal_actions"
+  | "feedback_tool_available"
+  | "native_steering_available"
+  | "feedback"
+>
+
+// Set once a server answered that it has no `acp_get_session_flags`.
+let sessionFlagsUnsupported = false
+
+/**
+ * {@link SessionFlags} for a connection. Over a network this asks the server
+ * for just those fields (fork) instead of the whole snapshot — the live turn
+ * with every tool output, read two or three times per conversation opened —
+ * and falls back to the snapshot on a server without the endpoint. The local
+ * desktop app reads the snapshot in-process, which costs nothing.
+ */
+export async function acpGetSessionFlags(
+  connectionId: string
+): Promise<SessionFlags | null> {
+  if (!isWorkspaceFileApiAvailable() || sessionFlagsUnsupported) {
+    return acpGetSessionSnapshot(connectionId)
+  }
+  try {
+    return await getTransport().call<SessionFlags | null>(
+      "acp_get_session_flags",
+      { connectionId }
+    )
+  } catch (error) {
+    if (!isUnsupportedCommandError(error)) throw error
+    sessionFlagsUnsupported = true
+    return acpGetSessionSnapshot(connectionId)
+  }
 }
 
 export async function acpGetSessionSnapshotByConversation(

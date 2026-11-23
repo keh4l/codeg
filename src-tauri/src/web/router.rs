@@ -1292,6 +1292,11 @@ pub fn build_router_with_srn(
             "/acp_get_session_snapshot",
             post(handlers::acp::acp_get_session_snapshot),
         )
+        // Fork: the few snapshot fields the conversation UI reads at open.
+        .route(
+            "/acp_get_session_flags",
+            post(handlers::session_flags::acp_get_session_flags),
+        )
         .route(
             "/acp_get_session_snapshot_by_conversation",
             post(handlers::acp::acp_get_session_snapshot_by_conversation),

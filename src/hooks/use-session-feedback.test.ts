@@ -25,7 +25,7 @@ vi.mock("next-intl", () => ({
 
 vi.mock("@/lib/api", () => ({
   submitSessionFeedback: vi.fn(),
-  acpGetSessionSnapshot: vi.fn(),
+  acpGetSessionFlags: vi.fn(),
 }))
 vi.mock("@/lib/app-error", () => ({
   toErrorMessage: (e: unknown) => String(e),
@@ -41,11 +41,11 @@ import {
   useSessionFeedback,
   type UseSessionFeedbackArgs,
 } from "./use-session-feedback"
-import { acpGetSessionSnapshot, submitSessionFeedback } from "@/lib/api"
+import { acpGetSessionFlags, submitSessionFeedback } from "@/lib/api"
 import { isNoActiveTurnRejection } from "@/lib/turn-busy"
 import { toast } from "sonner"
 
-const mockSnapshot = vi.mocked(acpGetSessionSnapshot)
+const mockSnapshot = vi.mocked(acpGetSessionFlags)
 const mockSubmit = vi.mocked(submitSessionFeedback)
 const mockIsNoTurn = vi.mocked(isNoActiveTurnRejection)
 

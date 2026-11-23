@@ -36,7 +36,7 @@
 
 import { useEffect, useRef, useState } from "react"
 
-import { acpGetSessionSnapshot } from "@/lib/api"
+import { acpGetSessionFlags } from "@/lib/api"
 import {
   LEGACY_GOAL_ACTIONS,
   NO_GOAL_ACTIONS,
@@ -87,7 +87,7 @@ export function useAdvertisedGoalActions(
         if (!stale) setRetryTick((t) => t + 1)
       }, delay)
     }
-    acpGetSessionSnapshot(connectionId)
+    acpGetSessionFlags(connectionId)
       .then((snap) => {
         if (stale) return
         // A nullish snapshot means NOTHING was learned (connection already

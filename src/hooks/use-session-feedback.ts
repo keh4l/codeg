@@ -38,7 +38,7 @@ import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 
 import { useAcpEvent } from "@/contexts/acp-connections-context"
-import { acpGetSessionSnapshot, submitSessionFeedback } from "@/lib/api"
+import { acpGetSessionFlags, submitSessionFeedback } from "@/lib/api"
 import { toErrorMessage } from "@/lib/app-error"
 import { notify } from "@/lib/notify"
 import { isNoActiveTurnRejection } from "@/lib/turn-busy"
@@ -224,7 +224,7 @@ export function useSessionFeedback({
     if (!enabled || !connectionId) return
     let cancelled = false
     const startGen = turnGenRef.current
-    void acpGetSessionSnapshot(connectionId)
+    void acpGetSessionFlags(connectionId)
       .then((snap) => {
         if (cancelled || !snap) return
         // Tool availability is fixed at launch and only ever upgrades to true.
@@ -267,7 +267,7 @@ export function useSessionFeedback({
     if (!enabled || !connectionId || (toolAvailable && nativeSteering)) return
     if (connStatus !== "connected" && connStatus !== "prompting") return
     let cancelled = false
-    void acpGetSessionSnapshot(connectionId)
+    void acpGetSessionFlags(connectionId)
       .then((snap) => {
         if (cancelled) return
         // Monotonic upgrade only (see hydrate effect) — no downgrade, no flicker.
@@ -369,7 +369,7 @@ export function useSessionFeedback({
       }
       const cid = connectionId
       if (!cid) return
-      void acpGetSessionSnapshot(cid)
+      void acpGetSessionFlags(cid)
         .then((snap) => {
           // Explicit `false` only — an older server omits the field entirely
           // (undefined), which must not read as a downgrade.
