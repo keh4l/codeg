@@ -327,7 +327,10 @@ async fn ws_reattach_at_head_receives_empty_replay() {
     .await;
 
     let frame = next_json(&mut ws).await;
-    assert_eq!(frame["type"], "replay", "caught-up client gets a replay: {frame}");
+    assert_eq!(
+        frame["type"], "replay",
+        "caught-up client gets a replay: {frame}"
+    );
     assert_eq!(frame["events"].as_array().map(Vec::len), Some(0));
     assert_eq!(frame["high_water_seq"], 3);
     assert_eq!(
@@ -382,4 +385,149 @@ fn content_delta_envelope_serializes_to_expected_shape() {
     assert_eq!(v["connection_id"], "c");
     assert_eq!(v["type"], "content_delta");
     assert_eq!(v["text"], "x");
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// 7. Protocol v2 (fork): offered first, it is selected, and a large frame
+//    arrives compressed in tagged binary parts; a client offering only v1
+//    still gets one text frame.
+// ───────────────────────────────────────────────────────────────────────────
+
+/// A live connection whose snapshot is large: 30 commands with 40 KB of
+/// output each.
+async fn connection_with_a_big_snapshot(state: &Arc<AppState>, conn_id: &str) {
+    state
+        .connection_manager
+        .insert_test_connection(conn_id, AgentType::ClaudeCode, None, state.emitter.clone())
+        .await;
+    let state_arc = state
+        .connection_manager
+        .get_state(conn_id)
+        .await
+        .expect("conn");
+    for i in 0..30 {
+        let id = format!("bash-{i}");
+        emit_with_state(
+            &state_arc,
+            &state.emitter,
+            AcpEvent::ToolCall {
+                tool_call_id: id.clone(),
+                title: "pnpm test".into(),
+                kind: "execute".into(),
+                status: "in_progress".into(),
+                content: None,
+                raw_input: Some("{\"command\":\"pnpm test\"}".into()),
+                raw_output: None,
+                locations: None,
+                meta: None,
+                images: None,
+            },
+        )
+        .await;
+        let output: String = (0..800)
+            .map(|l| format!("  test {i}.{l} passes ({l} ms)\n"))
+            .collect();
+        emit_with_state(
+            &state_arc,
+            &state.emitter,
+            AcpEvent::ToolCallUpdate {
+                tool_call_id: id,
+                title: None,
+                status: Some("completed".into()),
+                content: None,
+                raw_input: None,
+                raw_output: Some(output),
+                raw_output_append: None,
+                locations: None,
+                meta: None,
+                images: None,
+            },
+        )
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn ws_v2_sends_large_frames_compressed_in_parts() {
+    use axum_test::WsMessage;
+    use std::io::Read as _;
+
+    let (server, state, _d, _s) = build_ws_server().await;
+    connection_with_a_big_snapshot(&state, "test-conn-v2").await;
+
+    let response = server
+        .get_websocket("/ws/events")
+        .add_header(
+            SEC_WEBSOCKET_PROTOCOL,
+            format!("codeg-events.v2, {}", ws_auth_protocol(TEST_TOKEN)),
+        )
+        .await;
+    assert_eq!(response.header(SEC_WEBSOCKET_PROTOCOL), "codeg-events.v2");
+    let mut ws = response.into_websocket().await;
+    let ready = next_json(&mut ws).await;
+    assert_eq!(ready["channel"], "__ready__", "small frames stay text");
+
+    ws.send_json(&json!({
+        "action": "attach",
+        "subscription_id": "sub-v2",
+        "connection_id": "test-conn-v2",
+        "since_seq": null,
+        "coalesce_ms": 250
+    }))
+    .await;
+    let mut stream = Vec::new();
+    let mut parts = 0;
+    loop {
+        let message = tokio::time::timeout(Duration::from_secs(5), ws.receive_message())
+            .await
+            .expect("a message within 5s");
+        let WsMessage::Binary(bytes) = message else {
+            panic!("expected a binary part, got {message:?}");
+        };
+        parts += 1;
+        assert!(bytes.len() <= 32 * 1024 + 1, "a part is at most 32 KB");
+        stream.extend_from_slice(&bytes[1..]);
+        match bytes[0] {
+            0x02 => continue,
+            0x01 | 0x03 => break,
+            tag => panic!("unknown tag {tag}"),
+        }
+    }
+    let mut json = String::new();
+    flate2::read::ZlibDecoder::new(&stream[..])
+        .read_to_string(&mut json)
+        .expect("zlib");
+    let frame: Value = serde_json::from_str(&json).expect("json");
+    assert_eq!(frame["type"], "snapshot");
+    assert_eq!(frame["subscription_id"], "sub-v2");
+    println!(
+        "v2 snapshot: {} bytes of JSON in {} bytes over {parts} parts",
+        json.len(),
+        stream.len()
+    );
+    assert!(parts > 1, "a snapshot this size is split");
+    assert!(stream.len() * 4 < json.len(), "and compressed");
+}
+
+#[tokio::test]
+async fn ws_v1_client_gets_large_frames_as_one_text_frame() {
+    let (server, state, _d, _s) = build_ws_server().await;
+    connection_with_a_big_snapshot(&state, "test-conn-v1").await;
+
+    let response = server
+        .get_websocket("/ws/events")
+        .add_header(SEC_WEBSOCKET_PROTOCOL, ws_auth_protocol(TEST_TOKEN))
+        .await;
+    assert_eq!(response.header(SEC_WEBSOCKET_PROTOCOL), "codeg-events");
+    let mut ws = response.into_websocket().await;
+    let _ready = next_json(&mut ws).await;
+    ws.send_json(&json!({
+        "action": "attach",
+        "subscription_id": "sub-v1",
+        "connection_id": "test-conn-v1",
+        "since_seq": null
+    }))
+    .await;
+    let frame = next_json(&mut ws).await;
+    assert_eq!(frame["type"], "snapshot");
 }

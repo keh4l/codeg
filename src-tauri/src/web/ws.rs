@@ -14,6 +14,7 @@ use tokio::task::JoinHandle;
 
 use super::shutdown::ShutdownSignal;
 use super::ws_attach::{self, ClientMsg, DetachReason, ServerMsg, OUTBOUND_CAPACITY};
+use super::ws_frame::{self, Codec};
 use crate::app_state::AppState;
 use crate::logging::throttle::{LagLogThrottle, LAG_LOG_WINDOW};
 
@@ -56,8 +57,15 @@ pub async fn ws_handler(
     Extension(state): Extension<Arc<AppState>>,
     Extension(shutdown_signal): Extension<Arc<ShutdownSignal>>,
 ) -> impl IntoResponse {
-    ws.protocols([super::auth::WS_EVENT_PROTOCOL])
-        .on_upgrade(|socket| handle_ws_connection(socket, state, shutdown_signal))
+    // Fork: a client that offers `codeg-events.v2` gets large frames
+    // compressed and split (`ws_frame`); the server's list is in preference
+    // order, so v2 wins when both are offered.
+    let ws = ws.protocols([
+        ws_frame::WS_EVENT_PROTOCOL_V2,
+        super::auth::WS_EVENT_PROTOCOL,
+    ]);
+    let codec = Codec::from_selected(ws.selected_protocol().and_then(|p| p.to_str().ok()));
+    ws.on_upgrade(move |socket| handle_ws_connection(socket, state, shutdown_signal, codec))
 }
 
 /// A WebSocket protocol-level ping goes out this often (fork). Browsers answer
@@ -123,6 +131,7 @@ async fn handle_ws_connection(
     mut socket: WebSocket,
     state: Arc<AppState>,
     shutdown_signal: Arc<ShutdownSignal>,
+    codec: Codec,
 ) {
     // Late handshake guard: if shutdown already fired before this task
     // even started, exit before subscribing to anything else.
@@ -197,6 +206,7 @@ async fn handle_ws_connection(
         Arc::clone(&last_heard),
         SERVER_PING_INTERVAL,
         CLIENT_SILENCE_LIMIT,
+        codec,
     ));
     let mut writer_done = false;
 
@@ -295,7 +305,9 @@ async fn handle_ws_connection(
 /// attach frames and the legacy firehose, fairly; a protocol ping every
 /// `ping_every`; and the socket is closed once the client has been silent for
 /// `silence_limit`. Returns when the socket is gone, on `Control::Close`, or
-/// when both lanes have no senders left.
+/// when both lanes have no senders left. Frames are written in `codec`; a v2
+/// frame split into parts lets queued control frames through between parts.
+#[allow(clippy::too_many_arguments)]
 async fn run_writer<S>(
     mut sink: S,
     mut control_rx: mpsc::Receiver<Control>,
@@ -304,6 +316,7 @@ async fn run_writer<S>(
     last_heard: Arc<LastHeard>,
     ping_every: Duration,
     silence_limit: Duration,
+    codec: Codec,
 ) where
     S: Sink<Message> + Unpin,
 {
@@ -320,7 +333,7 @@ async fn run_writer<S>(
         loop {
             match control_rx.try_recv() {
                 Ok(control) => {
-                    if !write_control(&mut sink, control).await {
+                    if !write_control(&mut sink, control, codec).await {
                         return;
                     }
                 }
@@ -332,7 +345,7 @@ async fn run_writer<S>(
         tokio::select! {
             control = control_rx.recv() => match control {
                 Some(control) => {
-                    if !write_control(&mut sink, control).await {
+                    if !write_control(&mut sink, control, codec).await {
                         return;
                     }
                 }
@@ -341,8 +354,10 @@ async fn run_writer<S>(
 
             outgoing = outbound_rx.recv(), if outbound_open => match outgoing {
                 Some(msg) => {
-                    if !write_server_msg(&mut sink, &msg).await {
-                        return;
+                    if let Some(text) = serialize_server_msg(&msg) {
+                        if !write_data(&mut sink, text, codec, &mut control_rx).await {
+                            return;
+                        }
                     }
                 }
                 None => outbound_open = false,
@@ -354,7 +369,7 @@ async fn run_writer<S>(
             result = global_rx.recv() => match result {
                 Ok(event) => {
                     if let Ok(msg) = serde_json::to_string(&event) {
-                        if sink.send(Message::Text(msg.into())).await.is_err() {
+                        if !write_data(&mut sink, msg, codec, &mut control_rx).await {
                             return;
                         }
                     }
@@ -392,12 +407,22 @@ async fn run_writer<S>(
 
 /// Write one control-lane item. `false` means stop: the socket is gone or the
 /// item was a close.
-async fn write_control<S>(sink: &mut S, control: Control) -> bool
+async fn write_control<S>(sink: &mut S, control: Control, codec: Codec) -> bool
 where
     S: Sink<Message> + Unpin,
 {
     match control {
-        Control::Msg(msg) => write_server_msg(sink, &msg).await,
+        Control::Msg(msg) => match serialize_server_msg(&msg) {
+            Some(text) => {
+                for message in ws_frame::encode(text, codec).await {
+                    if sink.send(message).await.is_err() {
+                        return false;
+                    }
+                }
+                true
+            }
+            None => true,
+        },
         Control::Close => {
             let _ = sink.send(Message::Close(None)).await;
             false
@@ -405,17 +430,40 @@ where
     }
 }
 
-/// Serialize one frame onto the socket. `false` once the socket is gone; a
-/// frame that fails to serialize is logged and skipped.
-async fn write_server_msg<S>(socket: &mut S, msg: &ServerMsg) -> bool
+/// Write one data frame in `codec`. Between the parts of a split frame, control
+/// frames already queued go out first, so a pong never waits for the rest of
+/// a large frame. `false` once the socket is gone or a close was written.
+async fn write_data<S>(
+    sink: &mut S,
+    text: String,
+    codec: Codec,
+    control_rx: &mut mpsc::Receiver<Control>,
+) -> bool
 where
     S: Sink<Message> + Unpin,
 {
+    for (i, message) in ws_frame::encode(text, codec).await.into_iter().enumerate() {
+        if i > 0 {
+            while let Ok(control) = control_rx.try_recv() {
+                if !write_control(sink, control, codec).await {
+                    return false;
+                }
+            }
+        }
+        if sink.send(message).await.is_err() {
+            return false;
+        }
+    }
+    true
+}
+
+/// A frame's JSON; `None` (logged) if it fails to serialize, which skips it.
+fn serialize_server_msg(msg: &ServerMsg) -> Option<String> {
     match serde_json::to_string(msg) {
-        Ok(text) => socket.send(Message::Text(text.into())).await.is_ok(),
+        Ok(text) => Some(text),
         Err(e) => {
             tracing::warn!("[WS][WARN] failed to serialize ServerMsg: {e}");
-            true
+            None
         }
     }
 }
@@ -436,6 +484,7 @@ async fn handle_client_msg(
             subscription_id,
             connection_id,
             since_seq,
+            coalesce_ms,
         } => {
             // Re-attach with the same subscription_id replaces the prior
             // forwarder. Abort the old one first so its receiver drops
@@ -471,7 +520,7 @@ async fn handle_client_msg(
                         outcome.receiver,
                         outbound_tx.clone(),
                         cleanup_tx.clone(),
-                        ws_attach::default_coalesce_window(),
+                        ws_attach::coalesce_window(coalesce_ms),
                     );
                     subscriptions.insert(subscription_id, ActiveSubscription { handle, epoch });
                 }
@@ -604,6 +653,7 @@ mod tests {
             Arc::clone(&last_heard),
             ping,
             silence,
+            Codec::V1,
         ));
         Writer {
             control: control_tx,
@@ -615,7 +665,10 @@ mod tests {
         }
     }
 
-    async fn next(frames: &mut futures::channel::mpsc::UnboundedReceiver<Message>) -> Message {
+    async fn next<F>(frames: &mut F) -> Message
+    where
+        F: futures::Stream<Item = Message> + Unpin,
+    {
         tokio::time::timeout(Duration::from_secs(5), frames.next())
             .await
             .expect("a frame within 5s")
@@ -736,5 +789,84 @@ mod tests {
             .await
             .expect("writer notices the socket is gone")
             .unwrap();
+    }
+
+    /// v2: a large frame goes out compressed in parts, and a pong queued
+    /// while it is being written goes out between two of its parts instead
+    /// of after the last one.
+    #[tokio::test]
+    async fn v2_lets_a_pong_through_between_the_parts_of_a_large_frame() {
+        use std::io::Read as _;
+
+        let (control_tx, control_rx) = mpsc::channel(CONTROL_CAPACITY);
+        let (outbound_tx, outbound_rx) = mpsc::channel(OUTBOUND_CAPACITY);
+        let (_global_tx, global_rx) = tokio::sync::broadcast::channel(16);
+        // A rendezvous sink: the writer waits on every message until it is
+        // read here, the way a slow socket holds it.
+        let (sink, mut frames) = futures::channel::mpsc::channel::<Message>(0);
+        let task = tokio::spawn(run_writer(
+            sink,
+            control_rx,
+            outbound_rx,
+            global_rx,
+            Arc::new(LastHeard::new()),
+            Duration::from_secs(3600),
+            Duration::from_secs(3600),
+            Codec::V2,
+        ));
+
+        // Pseudo-random letters: compresses to several 32 KB parts.
+        let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
+        let noise: String = (0..400 * 1024)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                char::from(b'a' + (x % 26) as u8)
+            })
+            .collect();
+        outbound_tx.send(detached(&noise)).await.unwrap();
+
+        let first = next(&mut frames).await;
+        let Message::Binary(first) = first else {
+            panic!("a large v2 frame is binary: {first:?}")
+        };
+        assert_eq!(first[0], ws_frame::TAG_PART);
+        control_tx
+            .send(Control::Msg(ServerMsg::Pong))
+            .await
+            .unwrap();
+
+        let mut stream = first[1..].to_vec();
+        let mut pong_between_parts = false;
+        loop {
+            match next(&mut frames).await {
+                Message::Text(text) => {
+                    assert!(text.contains("\"pong\""), "{text}");
+                    pong_between_parts = true;
+                }
+                Message::Binary(bytes) => {
+                    stream.extend_from_slice(&bytes[1..]);
+                    if bytes[0] == ws_frame::TAG_LAST {
+                        break;
+                    }
+                    assert_eq!(bytes[0], ws_frame::TAG_PART);
+                }
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        assert!(pong_between_parts, "the pong waited for the whole frame");
+
+        let mut json = String::new();
+        flate2::read::ZlibDecoder::new(&stream[..])
+            .read_to_string(&mut json)
+            .unwrap();
+        let frame: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(frame["type"], "detached");
+        assert_eq!(
+            frame["subscription_id"].as_str().map(str::len),
+            Some(noise.len())
+        );
+        task.abort();
     }
 }

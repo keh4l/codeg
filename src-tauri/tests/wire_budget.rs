@@ -12,7 +12,8 @@
 //! `cargo test --test wire_budget -- --nocapture` prints the table.
 //!
 //! Counted bytes are WebSocket message payloads and HTTP bodies as sent, not
-//! TCP bytes; there is no WebSocket compression today.
+//! TCP bytes. Protocol v1 (`codeg-events`) is uncompressed; where a budget
+//! says v2 (`codeg-events.v2`), it counts the compressed binary parts.
 
 use std::collections::BTreeMap;
 use std::io::Write as _;
@@ -108,6 +109,58 @@ async fn open_ws(server: &TestServer) -> TestWebSocket {
     let ready = next_text(&mut ws).await;
     assert!(ready.contains("__ready__"), "first frame: {ready}");
     ws
+}
+
+/// A socket on protocol v2 (fork): large frames compressed in parts.
+async fn open_ws_v2(server: &TestServer) -> TestWebSocket {
+    let response = server
+        .get_websocket("/ws/events")
+        .add_header(
+            "sec-websocket-protocol",
+            format!(
+                "codeg-events.v2, codeg-events, codeg-token.{}",
+                URL_SAFE_NO_PAD.encode(TOKEN)
+            ),
+        )
+        .await;
+    assert_eq!(response.header("sec-websocket-protocol"), "codeg-events.v2");
+    let mut ws = response.into_websocket().await;
+    let ready = next_text(&mut ws).await;
+    assert!(ready.contains("__ready__"), "first frame: {ready}");
+    ws
+}
+
+/// The next v2 frame and the bytes it took on the wire.
+async fn next_frame_v2(ws: &mut TestWebSocket) -> (Value, u64) {
+    use axum_test::WsMessage;
+    use std::io::Read as _;
+
+    let mut stream = Vec::new();
+    let mut wire = 0u64;
+    loop {
+        let message = tokio::time::timeout(Duration::from_secs(5), ws.receive_message())
+            .await
+            .expect("ws message within 5s");
+        match message {
+            WsMessage::Text(text) if stream.is_empty() => {
+                let len = text.len() as u64;
+                return (serde_json::from_str(&text).expect("json frame"), len);
+            }
+            WsMessage::Binary(bytes) => {
+                wire += bytes.len() as u64;
+                stream.extend_from_slice(&bytes[1..]);
+                if bytes[0] != 0x02 {
+                    break;
+                }
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    let mut json = String::new();
+    flate2::read::ZlibDecoder::new(&stream[..])
+        .read_to_string(&mut json)
+        .expect("zlib frame");
+    (serde_json::from_str(&json).expect("json frame"), wire)
 }
 
 async fn next_text(ws: &mut TestWebSocket) -> String {
@@ -339,9 +392,9 @@ async fn streaming_turn_frames_and_bytes() {
     // About 50 chunks a second, the rate of a fast model's reply.
     let emitter = {
         let state = Arc::clone(&state);
-        tokio::spawn(async move {
-            emit_paced(&state, "turn", events, Duration::from_millis(20)).await
-        })
+        tokio::spawn(
+            async move { emit_paced(&state, "turn", events, Duration::from_millis(20)).await },
+        )
     };
 
     let (mut frames, mut bytes) = (0u64, 0u64);
@@ -413,12 +466,35 @@ async fn cold_attach_snapshot_with_big_tool_output() {
     let mut ws = open_ws(&server).await;
     let (frame, bytes) = attach(&mut ws, "sub", "big", None).await;
     assert_eq!(frame["type"], "snapshot");
-    check(&[Measured {
-        name: "cold attach: snapshot bytes (60 tool calls x 14 KB)",
-        value: bytes,
-        budget: 2_355_000,
-    }]);
+
+    // The same attach on protocol v2: compressed, in parts.
+    let mut v2 = open_ws_v2(&server).await;
+    v2.send_json(&json!({
+        "action": "attach",
+        "subscription_id": "sub",
+        "connection_id": "big",
+        "since_seq": null,
+    }))
+    .await;
+    let (v2_frame, v2_bytes) = next_frame_v2(&mut v2).await;
+    assert_eq!(v2_frame, frame, "v2 carries the same frame");
+    check(&[
+        Measured {
+            name: "cold attach: snapshot bytes (60 tool calls x 14 KB)",
+            value: bytes,
+            budget: 2_355_000,
+        },
+        Measured {
+            name: "cold attach on v2: wire bytes (zlib)",
+            value: v2_bytes,
+            budget: V2_SNAPSHOT_BUDGET,
+        },
+    ]);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+/// v2 cold attach of the snapshot above (2.14 MB of JSON): 285 KB in zlib.
+const V2_SNAPSHOT_BUDGET: u64 = 313_000;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Reconnecting: a client that saw everything, and one that missed 40 events.

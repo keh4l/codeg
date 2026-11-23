@@ -47,6 +47,15 @@ pub const REPLAY_MAX_BYTES: usize = 512 * 1024;
 /// its own frame.
 pub const DEFAULT_COALESCE_MS: u64 = 100;
 
+/// The merge window for a subscription: what the client asked for (capped at
+/// 1000 ms), else the server default.
+pub fn coalesce_window(requested_ms: Option<u64>) -> Duration {
+    match requested_ms {
+        Some(ms) => Duration::from_millis(ms.min(1000)),
+        None => default_coalesce_window(),
+    }
+}
+
 /// The server-wide merge window (`CODEG_WS_COALESCE_MS`, read once).
 pub fn default_coalesce_window() -> Duration {
     static WINDOW: OnceLock<Duration> = OnceLock::new();
@@ -76,6 +85,10 @@ pub enum ClientMsg {
         connection_id: String,
         #[serde(default)]
         since_seq: Option<u64>,
+        /// Merge window for streamed text on this subscription, in ms (fork;
+        /// v2 clients). Absent: the server default. Capped at 1000.
+        #[serde(default)]
+        coalesce_ms: Option<u64>,
     },
     /// Cancel a prior `attach` by `subscription_id`.
     Detach { subscription_id: String },
