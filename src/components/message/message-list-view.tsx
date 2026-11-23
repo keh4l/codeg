@@ -138,6 +138,10 @@ import {
   CompactThreadProvider,
   useCompactRound,
 } from "./compact/compact-thread"
+import {
+  SEND_ANCHOR_TOP_PX,
+  sendAnchorSpacerHeight,
+} from "./compact/anchor-spacer"
 import { ChangedFilesTree } from "./compact/changed-files-tree"
 import { ReplyMetaFooter } from "./compact/reply-meta-footer"
 import {
@@ -1757,6 +1761,24 @@ function HeldLiveActivityBar({
   )
 }
 
+/** Top of the newest compact user bubble, in the scroll container's content
+ *  coordinates (null when it isn't mounted). */
+function lastUserBubbleTop(
+  viewport: HTMLElement,
+  content: HTMLElement
+): number | null {
+  const bubbles = content.querySelectorAll<HTMLElement>(
+    "[data-compact-user-bubble]"
+  )
+  const last = bubbles[bubbles.length - 1]
+  if (!last) return null
+  return (
+    last.getBoundingClientRect().top -
+    viewport.getBoundingClientRect().top +
+    viewport.scrollTop
+  )
+}
+
 const AutoScrollOnSend = memo(function AutoScrollOnSend({
   signal,
   compact,
@@ -1781,32 +1803,41 @@ const AutoScrollOnSend = memo(function AutoScrollOnSend({
     lastUserRef.current = lastUserThreadIndex
   }, [lastUserThreadIndex])
 
-  // Once the growing reply fills past a viewport below the anchored user
-  // message, drop the temporary trailing spacer so there is no blank tail.
+  // Keep the trailing spacer exactly as tall as the anchored user message
+  // needs (see `sendAnchorSpacerHeight`): it shrinks as the reply grows and
+  // is gone once the reply fills the viewport, so there is no blank tail.
+  const anchorPaddingRef = useRef(anchorPadding)
+  useLayoutEffect(() => {
+    anchorPaddingRef.current = anchorPadding
+  }, [anchorPadding])
+  const spacerActive = compact && anchorPadding > 0
   useEffect(() => {
-    if (!compact || anchorPadding <= 0) return
+    if (!spacerActive) return
     const viewport = scrollRef.current
     const content = contentRef.current
     if (!viewport || !content) return
     const check = () => {
-      const users = content.querySelectorAll<HTMLElement>(
-        "[data-compact-user-bubble]"
-      )
-      const lastUser = users[users.length - 1]
-      if (!lastUser) return
-      const userRect = lastUser.getBoundingClientRect()
-      const contentRect = content.getBoundingClientRect()
-      const realBelowUser = contentRect.bottom - anchorPadding - userRect.top
-      if (realBelowUser >= viewport.clientHeight - 48) {
-        onAnchorPaddingChange(0)
-      }
+      const current = anchorPaddingRef.current
+      if (current <= 0) return
+      const anchorTop = lastUserBubbleTop(viewport, content)
+      if (anchorTop === null) return
+      const next = sendAnchorSpacerHeight({
+        viewportHeight: viewport.clientHeight,
+        scrollHeight: viewport.scrollHeight,
+        anchorTop,
+        currentSpacer: current,
+      })
+      // The ref follows the committed spacer (layout effect above), so a
+      // check that lands before React commits still sees matching numbers.
+      if (next !== current) onAnchorPaddingChange(next)
     }
     check()
     if (typeof ResizeObserver === "undefined") return
     const observer = new ResizeObserver(check)
     observer.observe(content)
+    observer.observe(viewport)
     return () => observer.disconnect()
-  }, [compact, anchorPadding, scrollRef, contentRef, onAnchorPaddingChange])
+  }, [spacerActive, scrollRef, contentRef, onAnchorPaddingChange])
 
   useEffect(() => {
     if (signal === lastSignalRef.current) return
@@ -1815,11 +1846,14 @@ const AutoScrollOnSend = memo(function AutoScrollOnSend({
     if (compact) {
       // keh4l build (T3 style): pin the newly sent user message 24px from the
       // top of the viewport with trailing room below so the reply grows
-      // downward instead of force-sticking to the bottom.
+      // downward instead of force-sticking to the bottom. Start from the
+      // most room it could need; the effect above trims it to size.
       const viewport = scrollRef.current
       const viewportHeight = viewport?.clientHeight ?? 0
       const padding =
-        viewportHeight > 200 ? Math.max(0, viewportHeight - 160) : 0
+        viewportHeight > 200
+          ? Math.max(0, viewportHeight - SEND_ANCHOR_TOP_PX)
+          : 0
       onAnchorPaddingChange(padding)
       stopScroll()
       const anchor = () => {
@@ -1827,19 +1861,37 @@ const AutoScrollOnSend = memo(function AutoScrollOnSend({
         if (idx !== null && scrollApiRef.current) {
           scrollApiRef.current.scrollToIndex(idx, {
             align: "start",
-            offset: -24,
+            offset: -SEND_ANCHOR_TOP_PX,
             smooth: chatAnimations,
           })
-        } else {
-          scrollToBottom({ animation: "instant" })
+          return true
         }
+        scrollToBottom({ animation: "instant" })
+        return false
       }
+      // Frame 1 brings the message's row into the window; frame 2 lands on
+      // the bubble itself (the row has its own top padding), the same point
+      // the spacer is sized for.
+      let raf2 = 0
       const raf1 = requestAnimationFrame(() => {
-        anchor()
-        requestAnimationFrame(anchor)
+        if (!anchor()) return
+        raf2 = requestAnimationFrame(() => {
+          const port = scrollRef.current
+          const content = contentRef.current
+          const top = port && content ? lastUserBubbleTop(port, content) : null
+          if (port && top !== null) {
+            port.scrollTo({
+              top: Math.max(0, top - SEND_ANCHOR_TOP_PX),
+              behavior: chatAnimations ? "smooth" : "auto",
+            })
+          } else {
+            anchor()
+          }
+        })
       })
       return () => {
         cancelAnimationFrame(raf1)
+        cancelAnimationFrame(raf2)
       }
     }
 
@@ -1857,6 +1909,7 @@ const AutoScrollOnSend = memo(function AutoScrollOnSend({
     scrollToBottom,
     stopScroll,
     scrollRef,
+    contentRef,
     signal,
     compact,
     scrollApiRef,
