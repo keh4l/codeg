@@ -115,7 +115,12 @@ const WS_BACKOFF_MAX_SECS: u64 = 32;
 const WS_EVENT_PROTOCOL: &str = "codeg-events";
 /// What the event socket offers (fork): protocol v2 first (compressed, split
 /// frames, `web::ws_frame`), v1 for a server that does not know v2.
-const WS_EVENT_PROTOCOLS_OFFERED: &str = "codeg-events.v2, codeg-events";
+fn ws_event_protocols_offered() -> String {
+    format!(
+        "{}, {WS_EVENT_PROTOCOL}",
+        crate::web::ws_frame::WS_EVENT_PROTOCOL_V2
+    )
+}
 const WS_TOKEN_PROTOCOL_PREFIX: &str = "codeg-token.";
 const WS_EVENTS_PATH: &str = "/ws/events";
 
@@ -1918,6 +1923,7 @@ async fn run_ws_connection<R, RFut, F, Fut>(
             }
         }
 
+        let offered = ws_event_protocols_offered();
         let connect_result = tokio::select! {
             biased;
             changed = shutdown_rx.changed() => {
@@ -1926,7 +1932,7 @@ async fn run_ws_connection<R, RFut, F, Fut>(
                 }
                 continue;
             }
-            res = connect_with_subprotocol_auth(&target.url, WS_EVENT_PROTOCOLS_OFFERED, &target.token, &target.headers) => res,
+            res = connect_with_subprotocol_auth(&target.url, &offered, &target.token, &target.headers) => res,
         };
 
         let (mut socket, selected_protocol) = match connect_result {
