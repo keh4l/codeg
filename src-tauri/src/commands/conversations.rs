@@ -1590,7 +1590,9 @@ pub async fn get_folder_conversation_core(
         let agent_env = agent_setting_service::load_agent_env(conn, at).await;
         tokio::task::spawn_blocking(move || -> Result<_, AppCommandError> {
             let parser = build_agent_parser(at, &agent_env);
-            match parser.get_conversation(&eid) {
+            // Fork: a transcript unchanged since its last parse is not parsed
+            // again (`detail_cache`).
+            match crate::commands::detail_cache::get_conversation(at, &agent_env, &*parser, &eid) {
                 Ok(d) => {
                     // Claude `/clear` (and similar on-disk id changes) make
                     // the parser resolve a different uuid than we asked for.
