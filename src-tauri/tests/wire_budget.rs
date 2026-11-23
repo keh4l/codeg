@@ -720,6 +720,41 @@ async fn opening_a_conversation_with_screenshots() {
         Some("private, max-age=31536000, immutable")
     );
     let refs_longest = longest_string(&refs_body);
+
+    // And with the first-window budget a remote client sends (fork, 2.6):
+    // the last 8 rounds, at most 512 KiB.
+    let budgeted = server
+        .post("/api/get_folder_conversation")
+        .add_header("authorization", format!("Bearer {TOKEN}"))
+        .add_header("accept-encoding", "gzip")
+        .json(&json!({
+            "conversationId": conversation_id,
+            "tailTurns": 120,
+            "imageRefs": true,
+            "windowMaxBytes": 512 * 1024,
+            "windowMaxUserTurns": 8,
+        }))
+        .await;
+    assert_eq!(budgeted.status_code(), 200, "{}", budgeted.text());
+    let budgeted_gzip = budgeted.as_bytes().len() as u64;
+    let budgeted_body: Value = server
+        .post("/api/get_folder_conversation")
+        .add_header("authorization", format!("Bearer {TOKEN}"))
+        .json(&json!({
+            "conversationId": conversation_id,
+            "tailTurns": 120,
+            "imageRefs": true,
+            "windowMaxBytes": 512 * 1024,
+            "windowMaxUserTurns": 8,
+        }))
+        .await
+        .json();
+    let budgeted_users = budgeted_body["turns"]
+        .as_array()
+        .map(|t| t.iter().filter(|t| t["role"] == "user").count())
+        .unwrap_or(0);
+    assert!(budgeted_users <= 8, "{budgeted_users} user turns");
+    assert_eq!(budgeted_body["turns"][0]["role"], "user", "starts a round");
     let turns = body["turns"].as_array().map(|t| t.len()).unwrap_or(0);
     assert!(turns > 0, "window has turns");
     let longest_string = longest_string(&body);
@@ -748,6 +783,11 @@ async fn opening_a_conversation_with_screenshots() {
             budget: REFS_GZIP_BUDGET,
         },
         Measured {
+            name: "open with imageRefs + 8-round budget: gzip bytes",
+            value: budgeted_gzip,
+            budget: BUDGETED_GZIP_BUDGET,
+        },
+        Measured {
             name: "open with imageRefs: longest single string",
             value: refs_longest as u64,
             budget: REFS_LONGEST_BUDGET,
@@ -763,6 +803,8 @@ async fn opening_a_conversation_with_screenshots() {
 /// With images as references the 120-turn window is 7.5 KB gzipped and its
 /// longest string 4 KB (measured + 10%).
 const REFS_GZIP_BUDGET: u64 = 8_300;
+/// The same window cut to the 8-round budget a remote client asks for.
+const BUDGETED_GZIP_BUDGET: u64 = 2_900;
 const REFS_LONGEST_BUDGET: u64 = 4_400;
 
 /// The first image reference's id in a response.

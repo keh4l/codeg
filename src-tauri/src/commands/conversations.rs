@@ -2167,10 +2167,28 @@ pub async fn get_folder_conversation_turns_core(
     before_index: usize,
     limit: usize,
 ) -> Result<ConversationTurnsPage, AppCommandError> {
+    get_folder_conversation_turns_budget_core(conn, conversation_id, before_index, limit, None)
+        .await
+}
+
+/// [`get_folder_conversation_turns_core`] with an optional byte / round
+/// budget (fork, `turn_window::WindowBudget`; remote clients).
+pub async fn get_folder_conversation_turns_budget_core(
+    conn: &sea_orm::DatabaseConnection,
+    conversation_id: i32,
+    before_index: usize,
+    limit: usize,
+    budget: Option<crate::commands::turn_window::WindowBudget>,
+) -> Result<ConversationTurnsPage, AppCommandError> {
     use crate::commands::turn_window;
     let (detail, _parsed_title) = get_folder_conversation_core(conn, conversation_id).await?;
     let turns = detail.turns;
-    let (start, end) = turn_window::resolve_page_bounds(&turns, before_index, limit);
+    let (start, end) = match budget {
+        Some(budget) => {
+            turn_window::resolve_budgeted_page_bounds(&turns, before_index, limit, budget)
+        }
+        None => turn_window::resolve_page_bounds(&turns, before_index, limit),
+    };
     let meta = turn_window::window_meta(&turns, start);
     let seam = turn_window::window_meta(&turns, before_index.min(turns.len()));
     Ok(ConversationTurnsPage {

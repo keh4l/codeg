@@ -4577,7 +4577,8 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>()((
    */
   const requestOlderPage = (
     conversationId: number,
-    limit: number
+    limit: number,
+    options?: { budget?: boolean }
   ): Promise<boolean> | null => {
     const session = get().byConversationId.get(conversationId)
     const detail = session?.detail ?? null
@@ -4589,7 +4590,15 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>()((
     const fetchId = session.dbConversationId ?? conversationId
     const generation = bumpFetchGeneration(conversationId)
     dispatch({ type: "LOAD_OLDER_TURNS_START", conversationId })
-    const request = getFolderConversationTurns(fetchId, beforeIndex, limit)
+    // Fork: a page scrolled in is size-bounded over a network; a page that
+    // must reach a target (`loadOlderTurnsThrough`) is not.
+    const request = (
+      options?.budget
+        ? getFolderConversationTurns(fetchId, beforeIndex, limit, {
+            budget: true,
+          })
+        : getFolderConversationTurns(fetchId, beforeIndex, limit)
+    )
       .then((page) => {
         if (!isLatestGeneration(conversationId, generation)) {
           dispatch({ type: "LOAD_OLDER_TURNS_DONE", conversationId })
@@ -4636,7 +4645,9 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>()((
   }
 
   const loadOlderTurns = (conversationId: number): void => {
-    void requestOlderPage(conversationId, OLDER_TURNS_PAGE_SIZE)
+    void requestOlderPage(conversationId, OLDER_TURNS_PAGE_SIZE, {
+      budget: true,
+    })
   }
 
   /**

@@ -51,6 +51,130 @@ pub enum TurnWindowReq {
     /// response offset matches the coordinate the client refreshed against
     /// (its prefix fingerprint would be incomparable otherwise).
     FromIndex(usize),
+    /// Fork: `Tail(n)` further bounded by a byte / round budget (remote
+    /// clients), see [`WindowBudget`].
+    TailBudget(usize, WindowBudget),
+}
+
+/// What a remote client can take in one window or page (fork). Opening a
+/// conversation over a slow link waits for the whole first window, and 120
+/// turns of a tool-heavy session can be megabytes; a budget makes the first
+/// paint carry the last few rounds only and leaves the rest to paging.
+///
+/// Walking back from the end, turns are added until `max_user_turns` user
+/// turns are in or the next turn would pass `max_bytes` (at least one turn
+/// always). The start then aligns back to a user turn only if that still
+/// fits, so a single huge round may arrive mid-round — the same partial-round
+/// shape `ROUND_ALIGN_CAP` already produces.
+#[derive(Debug, Clone, Copy)]
+pub struct WindowBudget {
+    pub max_bytes: usize,
+    pub max_user_turns: usize,
+    /// Images will be sent as references (`web::image_refs`), so their base64
+    /// does not count.
+    pub image_refs: bool,
+}
+
+impl WindowBudget {
+    /// The budget a request's fields ask for; `None` when they ask for none.
+    pub fn from_request(
+        max_bytes: Option<usize>,
+        max_user_turns: Option<usize>,
+        image_refs: bool,
+    ) -> Option<Self> {
+        if max_bytes.is_none() && max_user_turns.is_none() {
+            return None;
+        }
+        Some(Self {
+            max_bytes: max_bytes.unwrap_or(usize::MAX).max(1),
+            max_user_turns: max_user_turns.unwrap_or(usize::MAX).max(1),
+            image_refs,
+        })
+    }
+}
+
+/// `window` under `budget`: a `Tail` becomes a `TailBudget`; anything else
+/// (an exact `FromIndex` refresh must return its whole region) is unchanged.
+pub fn with_budget(
+    window: Option<TurnWindowReq>,
+    budget: Option<WindowBudget>,
+) -> Option<TurnWindowReq> {
+    match (window, budget) {
+        (Some(TurnWindowReq::Tail(n)), Some(budget)) => Some(TurnWindowReq::TailBudget(n, budget)),
+        (window, _) => window,
+    }
+}
+
+/// Serialized size of `turn` as the client will receive it.
+fn sent_turn_bytes(turn: &MessageTurn, image_refs: bool) -> usize {
+    let full = serde_json::to_vec(turn).map(|v| v.len()).unwrap_or(0);
+    if !image_refs {
+        return full;
+    }
+    let min = crate::web::image_refs::MIN_INLINE_REF_CHARS;
+    let referenced = |data: &str| {
+        if data.len() >= min {
+            data.len().saturating_sub(96)
+        } else {
+            0
+        }
+    };
+    let inline_images: usize = turn
+        .blocks
+        .iter()
+        .map(|block| match block {
+            ContentBlock::Image { data, .. } => referenced(data),
+            ContentBlock::ImageGeneration {
+                image: Some(img), ..
+            } => referenced(&img.data),
+            ContentBlock::ToolResult { images, .. } => {
+                images.iter().map(|i| referenced(&i.data)).sum()
+            }
+            _ => 0,
+        })
+        .sum();
+    full.saturating_sub(inline_images)
+}
+
+/// Start of a budgeted window ending at `end` and at most `max_turns` long.
+fn budgeted_start(
+    turns: &[MessageTurn],
+    end: usize,
+    max_turns: usize,
+    budget: WindowBudget,
+) -> usize {
+    let floor = end.saturating_sub(max_turns.clamp(1, MAX_WINDOW_TURNS));
+    let mut start = end;
+    let mut bytes = 0usize;
+    let mut users = 0usize;
+    while start > floor {
+        let turn = &turns[start - 1];
+        let size = sent_turn_bytes(turn, budget.image_refs);
+        if start < end && bytes.saturating_add(size) > budget.max_bytes {
+            return start;
+        }
+        bytes = bytes.saturating_add(size);
+        start -= 1;
+        if matches!(turn.role, TurnRole::User) {
+            users += 1;
+            if users >= budget.max_user_turns {
+                return start;
+            }
+        }
+    }
+    if start == floor {
+        // The turn-count limit stopped the walk: align as `Tail` does, but
+        // only within the budget.
+        let aligned = round_align_backward(turns, start);
+        let extra: usize = turns[aligned..start]
+            .iter()
+            .map(|t| sent_turn_bytes(t, budget.image_refs))
+            .sum();
+        if bytes.saturating_add(extra) <= budget.max_bytes {
+            return aligned;
+        }
+    }
+    start
 }
 
 /// Window metadata attached to a sliced response.
@@ -135,6 +259,7 @@ pub fn resolve_window_offset(turns: &[MessageTurn], req: TurnWindowReq) -> usize
             round_align_backward(turns, turns.len().saturating_sub(n))
         }
         TurnWindowReq::FromIndex(from) => from.min(turns.len()),
+        TurnWindowReq::TailBudget(n, budget) => budgeted_start(turns, turns.len(), n, budget),
     }
 }
 
@@ -150,6 +275,17 @@ pub fn resolve_page_bounds(
     let limit = limit.clamp(1, MAX_WINDOW_TURNS);
     let start = round_align_backward(turns, end.saturating_sub(limit));
     (start.min(end), end)
+}
+
+/// [`resolve_page_bounds`] under a budget (fork, see [`WindowBudget`]).
+pub fn resolve_budgeted_page_bounds(
+    turns: &[MessageTurn],
+    before_index: usize,
+    limit: usize,
+    budget: WindowBudget,
+) -> (usize, usize) {
+    let end = before_index.min(turns.len());
+    (budgeted_start(turns, end, limit, budget).min(end), end)
 }
 
 /// Compute the response metadata for a window starting at `offset`.
@@ -300,6 +436,79 @@ mod tests {
     }
 
     use TurnRole::{Assistant as A, User as U};
+
+    /// A turn carrying `text_bytes` of text.
+    fn heavy(role: TurnRole, secs: i64, text_bytes: usize) -> MessageTurn {
+        let mut t = turn(role, secs);
+        t.blocks.push(ContentBlock::Text {
+            text: "x".repeat(text_bytes),
+        });
+        t
+    }
+
+    fn budget(max_bytes: usize, max_user_turns: usize) -> WindowBudget {
+        WindowBudget {
+            max_bytes,
+            max_user_turns,
+            image_refs: false,
+        }
+    }
+
+    #[test]
+    fn a_budgeted_tail_stops_at_the_round_limit() {
+        // Five rounds of user + two assistant turns.
+        let turns = sample(&[U, A, A, U, A, A, U, A, A, U, A, A, U, A, A]);
+        let req = TurnWindowReq::TailBudget(120, budget(usize::MAX, 2));
+        // The last two rounds, starting at a user turn.
+        assert_eq!(resolve_window_offset(&turns, req), 9);
+    }
+
+    #[test]
+    fn a_budgeted_tail_stops_at_the_byte_limit_but_keeps_one_turn() {
+        let turns: Vec<_> = [U, A, A, U, A, A]
+            .iter()
+            .enumerate()
+            .map(|(i, r)| heavy(r.clone(), 1_700_000_000 + i as i64, 10_000))
+            .collect();
+        let one = sent_turn_bytes(&turns[0], false);
+        // Room for two turns: the window starts mid-round, as aligning back
+        // to the user turn would not fit.
+        let req = TurnWindowReq::TailBudget(120, budget(one * 2 + 10, 99));
+        assert_eq!(resolve_window_offset(&turns, req), 4);
+        // Room for none: still the last turn.
+        let req = TurnWindowReq::TailBudget(120, budget(10, 99));
+        assert_eq!(resolve_window_offset(&turns, req), 5);
+        // The plain tail is unchanged.
+        assert_eq!(resolve_window_offset(&turns, TurnWindowReq::Tail(2)), 3);
+    }
+
+    #[test]
+    fn a_budgeted_tail_within_the_turn_limit_aligns_when_it_fits() {
+        let turns = sample(&[U, A, A, U, A, A]);
+        let req = TurnWindowReq::TailBudget(2, budget(usize::MAX, 99));
+        assert_eq!(resolve_window_offset(&turns, req), 3);
+    }
+
+    #[test]
+    fn referenced_images_do_not_count_against_the_budget() {
+        let mut t = turn(U, 1_700_000_000);
+        t.blocks.push(ContentBlock::Image {
+            data: "A".repeat(200_000),
+            mime_type: "image/png".into(),
+            uri: None,
+        });
+        assert!(sent_turn_bytes(&t, false) > 200_000);
+        assert!(sent_turn_bytes(&t, true) < 1_000);
+    }
+
+    #[test]
+    fn a_budgeted_page_ends_at_the_seam() {
+        let turns = sample(&[U, A, A, U, A, A, U, A, A]);
+        assert_eq!(
+            resolve_budgeted_page_bounds(&turns, 6, 120, budget(usize::MAX, 1)),
+            (3, 6)
+        );
+    }
 
     #[test]
     fn tail_window_aligns_back_to_user_turn() {

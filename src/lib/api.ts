@@ -2600,20 +2600,37 @@ export async function getFolderConversation(
     // Fork: images as blob references (`lib/conversation-images.ts`); an
     // old server ignores it and sends them inline.
     ...(wantsImageRefs() ? { imageRefs: true } : {}),
+    // Fork: over a network, the first window is bounded by size and rounds
+    // too (older turns page in on scroll); an old server ignores it.
+    ...(window?.tailTurns != null && fetchesOverNetwork() ? WINDOW_BUDGET : {}),
   })
+}
+
+/**
+ * Byte / round budget a client over a network asks for a first window or a
+ * scrolled-in page (fork, `turn_window::WindowBudget`): the last few rounds
+ * paint fast, the rest pages in.
+ */
+const WINDOW_BUDGET = { windowMaxBytes: 512 * 1024, windowMaxUserTurns: 8 }
+
+/** Whether conversation fetches cross a network (web, remote desktop). */
+function fetchesOverNetwork(): boolean {
+  return typeof window !== "undefined" && isWorkspaceFileApiAvailable()
 }
 
 /** Fetch one page of older history ending just before `beforeIndex`. */
 export async function getFolderConversationTurns(
   conversationId: number,
   beforeIndex: number,
-  limit: number
+  limit: number,
+  options?: { budget?: boolean }
 ): Promise<ConversationTurnsPage> {
   return getTransport().call("get_folder_conversation_turns", {
     conversationId,
     beforeIndex,
     limit,
     ...(wantsImageRefs() ? { imageRefs: true } : {}),
+    ...(options?.budget && fetchesOverNetwork() ? WINDOW_BUDGET : {}),
   })
 }
 

@@ -160,6 +160,12 @@ pub struct GetFolderConversationParams {
     /// Images as blob references (fork, `web::image_refs`).
     #[serde(default)]
     pub image_refs: bool,
+    /// Byte / round budget for a `tailTurns` window (fork,
+    /// `turn_window::WindowBudget`).
+    #[serde(default)]
+    pub window_max_bytes: Option<usize>,
+    #[serde(default)]
+    pub window_max_user_turns: Option<usize>,
 }
 
 pub async fn get_folder_conversation(
@@ -168,6 +174,14 @@ pub async fn get_folder_conversation(
 ) -> Result<axum::response::Response, AppCommandError> {
     let db = &state.db;
     let window = conv_commands::resolve_turn_window_req(params.tail_turns, params.from_index)?;
+    let window = crate::commands::turn_window::with_budget(
+        window,
+        crate::commands::turn_window::WindowBudget::from_request(
+            params.window_max_bytes,
+            params.window_max_user_turns,
+            params.image_refs,
+        ),
+    );
     let result = conv_commands::get_folder_conversation_with_live_core(
         &db.conn,
         &state.connection_manager,
@@ -189,17 +203,28 @@ pub struct GetFolderConversationTurnsParams {
     /// Images as blob references (fork, `web::image_refs`).
     #[serde(default)]
     pub image_refs: bool,
+    /// Byte / round budget for the page (fork, `turn_window::WindowBudget`).
+    #[serde(default)]
+    pub window_max_bytes: Option<usize>,
+    #[serde(default)]
+    pub window_max_user_turns: Option<usize>,
 }
 
 pub async fn get_folder_conversation_turns(
     Extension(state): Extension<Arc<AppState>>,
     Json(params): Json<GetFolderConversationTurnsParams>,
 ) -> Result<axum::response::Response, AppCommandError> {
-    let result = conv_commands::get_folder_conversation_turns_core(
+    let budget = crate::commands::turn_window::WindowBudget::from_request(
+        params.window_max_bytes,
+        params.window_max_user_turns,
+        params.image_refs,
+    );
+    let result = conv_commands::get_folder_conversation_turns_budget_core(
         &state.db.conn,
         params.conversation_id,
         params.before_index,
         params.limit,
+        budget,
     )
     .await?;
     crate::web::image_refs::respond(result, params.image_refs).await

@@ -286,7 +286,9 @@ describe("loadOlderTurns", () => {
     expect(session()?.loadingOlderTurns).toBe(true)
     await flush()
     const d = session()?.detail
-    expect(mockGetTurns).toHaveBeenCalledWith(CID, 4, OLDER_TURNS_PAGE_SIZE)
+    expect(mockGetTurns).toHaveBeenCalledWith(CID, 4, OLDER_TURNS_PAGE_SIZE, {
+      budget: true,
+    })
     expect(d?.turns.map((t) => t.id)).toEqual([
       "turn-2",
       "turn-3",
