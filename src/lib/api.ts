@@ -578,6 +578,64 @@ export async function acpFindConnectionForConversation(
   })
 }
 
+/**
+ * What `acp_open_session` did (fork): `found` — a live connection for this
+ * conversation already runs (another client's, or this one's own before a
+ * reload); `spawned` / `reused` — the connection `acp_connect` would have
+ * handed back.
+ */
+export interface OpenSessionResult {
+  connection_id: string
+  outcome: "found" | "spawned" | "reused"
+  /** The found connection's progress; `null` for a connection just made. */
+  event_seq: number | null
+  /** Idle agents the server keeps warm (`0`: no cap). */
+  idle_cap: number
+}
+
+// Set once a server answered that it has no `acp_open_session`.
+let openSessionUnsupported = false
+
+/** Whether `connect()` should try {@link acpOpenSession} first. */
+export function openSessionAvailable(): boolean {
+  return isWorkspaceFileApiAvailable() && !openSessionUnsupported
+}
+
+/**
+ * Discovery and `acp_connect` in one round trip (fork): over a network each
+ * of them is a round trip the conversation waits on. `null` when the server
+ * doesn't have it — remembered, so the caller takes the two-call path from
+ * then on.
+ */
+export async function acpOpenSession(params: {
+  agentType: AgentType
+  workingDir?: string
+  sessionId?: string
+  conversationId?: number
+  preferredModeId?: string | null
+  preferredConfigValues?: Record<string, string> | null
+}): Promise<OpenSessionResult | null> {
+  try {
+    return await getTransport().call<OpenSessionResult>("acp_open_session", {
+      agentType: params.agentType,
+      workingDir: params.workingDir ?? null,
+      sessionId: params.sessionId ?? null,
+      conversationId: params.conversationId ?? null,
+      preferredModeId: params.preferredModeId ?? null,
+      preferredConfigValues: params.preferredConfigValues ?? null,
+    })
+  } catch (error) {
+    if (!isUnsupportedCommandError(error)) throw error
+    openSessionUnsupported = true
+    return null
+  }
+}
+
+/** Test seam: forget that a server lacked `acp_open_session`. */
+export function __resetOpenSessionSupportForTests(): void {
+  openSessionUnsupported = false
+}
+
 export async function acpListAgents(): Promise<AcpAgentInfo[]> {
   return getTransport().call("acp_list_agents")
 }

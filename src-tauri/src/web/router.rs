@@ -1307,6 +1307,11 @@ pub fn build_router_with_srn(
             "/acp_find_connection_for_conversation",
             post(handlers::acp::acp_find_connection_for_conversation),
         )
+        // Fork: discovery + acp_connect in one round trip.
+        .route(
+            "/acp_open_session",
+            post(handlers::open_session::acp_open_session),
+        )
         .route(
             "/acp_clear_binary_cache",
             post(handlers::acp::acp_clear_binary_cache),

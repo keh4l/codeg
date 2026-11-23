@@ -49,7 +49,10 @@ import {
   acpTouchConnection,
   acpGetSessionSnapshot,
   acpFindConnectionForConversation,
+  acpOpenSession,
+  openSessionAvailable,
   openSettingsWindow,
+  type OpenSessionResult,
 } from "@/lib/api"
 import { denormalizeSnapshot } from "@/lib/snapshot-denormalize"
 import { buildDelegationSeedEnvelopes } from "@/lib/delegation-seed"
@@ -8031,6 +8034,57 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           }
         }
 
+        // Fork: over a network, discovery and the spawn below are one round
+        // trip (`acp_open_session`), with the same answers: a live connection
+        // for this conversation (`found`, taken exactly as discovery's below)
+        // or the connection `acpConnect` would have handed back. A server
+        // without it answers `null`, and the two calls run as before.
+        let connectionId: string | null = null
+        let opened: OpenSessionResult | null = null
+        if (openSessionAvailable()) {
+          await waitForListenerReady()
+          const savedPrefs = getSavedPrefsForConnect(agentType)
+          opened = await acpOpenSession({
+            agentType,
+            workingDir,
+            sessionId,
+            conversationId:
+              conversationId != null && conversationId > 0
+                ? conversationId
+                : undefined,
+            preferredModeId: savedPrefs.modeId,
+            preferredConfigValues: savedPrefs.configValues,
+          })
+          if (opened?.outcome === "found") {
+            // As after discovery below: nothing was made, so a bare return.
+            if (abandonedKeysRef.current.has(contextKey)) {
+              return
+            }
+            const pendingAfterOpen =
+              pendingConnectRequestsRef.current.get(contextKey)
+            if (
+              pendingAfterOpen &&
+              !sameConnectRequest(pendingAfterOpen, request)
+            ) {
+              return
+            }
+            if (localOwnerKeyOf(opened.connection_id) !== contextKey) {
+              const attached = await connectAsViewer(
+                contextKey,
+                opened.connection_id,
+                agentType,
+                nextWorkingDir
+              )
+              // Died between the answer and the attach: spawn one below.
+              if (attached) return
+            } else {
+              connectionId = opened.connection_id
+            }
+          } else if (opened) {
+            connectionId = opened.connection_id
+          }
+        }
+
         // Cross-client viewer attach. Before spawning a NEW backend agent, ask
         // whether another client already holds a LIVE connection for this
         // persisted conversation; if so, attach to it as a (co-controlling)
@@ -8038,7 +8092,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
         // streaming). Only for real persisted conversations (id > 0) — a
         // brand-new conversation has no live owner yet, so we spawn + own.
         // Best-effort: a discovery failure falls through to the owner spawn.
-        if (conversationId != null && conversationId > 0) {
+        if (!opened && conversationId != null && conversationId > 0) {
           let discovered: ConversationConnectionInfo | null = null
           try {
             // Pass sessionId so discovery can fall back to external_id when the
@@ -8100,32 +8154,34 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           }
         }
 
-        // Wait for the legacy global listener to register so Tauri's drain
-        // path picks up any events emitted between acpConnect returning
-        // and reverseMap.set below. Web/remote use attach which doesn't
-        // need this gate, but the wait is a fast no-op once the initial
-        // subscribe resolves.
-        await waitForListenerReady()
-        // Ship the user's saved selector preferences (mode + per-config
-        // values, persisted per agentType in localStorage) up to the backend
-        // at connect time. The backend applies them on the freshly-attached
-        // session before emitting `session_modes` / `session_config_options`,
-        // so by the time the frontend sees those events (or a snapshot frame
-        // on the Subscribe-with-Snapshot attach), `current_mode_id` and
-        // `current_value` already reflect the user's preferences. This
-        // eliminates the prior "intercept event → overwrite locally → sync
-        // back to agent" path, which fixed new-conversation flow but quietly
-        // regressed when the snapshot path replaced the event path on tab
-        // re-open (the snapshot frame doesn't carry a `session_modes` event,
-        // so the apply-on-event hook never fired).
-        const savedPrefs = getSavedPrefsForConnect(agentType)
-        const connectionId = await acpConnect(
-          agentType,
-          workingDir,
-          sessionId,
-          savedPrefs.modeId,
-          savedPrefs.configValues
-        )
+        if (connectionId == null) {
+          // Wait for the legacy global listener to register so Tauri's drain
+          // path picks up any events emitted between acpConnect returning
+          // and reverseMap.set below. Web/remote use attach which doesn't
+          // need this gate, but the wait is a fast no-op once the initial
+          // subscribe resolves.
+          await waitForListenerReady()
+          // Ship the user's saved selector preferences (mode + per-config
+          // values, persisted per agentType in localStorage) up to the backend
+          // at connect time. The backend applies them on the freshly-attached
+          // session before emitting `session_modes` / `session_config_options`,
+          // so by the time the frontend sees those events (or a snapshot frame
+          // on the Subscribe-with-Snapshot attach), `current_mode_id` and
+          // `current_value` already reflect the user's preferences. This
+          // eliminates the prior "intercept event → overwrite locally → sync
+          // back to agent" path, which fixed new-conversation flow but quietly
+          // regressed when the snapshot path replaced the event path on tab
+          // re-open (the snapshot frame doesn't carry a `session_modes` event,
+          // so the apply-on-event hook never fired).
+          const savedPrefs = getSavedPrefsForConnect(agentType)
+          connectionId = await acpConnect(
+            agentType,
+            workingDir,
+            sessionId,
+            savedPrefs.modeId,
+            savedPrefs.configValues
+          )
+        }
 
         // If disconnect was requested while connect was in flight, tear down
         // immediately instead of registering the connection — but tear down

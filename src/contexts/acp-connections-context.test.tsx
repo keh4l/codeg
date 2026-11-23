@@ -67,6 +67,9 @@ const h = vi.hoisted(() => {
     // Fork: the shared agents list the preflight reads first (cold here).
     getFreshAcpAgent: vi.fn<(agentType: string) => unknown>(() => null),
     acpFindConnectionForConversation: vi.fn(),
+    // Fork: off by default, so the suites below drive the two-call path.
+    openSessionAvailable: vi.fn(() => false),
+    acpOpenSession: vi.fn(),
     acpConnect: vi.fn(),
     acpDisconnect: vi.fn(),
     acpGetSessionSnapshot: vi.fn(),
@@ -161,6 +164,8 @@ vi.mock("@/lib/snapshot-denormalize", () => ({
 vi.mock("@/lib/api", () => ({
   acpGetAgentStatus: h.acpGetAgentStatus,
   acpFindConnectionForConversation: h.acpFindConnectionForConversation,
+  openSessionAvailable: h.openSessionAvailable,
+  acpOpenSession: h.acpOpenSession,
   acpConnect: h.acpConnect,
   acpDisconnect: h.acpDisconnect,
   acpGetSessionSnapshot: h.acpGetSessionSnapshot,
@@ -213,6 +218,9 @@ beforeEach(() => {
   h.getFreshAcpAgent.mockReset()
   h.getFreshAcpAgent.mockReturnValue(null)
   h.acpFindConnectionForConversation.mockReset()
+  h.openSessionAvailable.mockReset()
+  h.openSessionAvailable.mockReturnValue(false)
+  h.acpOpenSession.mockReset()
   h.acpConnect.mockReset()
   h.acpDisconnect.mockReset()
   h.acpGetSessionSnapshot.mockReset()
@@ -330,6 +338,125 @@ function snapshotBase() {
     lastErrorLevel: "error",
   }
 }
+
+describe("AcpConnectionsProvider acp_open_session (fork)", () => {
+  beforeEach(() => {
+    h.openSessionAvailable.mockReturnValue(true)
+  })
+
+  it("spawns in one call: no discovery, no acpConnect", async () => {
+    h.acpOpenSession.mockResolvedValue({
+      connection_id: "opened-conn",
+      outcome: "spawned",
+      event_seq: null,
+      idle_cap: 6,
+    })
+    await mountProvider()
+    await act(async () => {
+      await h.actions!.connect(TAB, "claude_code", "/tmp/x", "sess-1", 42)
+    })
+
+    expect(h.acpOpenSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentType: "claude_code",
+        workingDir: "/tmp/x",
+        sessionId: "sess-1",
+        conversationId: 42,
+      })
+    )
+    expect(h.acpFindConnectionForConversation).not.toHaveBeenCalled()
+    expect(h.acpConnect).not.toHaveBeenCalled()
+    expect(h.store!.getConnection(TAB)?.isViewer).toBe(false)
+    expect(h.attach).toHaveBeenCalledWith(
+      "opened-conn",
+      expect.anything(),
+      expect.anything()
+    )
+  })
+
+  it("attaches as a viewer to a connection it found", async () => {
+    h.acpOpenSession.mockResolvedValue({
+      connection_id: "owner-conn",
+      outcome: "found",
+      event_seq: 5,
+      idle_cap: 6,
+    })
+    await mountProvider()
+    await act(async () => {
+      await h.actions!.connect(TAB, "claude_code", "/tmp/x", "sess-1", 42)
+    })
+
+    expect(h.acpConnect).not.toHaveBeenCalled()
+    expect(h.store!.getConnection(TAB)?.isViewer).toBe(true)
+    expect(h.attach).toHaveBeenCalledWith(
+      "owner-conn",
+      { sinceSeq: undefined },
+      expect.anything()
+    )
+  })
+
+  it("sends no conversation for a draft", async () => {
+    h.acpOpenSession.mockResolvedValue({
+      connection_id: "opened-conn",
+      outcome: "spawned",
+      event_seq: null,
+      idle_cap: 6,
+    })
+    await mountProvider()
+    await act(async () => {
+      await h.actions!.connect("new-1", "claude_code", "/tmp/x")
+    })
+    expect(h.acpOpenSession).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId: undefined })
+    )
+  })
+
+  it("lets go of what it spawned when the surface let go meanwhile", async () => {
+    let answer!: (value: unknown) => void
+    h.acpOpenSession.mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve
+      })
+    )
+    await mountProvider()
+    let pending: Promise<void> | undefined
+    await act(async () => {
+      pending = h.actions!.connect(TAB, "claude_code", "/tmp/x", "sess-1", 42)
+    })
+    await act(async () => {
+      await h.actions!.disconnect(TAB)
+    })
+    await act(async () => {
+      answer({
+        connection_id: "late-conn",
+        outcome: "spawned",
+        event_seq: null,
+        idle_cap: 6,
+      })
+      await pending
+    })
+
+    expect(h.acpDisconnect).toHaveBeenCalledWith("late-conn")
+    expect(h.store!.getConnection(TAB)).toBeUndefined()
+  })
+
+  it("takes the two-call path on a server without it", async () => {
+    h.acpOpenSession.mockResolvedValue(null)
+    h.acpFindConnectionForConversation.mockResolvedValue(null)
+    await mountProvider()
+    await act(async () => {
+      await h.actions!.connect(TAB, "claude_code", "/tmp/x", "sess-1", 42)
+    })
+
+    expect(h.acpFindConnectionForConversation).toHaveBeenCalledTimes(1)
+    expect(h.acpConnect).toHaveBeenCalledTimes(1)
+    expect(h.attach).toHaveBeenCalledWith(
+      "spawned-conn",
+      expect.anything(),
+      expect.anything()
+    )
+  })
+})
 
 describe("AcpConnectionsProvider cross-client viewer lifecycle", () => {
   it("attaches as a viewer (no spawn) when a live connection is discovered", async () => {

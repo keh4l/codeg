@@ -160,6 +160,9 @@ beforeEach(() => {
 vi.mock("@/lib/api", () => ({
   acpGetAgentStatus: vi.fn(),
   acpFindConnectionForConversation: vi.fn(),
+  // Fork: the two-call connect path (discovery + acpConnect) these tests drive.
+  openSessionAvailable: () => false,
+  acpOpenSession: vi.fn(),
   acpConnect: vi.fn(),
   acpDisconnect: vi.fn(),
   acpGetSessionSnapshot: vi.fn(),

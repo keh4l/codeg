@@ -47,6 +47,7 @@ pub mod office_tools;
 pub mod office_watch_proxy;
 pub mod opencode_credentials;
 pub mod pet;
+pub mod open_session;
 pub mod project_boot;
 pub mod session_flags;
 pub mod question;
