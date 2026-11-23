@@ -80,7 +80,7 @@ describe("CompactTurn", () => {
     window.localStorage.clear()
   })
 
-  it("folds finished replies automatically and reveals steps on click", async () => {
+  it("folds a finished reply into its working line, then opens group lines, then steps", async () => {
     const user = userEvent.setup()
     const parts: AdaptedContentPart[] = [
       toolPart("r1", "Read", { file_path: "src/login.tsx" }),
@@ -94,20 +94,60 @@ describe("CompactTurn", () => {
       </Host>
     )
 
-    // Folded by default: Worked line + answer visible, steps hidden
+    // Folded by default: "Worked for 15s" + answer, nothing of the steps.
     const foldBtn = container.querySelector(
       "[data-compact-fold]"
     ) as HTMLButtonElement
     expect(foldBtn).not.toBeNull()
     expect(foldBtn.getAttribute("aria-expanded")).toBe("false")
-    expect(foldBtn.textContent).toContain("15s")
+    expect(foldBtn.textContent).toContain("Worked for 15s")
+    // T3 Code's fold line carries only its time: no step or diff counts.
+    expect(foldBtn.textContent).not.toMatch(/step|file/i)
     expect(screen.getByText("All tests pass.")).toBeTruthy()
     expect(screen.queryByText(/pnpm test/)).toBeNull()
 
-    // Click expands flat activity rows (reusing upstream ActivityParts)
+    // Opening it shows the group's summary line, not every step.
     await user.click(foldBtn)
     expect(foldBtn.getAttribute("aria-expanded")).toBe("true")
+    const groupRow = container.querySelector(
+      "[data-compact-group-row]"
+    ) as HTMLButtonElement
+    expect(groupRow.textContent).toContain("Ran 1 command, read 1 file")
+    expect(screen.queryByText(/pnpm test/)).toBeNull()
+
+    // Opening the group lists its steps in their box.
+    await user.click(groupRow)
+    expect(groupRow.getAttribute("aria-expanded")).toBe("true")
+    expect(container.querySelector("[data-compact-group-list]")).not.toBeNull()
     expect(screen.getByText(/pnpm test/)).toBeTruthy()
+  })
+
+  it("names a finished group in one line and keeps prose between groups", async () => {
+    const user = userEvent.setup()
+    const parts: AdaptedContentPart[] = [
+      toolPart("r1", "Read", { file_path: "src/a.ts" }),
+      toolPart("r2", "Read", { file_path: "src/b.ts" }),
+      toolPart("s1", "Grep", { pattern: "loginSchema" }),
+      { type: "text", text: "Switching to zod." },
+      toolPart("c1", "Bash", { command: "pnpm lint" }),
+      { type: "text", text: "Done." },
+    ]
+    const { container } = render(
+      <Host>
+        <CompactTurn parts={parts} durationMs={4_000} completed />
+      </Host>
+    )
+    await user.click(
+      container.querySelector("[data-compact-fold]") as HTMLButtonElement
+    )
+    const rows = [
+      ...container.querySelectorAll("[data-compact-group-row]"),
+    ].map((row) => row.textContent)
+    expect(rows).toEqual(["Read 2 files, searched once"])
+    // The note between the groups stays in place; a one-step group is that
+    // step's own row.
+    expect(screen.getByText("Switching to zod.")).toBeTruthy()
+    expect(screen.getByText(/pnpm lint/)).toBeTruthy()
   })
 
   it("keeps unrecovered failures visible outside a folded turn", () => {
@@ -137,15 +177,16 @@ describe("CompactTurn", () => {
     expect(screen.getByText(/pnpm lint/)).toBeTruthy()
   })
 
-  it("does not auto-fold a live turn the user manually expanded before completion", async () => {
+  it("shows the step under way as a live line, and keeps the reply open when its group was opened", async () => {
     const user = userEvent.setup()
     const streamingParts: AdaptedContentPart[] = [
-      {
-        type: "reasoning",
-        content: "Checking login validation",
-        isStreaming: true,
-      },
       toolPart("r1", "Read", { file_path: "src/login.tsx" }),
+      toolPart(
+        "c1",
+        "Bash",
+        { command: "pnpm test" },
+        { state: "input-available", output: undefined }
+      ),
     ]
 
     const { container, rerender } = render(
@@ -154,16 +195,23 @@ describe("CompactTurn", () => {
       </Host>
     )
 
-    const workingBtn = container.querySelector(
-      "[data-compact-working]"
+    // The working line is a clock, nothing to click.
+    const working = container.querySelector("[data-compact-working]")
+    expect(working?.tagName).toBe("DIV")
+    expect(working?.textContent).toContain("Working for")
+    const liveRow = container.querySelector(
+      "[data-compact-live-row]"
     ) as HTMLButtonElement
-    expect(workingBtn).not.toBeNull()
-    await user.click(workingBtn)
-    expect(container.querySelector("[data-compact-live-scroll]")).not.toBeNull()
+    expect(liveRow.textContent).toContain("pnpm test")
+    expect(container.querySelector("[data-compact-group-list]")).toBeNull()
 
-    // Now finish the reply in the same round: stays expanded!
+    await user.click(liveRow)
+    expect(container.querySelector("[data-compact-group-list]")).not.toBeNull()
+
+    // Now finish the reply in the same round: it stays open for the reader.
     const doneParts: AdaptedContentPart[] = [
-      ...streamingParts,
+      toolPart("r1", "Read", { file_path: "src/login.tsx" }),
+      toolPart("c1", "Bash", { command: "pnpm test" }, { output: "ok" }),
       { type: "text", text: "Finished." },
     ]
     rerender(
@@ -182,6 +230,21 @@ describe("CompactTurn", () => {
         .querySelector("[data-compact-fold]")
         ?.getAttribute("aria-expanded")
     ).toBe("true")
+  })
+
+  it("says the agent is thinking while no step is under way", () => {
+    const parts: AdaptedContentPart[] = [
+      toolPart("r1", "Read", { file_path: "src/login.tsx" }),
+    ]
+    const { container } = render(
+      <Host>
+        <CompactTurn parts={parts} completed={false} />
+      </Host>
+    )
+    expect(container.querySelector("[data-compact-live-row]")).toBeNull()
+    expect(
+      container.querySelector("[data-compact-thinking]")?.textContent
+    ).toBeTruthy()
   })
 
   it("does not fold a tool-only reply with no visible answer", () => {

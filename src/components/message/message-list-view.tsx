@@ -1761,6 +1761,30 @@ function HeldLiveActivityBar({
   )
 }
 
+/** What the compact view's `holdInPlace` needs from the thread's
+ *  stick-to-bottom scroller, handed out from inside it. */
+interface ThreadScrollHandle {
+  scrollRef: RefObject<HTMLElement | null>
+  stopScroll: () => void
+}
+
+/** keh4l build: mirrors the stick-to-bottom scroller into `handleRef` for
+ *  `holdInPlace` (the compact thread's provider sits outside it). */
+function ThreadScrollBridge({
+  handleRef,
+}: {
+  handleRef: RefObject<ThreadScrollHandle | null>
+}) {
+  const { scrollRef, stopScroll } = useStickToBottomContext()
+  useLayoutEffect(() => {
+    handleRef.current = { scrollRef, stopScroll }
+    return () => {
+      handleRef.current = null
+    }
+  }, [handleRef, scrollRef, stopScroll])
+  return null
+}
+
 /** Top of the newest compact user bubble, in the scroll container's content
  *  coordinates (null when it isn't mounted). */
 function lastUserBubbleTop(
@@ -2974,13 +2998,48 @@ export function MessageListView({
   )
 
   const compactRound = useCompactRound(`${fold.epoch}:${fold.runId ?? ""}`)
+  const threadScrollRef = useRef<ThreadScrollHandle | null>(null)
+  // Opening or closing a fold, group or row keeps the line clicked where it
+  // was: a thread following its bottom would otherwise slide to the new end
+  // (or, closing near the end, the browser would clamp the scroll).
+  const holdInPlace = useCallback((element: Element, change: () => void) => {
+    const handle = threadScrollRef.current
+    const port = handle?.scrollRef.current
+    if (!handle || !port) {
+      change()
+      return
+    }
+    const before = element.getBoundingClientRect().top
+    handle.stopScroll()
+    change()
+    // The commit, the virtual list measuring the row and the send spacer
+    // growing back (closing near the end, the browser clamps the scroll
+    // until it does) land over a few frames: follow them, briefly, until the
+    // line has stayed put for three frames.
+    let frames = 0
+    let settled = 0
+    const restore = () => {
+      if (!element.isConnected) return
+      const moved = element.getBoundingClientRect().top - before
+      if (Math.abs(moved) >= 1) {
+        port.scrollTop += moved
+        settled = 0
+      } else {
+        settled += 1
+      }
+      frames += 1
+      if (frames < 12 && settled < 3) requestAnimationFrame(restore)
+    }
+    requestAnimationFrame(restore)
+  }, [])
   const compactThreadValue = useMemo(
     () => ({
       round: compactRound,
       liveMessage: turnLive ? liveMessage : null,
       onEditUserMessage,
+      holdInPlace,
     }),
-    [compactRound, turnLive, liveMessage, onEditUserMessage]
+    [compactRound, turnLive, liveMessage, onEditUserMessage, holdInPlace]
   )
   const minimapRefreshKey = `${turnsOffset}:${timelineTurns.length}:${
     timelineTurns[timelineTurns.length - 1]?.turn.id ?? ""
@@ -3097,6 +3156,7 @@ export function MessageListView({
                 : undefined
           }
         >
+          <ThreadScrollBridge handleRef={threadScrollRef} />
           <AutoScrollOnSend
             signal={sendSignal}
             compact={isCompact}

@@ -30,6 +30,11 @@ export interface CompactThreadValue {
   liveMessage: LiveMessage | null
   /** Put a sent message back in the composer to edit and send again. */
   onEditUserMessage?: (text: string) => void
+  /** Make `change` (opening or closing something) without moving `element`
+   *  on screen: the thread lets go of the bottom it may be following and
+   *  scrolls back by however far the change moved the element (T3 Code's
+   *  `anchorVisibleContent`). */
+  holdInPlace?: (element: Element, change: () => void) => void
 }
 
 const CompactThreadContext = createContext<CompactThreadValue | null>(null)
@@ -55,6 +60,21 @@ const NO_ROUND: CompactThreadValue = {
 
 export function useCompactThread(): CompactThreadValue {
   return useContext(CompactThreadContext) ?? NO_ROUND
+}
+
+/** `holdInPlace` when the thread offers it, else just the change. */
+export function useHoldInPlace(): (
+  element: Element | null,
+  change: () => void
+) => void {
+  const hold = useContext(CompactThreadContext)?.holdInPlace
+  return useCallback(
+    (element, change) => {
+      if (hold && element) hold(element, change)
+      else change()
+    },
+    [hold]
+  )
 }
 
 /** The current round's fold, shut again whenever `roundKey` changes (a send,

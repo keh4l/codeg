@@ -4,20 +4,36 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
-  type RefObject,
 } from "react"
 import { useTranslations } from "next-intl"
-import { ChevronRightIcon } from "lucide-react"
+import {
+  BotIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  FilePenLineIcon,
+  FileTextIcon,
+  GlobeIcon,
+  PlugIcon,
+  SearchIcon,
+  TerminalIcon,
+  XIcon,
+} from "lucide-react"
 
 import type { LiveMessage } from "@/contexts/acp-connections-context"
 import { useTokenOutputSpeed } from "@/hooks/use-token-output-speed"
 import { buildActivity, hasVisibleAnswer } from "@/lib/activity/build-activity"
 import { disclosureKeysFor } from "@/lib/activity/group"
-import type { ActivityItem, ActivityModel } from "@/lib/activity/types"
+import type {
+  ActivityItem,
+  ActivityModel,
+  ActivityStep,
+  ToolStepKind,
+} from "@/lib/activity/types"
 import type { AdaptedContentPart } from "@/lib/adapters/ai-elements-adapter"
 import {
   useChatViewPrefs,
@@ -27,17 +43,33 @@ import { formatElapsedLabel } from "@/lib/format-elapsed"
 import { cn } from "@/lib/utils"
 import { ActivityParts, ContentPartsRenderer } from "../content-parts-renderer"
 import { openDisclosures, useDisclosure } from "../activity/disclosure-store"
-import { TurningRing } from "../activity/rail-icon"
-import { useCompactThread, useFindTarget } from "./compact-thread"
+import type { ActivityIcon } from "../activity/rail-icon"
 import {
-  editTotals,
+  GOAL_ICON,
+  GROUP_ICON,
+  IMAGE_ICON,
+  PLAN_ICON,
+  THOUGHT_ICON,
+  toolIcon,
+} from "../activity/step-visuals"
+import {
+  useCompactThread,
+  useFindTarget,
+  useHoldInPlace,
+} from "./compact-thread"
+import {
+  awaitingItems,
   exceptionItems,
   filterActivityModel,
+  groupDisclosureKey,
+  groupHolds,
+  groupLastStep,
   itemSteps,
-  segmentItems,
+  replyBlocks,
+  stepIsLive,
   subModel,
-  summarizeItems,
-  type EditTotals,
+  summarizeGroup,
+  type GroupSummaryPiece,
 } from "./turn-model"
 
 /** The fold of a reply outside the current round, by its parts (see
@@ -75,21 +107,27 @@ function stepKeysHolding(
 }
 
 /**
- * keh4l build: a reply in the compact (T3 Code style) view.
+ * keh4l build: a reply in the compact view, laid out as T3 Code does
+ * (`MessagesTimeline` / `TimelineWorkGroupRows`).
  *
- * While the agent works: a "Working for 12s" line, the reply's prose as it is
- * written, each run of steps between two pieces of prose as one line saying
- * what it did, and the step under way as a row of its own (a thought shows
- * what is being thought). The working line opens every step.
+ * While the agent works: a "Working for 12s" line under a hairline, then the
+ * reply as it is written — its prose in place, each group of steps between two
+ * pieces of prose drawn as one line saying what it did ("Read 2 files,
+ * searched once"), and the step under way as a line of its own with a light
+ * running across it (a thought shows what is being thought above it). Opening
+ * a group's line — or the live one — lists its steps in a short box of their
+ * own that scrolls, the live box following its newest step.
  *
- * Once it is done everything before the answer folds into one "Worked for
- * 1m 12s" line — what the reply did, and a red count of failures nothing put
- * right; opening it shows the steps as flat rows. A failure nothing redid, a
- * permission request, and work that outlives the turn (delegations,
- * sub-agents, background tasks) stay in view folded. A reply with no answer
- * (stopped mid-call, a card that is its answer) does not fold.
+ * Once it is done the same line becomes "Worked for 12s ›" and everything
+ * before the answer folds under it; opening it shows those group lines again,
+ * not every step. A failure nothing redid, a permission request, and work that
+ * outlives the turn (delegations, sub-agents, background tasks) stay in view
+ * folded; requests, questions, plans and images never go into a group. A
+ * reply with no answer (stopped mid-call, a card that is its answer) does not
+ * fold. Opening or closing anything keeps the line clicked where it is
+ * (`useHoldInPlace`).
  *
- * The rows are upstream's (`ActivityParts`), restyled flat by
+ * The step rows are upstream's (`ActivityParts`), restyled flat by
  * `[data-chat-view="compact"]` in compact-view.css — the same detail panels,
  * groups and cards as the timeline view.
  */
@@ -150,6 +188,11 @@ export const CompactTurn = memo(function CompactTurn({
     [currentRound, thread.round, parts]
   )
   const open = chosenOpen || targeted
+  // A group opened while the reply is written: the reader is in it, so the
+  // reply does not fold away under them when it is done.
+  const onGroupOpened = useCallback(() => {
+    if (isStreaming) setOpen(true)
+  }, [isStreaming, setOpen])
 
   // --- what is shown ----------------------------------------------------------
   const level: ToolCallVisibility = targeted ? "showAll" : prefs.toolVisibility
@@ -158,9 +201,9 @@ export const CompactTurn = memo(function CompactTurn({
   const hasSteps = activity.items.length > 0
   const answerVisible = hasVisibleAnswer(activity.answer)
   const foldable = hasSteps && answerVisible
-  const totals = useMemo(() => editTotals(activity), [activity])
 
-  // The find bar's match is in a row's call or thought: open that row (and its group).
+  // The find bar's match is in a row's call or thought: open that row and the
+  // group holding it.
   const findToken = targeted ? find.token : null
   useEffect(() => {
     if (findToken === null || !find) return
@@ -178,36 +221,18 @@ export const CompactTurn = memo(function CompactTurn({
       find.block
     )
     if (keys.length === 0) return
-    openDisclosures(
-      keys.flatMap((key) => disclosureKeysFor(activity.items, key))
+    const groups = replyBlocks(activity.items).flatMap((block) =>
+      block.kind === "group" && keys.some((key) => groupHolds(block.items, key))
+        ? [groupDisclosureKey(block.items)]
+        : []
     )
+    openDisclosures([
+      ...groups,
+      ...keys.flatMap((key) => disclosureKeysFor(activity.items, key)),
+    ])
     // Only when the bar moves, not on every batch of a streaming reply.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [findToken])
-
-  // The fold line's red failure count: open the reply at the first failure
-  // nothing redid (as upstream's header link does).
-  const rootRef = useRef<HTMLDivElement | null>(null)
-  const revealRef = useRef<((stepKey: string) => boolean) | null>(null)
-  const failureKey = activity.summary.firstUnrecoveredKey
-  const jumpToFailure = useCallback(() => {
-    if (!failureKey) return
-    openDisclosures(disclosureKeysFor(activity.items, failureKey))
-    if (!chosenOpen) setOpen(true)
-    requestAnimationFrame(() => {
-      revealRef.current?.(failureKey)
-      requestAnimationFrame(() => {
-        const root = rootRef.current
-        if (!root) return
-        const escaped = CSS.escape(failureKey)
-        const rows = root.querySelectorAll(`[data-step-key="${escaped}"]`)
-        const row =
-          rows[rows.length - 1] ??
-          root.querySelector(`[data-step-key^="${escaped}:"]`)
-        row?.scrollIntoView({ block: "center", behavior: "smooth" })
-      })
-    })
-  }, [activity, failureKey, chosenOpen, setOpen])
 
   // Parsers leave empty placeholder turns between tool exchanges (see
   // upstream): nothing to head.
@@ -237,27 +262,22 @@ export const CompactTurn = memo(function CompactTurn({
       <>
         <WorkingLine
           liveMessage={currentRound ? thread.liveMessage : null}
-          totals={totals}
           showSpeed={prefs.liveSpeed}
-          open={open}
-          onToggle={zen ? undefined : () => setOpen(!chosenOpen)}
         />
         {zen ? (
-          <ZenPreview model={activity} />
-        ) : open ? (
-          <LiveExpandedList
-            model={visible}
-            revealRef={revealRef}
-            stepCount={visible.steps.length}
-          />
+          <>
+            <ZenPreview model={activity} />
+            <Exceptions model={activity} isStreaming />
+          </>
         ) : (
-          <LiveSegments
+          <ReplyBlocks
             model={activity}
             visible={visible}
+            live
             answerFollows={answerVisible}
+            onGroupOpened={onGroupOpened}
           />
         )}
-        {zen ? <Exceptions model={activity} isStreaming /> : null}
       </>
     )
   } else if (!hasSteps) {
@@ -270,17 +290,15 @@ export const CompactTurn = memo(function CompactTurn({
       <>
         <FoldLine
           durationMs={durationMs}
-          summary={activity.summary}
-          totals={totals}
           open={shown}
           onToggle={foldable ? () => setOpen(!chosenOpen) : undefined}
-          onJumpToFailure={failureKey ? jumpToFailure : undefined}
         />
         {shown ? (
-          <ActivityParts
-            model={visible}
-            isStreaming={false}
-            revealRef={revealRef}
+          <ReplyBlocks
+            model={activity}
+            visible={visible}
+            live={false}
+            answerFollows
           />
         ) : (
           <Exceptions model={activity} isStreaming={false} />
@@ -291,7 +309,6 @@ export const CompactTurn = memo(function CompactTurn({
 
   return (
     <div
-      ref={rootRef}
       className="compact-turn flex flex-col gap-2"
       data-compact-turn=""
       data-reply-current={isStreaming || currentRound ? "" : undefined}
@@ -302,231 +319,434 @@ export const CompactTurn = memo(function CompactTurn({
   )
 })
 
-/** Scrollable expanded step list while the turn is streaming (capped at
- *  min(18rem, 50dvh)), following the latest step while resting at the bottom. */
-function LiveExpandedList({
-  model,
-  revealRef,
-  stepCount,
-}: {
-  model: ActivityModel
-  revealRef: RefObject<((stepKey: string) => boolean) | null>
-  stepCount: number
-}) {
-  const scrollRef = useRef<HTMLDivElement | null>(null)
-  const stickRef = useRef(true)
-  useEffect(() => {
-    const el = scrollRef.current
-    if (!el || !stickRef.current) return
-    el.scrollTop = el.scrollHeight
-  }, [stepCount])
-  return (
-    <div
-      ref={scrollRef}
-      className="compact-live-scroll"
-      data-compact-live-scroll=""
-      onScroll={(event) => {
-        const el = event.currentTarget
-        stickRef.current =
-          el.scrollTop + el.clientHeight >= el.scrollHeight - 24
-      }}
-    >
-      <ActivityParts model={model} isStreaming revealRef={revealRef} />
-    </div>
-  )
-}
-
 /** What stays in view under a folded reply: work that outlives the turn,
  *  requests waiting on the user, questions, plans, generated images, and
  *  failures nothing redid. */
 function Exceptions({
   model,
   isStreaming,
-  excludeKeys,
 }: {
   model: ActivityModel
   isStreaming: boolean
-  excludeKeys?: ReadonlySet<string>
 }) {
   const kept = useMemo(() => {
-    const items = exceptionItems(model).filter(
-      (item) => !excludeKeys?.has(item.key)
-    )
+    const items = exceptionItems(model)
     return items.length > 0 ? subModel(model, items, model.answer) : null
-  }, [model, excludeKeys])
-  const pinnedModel = useMemo(() => {
-    if (!excludeKeys || excludeKeys.size === 0) return model
-    const items = model.items.filter((item) => !excludeKeys.has(item.key))
-    return items.length === model.items.length ? model : subModel(model, items)
-  }, [model, excludeKeys])
+  }, [model])
   return (
     <>
-      <ActivityParts model={pinnedModel} isStreaming={isStreaming} pinnedOnly />
+      <ActivityParts model={model} isStreaming={isStreaming} pinnedOnly />
       {kept ? <ActivityParts model={kept} isStreaming={isStreaming} /> : null}
     </>
   )
 }
 
 /**
- * The reply as it is written: its prose, a line per run of steps between two
- * pieces of prose, and the step under way. A run's line opens its rows.
- * Standing exceptions (permission requests, questions, plans, running
- * sub-agents, images) stay visible outside folded runs.
+ * The reply's steps as T3 Code lays them out: prose in place, rows that stand
+ * alone, a summary line per group — the live one for the step under way —
+ * and, while the agent works with nothing under way and nothing to wait for,
+ * a "Thinking" line.
  */
-function LiveSegments({
+function ReplyBlocks({
   model,
   visible,
+  live,
   answerFollows,
+  onGroupOpened,
 }: {
   model: ActivityModel
   visible: ActivityModel
-  /** Words after the last step: the run before them is done. */
+  live: boolean
+  /** Words after the last step: the agent is writing its answer. */
   answerFollows: boolean
+  onGroupOpened?: () => void
 }) {
-  const segments = useMemo(() => segmentItems(visible.items), [visible])
-  const liveItemKey = useMemo(() => {
-    if (answerFollows || segments.length === 0) return null
-    const last = segments[segments.length - 1]!
-    if (last.kind !== "run" || last.items.length === 0) return null
-    return last.items[last.items.length - 1]!.key
-  }, [segments, answerFollows])
-  const excludeKeys = useMemo(
-    () => (liveItemKey ? new Set([liveItemKey]) : undefined),
-    [liveItemKey]
-  )
+  const blocks = useMemo(() => replyBlocks(visible.items), [visible])
+  const last = blocks[blocks.length - 1]
+  const lastStep = last?.kind === "group" ? groupLastStep(last.items) : null
+  const working = live && !answerFollows
+  const liveKey =
+    working && last?.kind === "group" && lastStep && stepIsLive(lastStep)
+      ? last.key
+      : null
+  const thinking =
+    working && liveKey === null && awaitingItems(model).length === 0
   return (
-    <>
-      {segments.map((segment, index) => {
-        const last = index === segments.length - 1
-        if (segment.kind === "prose") {
+    <div className="compact-blocks" data-compact-blocks="">
+      {blocks.map((block) => {
+        if (block.kind !== "group") {
           return (
             <ActivityParts
-              key={segment.key}
-              model={subModel(model, [segment.item])}
-              isStreaming
+              key={block.key}
+              model={subModel(model, [block.item])}
+              isStreaming={live}
             />
           )
         }
-        if (last && !answerFollows) {
-          return (
-            <LiveStep key={segment.key} model={model} run={segment.items} />
-          )
-        }
-        return <RunLine key={segment.key} model={model} items={segment.items} />
+        return block.key === liveKey ? (
+          <LiveGroup
+            key={block.key}
+            model={model}
+            items={block.items}
+            onOpened={onGroupOpened}
+          />
+        ) : (
+          <GroupBlock
+            key={block.key}
+            model={model}
+            items={block.items}
+            live={live}
+            onOpened={onGroupOpened}
+          />
+        )
       })}
-      <Exceptions model={model} isStreaming excludeKeys={excludeKeys} />
-    </>
+      {thinking ? <ThinkingLine /> : null}
+    </div>
   )
 }
 
-/** The step under way, on its own; a thought shows what is being thought. */
-function LiveStep({
+/** A finished group: its single step as that step's own row, more steps as a
+ *  summary line that opens them. */
+function GroupBlock(props: {
+  model: ActivityModel
+  items: ActivityItem[]
+  live: boolean
+  onOpened?: () => void
+}) {
+  const { model, items, live } = props
+  if (items.length === 1 && itemSteps(items[0]!).length === 1) {
+    return <ActivityParts model={subModel(model, items)} isStreaming={live} />
+  }
+  return <SummarizedGroup {...props} />
+}
+
+function SummarizedGroup({
   model,
-  run,
+  items,
+  live,
+  onOpened,
 }: {
   model: ActivityModel
-  run: ActivityItem[]
+  items: ActivityItem[]
+  live: boolean
+  onOpened?: () => void
 }) {
-  const item = run[run.length - 1]!
-  const sub = useMemo(() => subModel(model, [item]), [model, item])
-  const thought =
-    item.type === "step" && item.step.type === "thought" && item.step.streaming
-      ? item.step.part.content.trim()
-      : ""
+  const tActivity = useTranslations("Folder.chat.activity")
+  const [open, setOpen] = useDisclosure(groupDisclosureKey(items), {
+    defaultOpen: false,
+  })
+  const hold = useHoldInPlace()
+  const summary = useMemo(
+    () => summarizeGroup(items, model.summary.recoveredKeys),
+    [items, model.summary.recoveredKeys]
+  )
+  const label = useGroupLabel(summary.pieces, items)
   return (
-    <div data-compact-live-step="">
-      <ActivityParts model={sub} isStreaming />
-      {thought ? (
-        <p className="compact-thought-preview" data-compact-thought="">
-          {thought}
-        </p>
+    <div data-compact-group="">
+      <button
+        type="button"
+        className="compact-row"
+        data-compact-group-row=""
+        data-failed={summary.failed ? "" : undefined}
+        aria-expanded={open}
+        onClick={(event) => {
+          const next = !open
+          hold(event.currentTarget, () => setOpen(next))
+          if (next) onOpened?.()
+        }}
+      >
+        <PieceIcon
+          category={summary.pieces[0]?.category}
+          className={cn(
+            "compact-row-icon",
+            summary.failed && "text-tone-danger"
+          )}
+        />
+        <span className="compact-row-label">{label}</span>
+        {summary.failed ? (
+          <>
+            <XIcon aria-hidden="true" className="compact-row-fail" />
+            <span className="sr-only">
+              {tActivity("row.listJoiner")}
+              {tActivity("header.failed", { count: 1 })}
+            </span>
+          </>
+        ) : null}
+      </button>
+      {open ? (
+        <GroupList follow={false}>
+          <ActivityParts model={subModel(model, items)} isStreaming={live} />
+        </GroupList>
       ) : null}
     </div>
   )
 }
 
-/** A finished run of steps as one line — `Read 3 files · 2 commands` — that
- *  opens its rows. */
-function RunLine({
+/** The group the agent is in: what it is doing now, with a light running
+ *  across it; opening it lists the group's steps so far. */
+function LiveGroup({
   model,
   items,
+  onOpened,
 }: {
   model: ActivityModel
   items: ActivityItem[]
+  onOpened?: () => void
 }) {
-  const t = useTranslations("CompactView")
-  const tActivity = useTranslations("Folder.chat.activity")
-  const [open, setOpen] = useDisclosure(`compact-run:${items[0]!.key}`, {
+  const [open, setOpen] = useDisclosure(groupDisclosureKey(items), {
     defaultOpen: false,
   })
-  const summary = useMemo(() => summarizeItems(items), [items])
-  const sub = useMemo(() => subModel(model, items), [model, items])
-  const label = useMemo(() => {
-    const pieces = summaryPieces(summary.counts, tActivity)
-    if (pieces.length > 0) return pieces.join(tActivity("header.separator"))
-    const steps = items.flatMap(itemSteps).length
-    return steps === 1 &&
-      items[0]!.type === "step" &&
-      items[0]!.step.type === "thought"
-      ? tActivity("row.thought")
-      : tActivity("header.steps", { count: steps })
-  }, [summary, items, tActivity])
+  const hold = useHoldInPlace()
+  const step = groupLastStep(items)
+  const line = useStepLine(step)
+  const thought =
+    step?.type === "thought" && step.streaming
+      ? (step.part.content ?? "").trim()
+      : ""
+  const Icon = line.icon
   return (
-    <div data-compact-run="">
+    <div data-compact-group="" data-compact-live-group="">
+      {thought && !open ? (
+        <div
+          className="compact-row compact-thought-row"
+          data-compact-thought=""
+        >
+          <THOUGHT_ICON aria-hidden="true" className="compact-row-icon" />
+          <p className="compact-thought-preview">{thought}</p>
+        </div>
+      ) : null}
       <button
         type="button"
-        className="compact-line group/line"
+        className="compact-row"
+        data-compact-live-row=""
         aria-expanded={open}
-        aria-label={open ? t("collapseSteps") : t("expandSteps")}
-        onClick={() => setOpen(!open)}
+        onClick={(event) => {
+          const next = !open
+          hold(event.currentTarget, () => setOpen(next))
+          if (next) onOpened?.()
+        }}
       >
-        <ChevronRightIcon aria-hidden="true" className="compact-chevron" />
-        <span className="min-w-0 truncate">{label}</span>
-        {summary.unrecovered > 0 ? (
-          <span className="shrink-0 text-tone-danger">
-            {tActivity("header.failed", { count: summary.unrecovered })}
-          </span>
-        ) : null}
+        <Icon aria-hidden="true" className="compact-row-icon" />
+        <span className="compact-row-label compact-shine">{line.label}</span>
       </button>
-      {open ? <ActivityParts model={sub} isStreaming={false} /> : null}
+      {open ? (
+        <GroupList follow>
+          <ActivityParts model={subModel(model, items)} isStreaming />
+        </GroupList>
+      ) : null}
     </div>
   )
 }
 
-const CATEGORY_ORDER = [
-  "commands",
-  "editedFiles",
-  "agents",
-  "mcp",
-  "web",
-  "readFiles",
-  "searches",
-] as const
+/** The agent at work with no step under way: T3 Code's "Thinking" line. */
+function ThinkingLine() {
+  const t = useTranslations("Folder.chat.activity")
+  return (
+    <div className="compact-row" data-compact-thinking="">
+      <THOUGHT_ICON aria-hidden="true" className="compact-row-icon" />
+      <span className="compact-row-label compact-shine">
+        {t("row.thinking")}
+      </span>
+    </div>
+  )
+}
 
-const CATEGORY_KEY = {
-  commands: "header.commands",
-  editedFiles: "header.edits",
-  agents: "header.agents",
-  mcp: "header.mcp",
-  web: "header.web",
-  readFiles: "header.reads",
-  searches: "header.searches",
-} as const
+/**
+ * A group's steps in a box of their own, at most `min(18rem, 50dvh)` tall
+ * (unbounded while a step in it is open, as T3 Code grows its box by the
+ * opened rows), fading out at an edge with more beyond it. A live box rests
+ * at its end and follows the steps that join there until the reader scrolls
+ * up in it.
+ */
+function GroupList({
+  follow,
+  children,
+}: {
+  follow: boolean
+  children: ReactNode
+}) {
+  const ref = useRef<HTMLDivElement | null>(null)
+  const atEndRef = useRef(true)
+  const [fade, setFade] = useState({ top: false, bottom: false })
+  const measure = useCallback(() => {
+    const el = ref.current
+    if (!el) return
+    const top = el.scrollTop > 1
+    const bottom = el.scrollTop + el.clientHeight < el.scrollHeight - 1
+    setFade((prev) =>
+      prev.top === top && prev.bottom === bottom ? prev : { top, bottom }
+    )
+  }, [])
+  // The observer reports the first size as soon as it observes, so the
+  // first settle needs no call of its own.
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el || typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(() => {
+      if (follow && atEndRef.current) el.scrollTop = el.scrollHeight
+      measure()
+    })
+    observer.observe(el)
+    if (el.firstElementChild) observer.observe(el.firstElementChild)
+    return () => observer.disconnect()
+  }, [follow, measure])
+  return (
+    <div
+      ref={ref}
+      className="compact-group-list"
+      data-compact-group-list=""
+      data-fade-top={fade.top ? "" : undefined}
+      data-fade-bottom={fade.bottom ? "" : undefined}
+      onScroll={(event) => {
+        const el = event.currentTarget
+        atEndRef.current = el.scrollTop + el.clientHeight >= el.scrollHeight - 2
+        measure()
+      }}
+    >
+      <div>{children}</div>
+    </div>
+  )
+}
 
-type CountTranslator = (
-  key: (typeof CATEGORY_KEY)[keyof typeof CATEGORY_KEY],
-  values: { count: number }
-) => string
+const PIECE_KEY = {
+  commands: "groupCommands",
+  editedFiles: "groupEditedFiles",
+  agents: "groupAgents",
+  mcp: "groupMcp",
+  web: "groupWeb",
+  readFiles: "groupReadFiles",
+  searches: "groupSearches",
+  thought: "groupThoughts",
+  other: "groupOther",
+} as const satisfies Record<GroupSummaryPiece["category"], string>
 
-/** The upstream header's breakdown by kind, most telling first, at most
- *  three. */
-function summaryPieces(
-  counts: ActivityModel["summary"]["counts"],
-  t: CountTranslator
-): string[] {
-  return CATEGORY_ORDER.filter((key) => counts[key] > 0)
-    .slice(0, 3)
-    .map((key) => t(CATEGORY_KEY[key], { count: counts[key] }))
+/** `Read 2 files, searched once`: the pieces in the reader's language,
+ *  joined as the activity rows join a list, the first letter raised. */
+function useGroupLabel(
+  pieces: GroupSummaryPiece[],
+  items: ActivityItem[]
+): string {
+  const t = useTranslations("CompactView")
+  const tActivity = useTranslations("Folder.chat.activity")
+  const text = pieces
+    .map((piece) => t(PIECE_KEY[piece.category], { count: piece.count }))
+    .join(tActivity("row.listJoiner"))
+  if (!text) {
+    return tActivity("header.steps", {
+      count: items.flatMap(itemSteps).length,
+    })
+  }
+  return text.charAt(0).toLocaleUpperCase() + text.slice(1)
+}
+
+/** The glyph of a group's line: that of the kind it names first. */
+function PieceIcon({
+  category,
+  className,
+}: {
+  category: GroupSummaryPiece["category"] | undefined
+  className?: string
+}) {
+  switch (category) {
+    case "commands":
+      return <TerminalIcon aria-hidden="true" className={className} />
+    case "editedFiles":
+      return <FilePenLineIcon aria-hidden="true" className={className} />
+    case "agents":
+      return <BotIcon aria-hidden="true" className={className} />
+    case "mcp":
+      return <PlugIcon aria-hidden="true" className={className} />
+    case "web":
+      return <GlobeIcon aria-hidden="true" className={className} />
+    case "readFiles":
+      return <FileTextIcon aria-hidden="true" className={className} />
+    case "searches":
+      return <SearchIcon aria-hidden="true" className={className} />
+    case "thought":
+      return <THOUGHT_ICON aria-hidden="true" className={className} />
+    case "other":
+    case undefined:
+      return <GROUP_ICON aria-hidden="true" className={className} />
+  }
+}
+
+/** The word a live line puts before a call's target, by its kind (the
+ *  activity rows' own words). */
+const TOOL_VERB = {
+  read: "stepVerb.read",
+  search: "stepVerb.search",
+  glob: "stepVerb.glob",
+  list: "stepVerb.list",
+  fetch: "stepVerb.fetch",
+  "web-search": "stepVerb.webSearch",
+  memory: "stepVerb.memory",
+  command: "row.command",
+  script: "row.codexScript",
+  "shell-session": "row.command",
+  monitor: "row.monitor",
+  network: "row.networkAccess",
+  edit: "row.editing",
+  mcp: "kind.mcp",
+  skill: "row.skill",
+  todo: "row.todos",
+  agent: "kind.agent",
+  "collab-agent": "kind.agent",
+  delegation: "kind.delegation",
+  "delegation-status": "kind.delegation",
+  "delegation-cancel": "kind.delegation",
+  "delegation-resume": "kind.delegation",
+  goal: "kind.goal",
+  "plan-mode": "kind.plan",
+  question: "kind.question",
+  feedback: "kind.tool",
+  workbench: "kind.tool",
+  compaction: "kind.other",
+  completion: "row.completion",
+  generic: "kind.tool",
+} as const satisfies Record<ToolStepKind, string>
+
+/** What a live line says the agent is doing, and its glyph. */
+function useStepLine(step: ActivityStep | null): {
+  icon: ActivityIcon
+  label: string
+} {
+  const t = useTranslations("Folder.chat.activity")
+  if (!step) return { icon: THOUGHT_ICON, label: t("row.thinking") }
+  switch (step.type) {
+    case "thought":
+      return { icon: THOUGHT_ICON, label: t("row.thinking") }
+    case "tool": {
+      const { tool } = step
+      const verb = t(TOOL_VERB[tool.kind])
+      const target =
+        tool.target?.text ??
+        tool.command?.display ??
+        (tool.mcp ? tool.mcp.tool : null)
+      return {
+        icon: toolIcon(tool),
+        label: target ? `${verb} ${target}` : verb,
+      }
+    }
+    case "plan":
+      return { icon: PLAN_ICON, label: t("kind.plan") }
+    case "image":
+    case "image-job":
+      return { icon: IMAGE_ICON, label: t("kind.image") }
+    case "goal":
+      return { icon: GOAL_ICON, label: t("kind.goal") }
+    case "delegation-polls":
+      return { icon: GROUP_ICON, label: t("kind.delegation") }
+    case "background-tasks":
+      return { icon: GROUP_ICON, label: t("kind.background") }
+    case "tool-result":
+      return { icon: GROUP_ICON, label: t("row.toolResult") }
+    case "note":
+      return { icon: GROUP_ICON, label: t("kind.other") }
+    default: {
+      const unhandled: never = step
+      return unhandled
+    }
+  }
 }
 
 /** Zen: the step under way as a line of words, nothing to open. */
@@ -538,31 +758,15 @@ function ZenPreview({ model }: { model: ActivityModel }) {
   return <p className="compact-zen-preview">{text}</p>
 }
 
-/** `+12 −3` in the tones of a diff. */
-function DiffFigures({ totals }: { totals: EditTotals }) {
-  if (totals.additions === 0 && totals.deletions === 0) return null
-  return (
-    <span className="inline-flex shrink-0 gap-1 tabular-nums">
-      <span className="text-tone-success">+{totals.additions}</span>
-      <span className="text-tone-danger">−{totals.deletions}</span>
-    </span>
-  )
-}
-
-/** "Working for 12s" while the agent works, with what it has changed so far
- *  (and its speed, when the setting asks for it). Opens every step. */
+/** "Working for 12s" while the agent works (and its speed, when the setting
+ *  asks for it): T3 Code's working row, a clock with a light running across
+ *  it, nothing to open. */
 function WorkingLine({
   liveMessage,
-  totals,
   showSpeed,
-  open,
-  onToggle,
 }: {
   liveMessage: LiveMessage | null
-  totals: EditTotals
   showSpeed: boolean
-  open: boolean
-  onToggle?: () => void
 }) {
   const t = useTranslations("CompactView")
   const tElapsed = useTranslations("Folder.chat.liveTurnStats")
@@ -573,35 +777,18 @@ function WorkingLine({
     const timer = setInterval(() => setNow(Date.now()), 1_000)
     return () => clearInterval(timer)
   }, [])
-  const elapsed = formatElapsedLabel(now - startedAt, tElapsed)
-  const content = (
-    <>
-      <TurningRing className="compact-working-ring" />
-      <span className="shrink-0">{t("working")}</span>
-      <span className="shrink-0 tabular-nums text-foreground">{elapsed}</span>
-      <span className="compact-line-meta">
-        <DiffFigures totals={totals} />
-        {showSpeed && liveMessage ? <LiveSpeed message={liveMessage} /> : null}
+  return (
+    <div className="compact-turn-line" data-compact-working="">
+      <span className="compact-shine tabular-nums">
+        {t("workingFor", {
+          time: formatElapsedLabel(now - startedAt, tElapsed),
+        })}
       </span>
-      {onToggle ? (
-        <ChevronRightIcon aria-hidden="true" className="compact-chevron" />
+      {showSpeed && liveMessage ? (
+        <span className="compact-turn-line-meta">
+          <LiveSpeed message={liveMessage} />
+        </span>
       ) : null}
-    </>
-  )
-  return onToggle ? (
-    <button
-      type="button"
-      className="compact-line"
-      data-compact-working=""
-      aria-expanded={open}
-      aria-label={open ? t("collapseSteps") : t("expandSteps")}
-      onClick={onToggle}
-    >
-      {content}
-    </button>
-  ) : (
-    <div className="compact-line" data-compact-working="">
-      {content}
     </div>
   )
 }
@@ -612,92 +799,44 @@ function LiveSpeed({ message }: { message: LiveMessage }) {
   return <span className="shrink-0 tabular-nums">{tps.toFixed(1)} tok/s</span>
 }
 
-/** "Worked for 1m 12s", what the reply did, and its failures — the line a
- *  finished reply folds into. */
+/** "Worked for 12s ›" — the working line once the reply is done, with
+ *  everything before the answer folded under it. */
 function FoldLine({
   durationMs,
-  summary,
-  totals,
   open,
   onToggle,
-  onJumpToFailure,
 }: {
   durationMs?: number | null
-  summary: ActivityModel["summary"]
-  totals: EditTotals
   open: boolean
   onToggle?: () => void
-  onJumpToFailure?: () => void
 }) {
   const t = useTranslations("CompactView")
-  const tActivity = useTranslations("Folder.chat.activity")
   const tElapsed = useTranslations("Folder.chat.liveTurnStats")
+  const hold = useHoldInPlace()
   const label =
     typeof durationMs === "number" && durationMs > 0
       ? t("workedFor", { time: formatElapsedLabel(durationMs, tElapsed) })
       : t("worked")
-  const meta = (
-    <span className="compact-line-meta">
-      {summary.unrecovered > 0 ? (
-        onJumpToFailure ? (
-          <span
-            role="button"
-            tabIndex={0}
-            className="shrink-0 text-tone-danger underline-offset-2 hover:underline"
-            title={tActivity("header.jumpToFailure")}
-            onClick={(event) => {
-              event.stopPropagation()
-              onJumpToFailure()
-            }}
-            onKeyDown={(event) => {
-              if (event.key !== "Enter" && event.key !== " ") return
-              event.preventDefault()
-              event.stopPropagation()
-              onJumpToFailure()
-            }}
-          >
-            {tActivity("header.failed", { count: summary.unrecovered })}
-          </span>
-        ) : (
-          <span className="shrink-0 text-tone-danger">
-            {tActivity("header.failed", { count: summary.unrecovered })}
-          </span>
-        )
-      ) : null}
-      {summary.steps > 0 ? (
-        <span className="shrink-0">
-          {tActivity("header.steps", { count: summary.steps })}
-        </span>
-      ) : null}
-      {totals.files > 0 ? (
-        <span className="shrink-0">{t("files", { count: totals.files })}</span>
-      ) : null}
-      <DiffFigures totals={totals} />
-    </span>
-  )
-  const content = (
-    <>
-      <span className="min-w-0 truncate">{label}</span>
-      {meta}
+  return (
+    <div className="compact-turn-line">
       {onToggle ? (
-        <ChevronRightIcon aria-hidden="true" className="compact-chevron" />
-      ) : null}
-    </>
-  )
-  return onToggle ? (
-    <button
-      type="button"
-      className={cn("compact-line compact-fold-line")}
-      data-compact-fold=""
-      aria-expanded={open}
-      aria-label={open ? t("collapseSteps") : t("expandSteps")}
-      onClick={onToggle}
-    >
-      {content}
-    </button>
-  ) : (
-    <div className="compact-line compact-fold-line" data-compact-fold="">
-      {content}
+        <button
+          type="button"
+          className="compact-fold-button"
+          data-compact-fold=""
+          aria-expanded={open}
+          onClick={(event) => hold(event.currentTarget, onToggle)}
+        >
+          <span>{label}</span>
+          {open ? (
+            <ChevronDownIcon aria-hidden="true" />
+          ) : (
+            <ChevronRightIcon aria-hidden="true" />
+          )}
+        </button>
+      ) : (
+        <span data-compact-fold="">{label}</span>
+      )}
     </div>
   )
 }

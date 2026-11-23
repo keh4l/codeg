@@ -8,9 +8,14 @@
  * compact view never parses a reply on its own.
  */
 
-import { combineStatuses, isFailureStatus } from "@/lib/activity/status"
+import {
+  combineStatuses,
+  isFailureStatus,
+  isLiveStatus,
+} from "@/lib/activity/status"
 import { summarizeActivity } from "@/lib/activity/summarize"
 import type {
+  ActivityCounts,
   ActivityItem,
   ActivityModel,
   ActivityStep,
@@ -281,11 +286,41 @@ export function editTotals(model: ActivityModel): EditTotals {
     : { files: paths.size, additions, deletions }
 }
 
-/** A piece of a reply still being written: its prose, or a run of the steps
- *  between two pieces of prose. */
-export type ReplySegment =
+/**
+ * Work that goes on after the reply: sub-agents, delegations and background
+ * tasks. Mirrors `canOutliveTurn` in activity/activity-timeline.tsx (what
+ * `ActivityParts pinnedOnly` keeps).
+ */
+export function itemOutlivesTurn(item: ActivityItem): boolean {
+  if (item.type !== "step") return false
+  const { step } = item
+  if (step.type === "background-tasks" || step.type === "delegation-polls") {
+    return true
+  }
+  return (
+    step.type === "tool" &&
+    (step.tool.kind === "delegation" ||
+      step.tool.kind === "delegation-resume" ||
+      step.tool.kind === "delegation-status" ||
+      step.tool.kind === "agent")
+  )
+}
+
+/** A row that is never folded into a group's summary line: a request waiting
+ *  on the user, a question, a plan, an image, or work that outlives the
+ *  turn. (T3 Code keeps approvals, questions and to-do lists out of tool
+ *  groups the same way.) */
+export function itemStandsAlone(item: ActivityItem): boolean {
+  return itemOutlivesTurn(item) || itemSteps(item).some(stepIsStandingException)
+}
+
+/** A piece of a reply as the compact view lays it out: the agent's prose in
+ *  place, a row standing on its own, or a group — the steps between two of
+ *  those — drawn as one summary line. */
+export type ReplyBlock =
   | { kind: "prose"; key: string; item: ActivityItem }
-  | { kind: "run"; key: string; items: ActivityItem[] }
+  | { kind: "single"; key: string; item: ActivityItem }
+  | { kind: "group"; key: string; items: ActivityItem[] }
 
 function isProse(item: ActivityItem): boolean {
   return (
@@ -295,28 +330,214 @@ function isProse(item: ActivityItem): boolean {
   )
 }
 
-/** The reply as T3 Code shows one being written: its prose in place, the
- *  steps between two pieces of prose as one run. */
-export function segmentItems(items: ActivityItem[]): ReplySegment[] {
-  const out: ReplySegment[] = []
-  let run: ActivityItem[] | null = null
+export function replyBlocks(items: ActivityItem[]): ReplyBlock[] {
+  const out: ReplyBlock[] = []
+  let group: ActivityItem[] | null = null
   for (const item of items) {
-    if (isProse(item)) {
-      run = null
-      out.push({ kind: "prose", key: item.key, item })
+    if (isProse(item) || itemStandsAlone(item)) {
+      group = null
+      out.push({
+        kind: isProse(item) ? "prose" : "single",
+        key: item.key,
+        item,
+      })
       continue
     }
-    if (!run) {
-      run = []
-      out.push({ kind: "run", key: item.key, items: run })
+    if (!group) {
+      group = []
+      out.push({ kind: "group", key: item.key, items: group })
     }
-    run.push(item)
+    group.push(item)
   }
   return out
 }
 
-/** What a run of steps did, for its folded line: the upstream header's
- *  counts over just those steps. */
-export function summarizeItems(items: ActivityItem[]) {
-  return summarizeActivity(items.flatMap(itemSteps))
+/** The disclosure-store key of a group's step list. */
+export function groupDisclosureKey(items: readonly ActivityItem[]): string {
+  return `compact-run:${items[0]?.key ?? ""}`
+}
+
+/** Whether `stepKey` is one of the group's steps (or a group item itself). */
+export function groupHolds(
+  items: readonly ActivityItem[],
+  stepKey: string
+): boolean {
+  return items.some(
+    (item) =>
+      item.key === stepKey ||
+      itemSteps(item).some((step) => step.key === stepKey)
+  )
+}
+
+/** The step a group is on: its last one. */
+export function groupLastStep(
+  items: readonly ActivityItem[]
+): ActivityStep | null {
+  const last = items[items.length - 1]
+  if (!last) return null
+  const steps = itemSteps(last)
+  return steps[steps.length - 1] ?? null
+}
+
+/** Still under way: a call not settled yet, or a thought being written. */
+export function stepIsLive(step: ActivityStep): boolean {
+  switch (step.type) {
+    case "tool":
+      return isLiveStatus(step.tool.status)
+    case "thought":
+      return step.streaming
+    default:
+      return false
+  }
+}
+
+/** The kinds a group's summary line names, in the order it prefers them:
+ *  what changed the workspace first (T3 Code ranks commands and edits ahead
+ *  of looking around). */
+export type GroupCategory = keyof ActivityCounts
+const GROUP_CATEGORIES: readonly GroupCategory[] = [
+  "commands",
+  "editedFiles",
+  "agents",
+  "mcp",
+  "web",
+  "readFiles",
+  "searches",
+]
+const FIRST_RANK: ReadonlySet<GroupCategory> = new Set([
+  "commands",
+  "editedFiles",
+])
+
+/** Which count a step adds to (`summarizeActivity`'s), "other" for a step
+ *  the counts leave out, null for bookkeeping that is no step of its own. */
+function stepCategory(
+  step: ActivityStep
+): GroupCategory | "other" | "thought" | null {
+  switch (step.type) {
+    case "thought":
+      return "thought"
+    case "tool":
+      break
+    case "goal":
+    case "tool-result":
+      return "other"
+    case "note":
+    case "plan":
+    case "image":
+    case "image-job":
+    case "delegation-polls":
+    case "background-tasks":
+      return null
+    default: {
+      const unhandled: never = step
+      return unhandled
+    }
+  }
+  const kind: ToolStepKind = step.tool.kind
+  switch (kind) {
+    case "command":
+    case "script":
+      return "commands"
+    case "edit":
+      return "editedFiles"
+    case "agent":
+    case "collab-agent":
+    case "delegation":
+    case "delegation-resume":
+      return "agents"
+    case "mcp":
+      return "mcp"
+    case "fetch":
+    case "web-search":
+      return "web"
+    case "read":
+      return "readFiles"
+    case "search":
+    case "glob":
+    case "list":
+      return "searches"
+    case "compaction":
+    case "todo":
+    case "delegation-status":
+    case "shell-session":
+      return null
+    case "delegation-cancel":
+    case "memory":
+    case "monitor":
+    case "network":
+    case "skill":
+    case "goal":
+    case "plan-mode":
+    case "question":
+    case "feedback":
+    case "workbench":
+    case "completion":
+    case "generic":
+      return "other"
+    default: {
+      const unhandled: never = kind
+      return unhandled
+    }
+  }
+}
+
+export interface GroupSummaryPiece {
+  category: GroupCategory | "other" | "thought"
+  count: number
+}
+
+export interface GroupSummary {
+  /** At most two kinds by name, then how many other steps (T3 Code's
+   *  `summarizeToolGroup`): `Read 2 files, searched once`. Only thoughts:
+   *  one "thought" piece. */
+  pieces: GroupSummaryPiece[]
+  /** A step in it failed and nothing later in the reply redid it. */
+  failed: boolean
+}
+
+export function summarizeGroup(
+  items: readonly ActivityItem[],
+  recoveredKeys: ReadonlySet<string>
+): GroupSummary {
+  const steps = items.flatMap(itemSteps)
+  const counts = summarizeActivity(steps).counts
+  const firstSeen = new Map<GroupCategory, number>()
+  const stepsIn = new Map<GroupCategory | "other", number>()
+  let thoughts = 0
+  steps.forEach((step, index) => {
+    const category = stepCategory(step)
+    if (category === null) return
+    if (category === "thought") {
+      thoughts += 1
+      return
+    }
+    stepsIn.set(category, (stepsIn.get(category) ?? 0) + 1)
+    if (category !== "other" && !firstSeen.has(category)) {
+      firstSeen.set(category, index)
+    }
+  })
+  const present = GROUP_CATEGORIES.filter((c) => counts[c] > 0).sort(
+    (a, b) =>
+      Number(!FIRST_RANK.has(a)) - Number(!FIRST_RANK.has(b)) ||
+      (firstSeen.get(a) ?? 0) - (firstSeen.get(b) ?? 0)
+  )
+  const named = present.slice(0, 2)
+  const pieces: GroupSummaryPiece[] = named.map((category) => ({
+    category,
+    count: counts[category],
+  }))
+  let others = stepsIn.get("other") ?? 0
+  for (const category of present.slice(2)) others += stepsIn.get(category) ?? 0
+  if (others > 0) pieces.push({ category: "other", count: others })
+  if (pieces.length === 0 && thoughts > 0) {
+    pieces.push({ category: "thought", count: thoughts })
+  }
+  const failed = steps.some(
+    (step) =>
+      step.type === "tool" &&
+      isFailureStatus(step.tool.status) &&
+      !recoveredKeys.has(step.key)
+  )
+  return { pieces, failed }
 }
