@@ -9,6 +9,7 @@ import type { ToolCallStatus } from "@/lib/types"
 import { ImagePreviewDialog } from "@/components/ui/image-preview-dialog"
 import { ImageActions, useImageActions } from "./image-actions"
 import { cn } from "@/lib/utils"
+import { imageSrc } from "@/lib/conversation-images"
 
 interface GeneratedImagesBlockProps {
   /**
@@ -128,7 +129,7 @@ export const GeneratedImagesBlock = memo(function GeneratedImagesBlock({
               className="block cursor-pointer transition-opacity hover:opacity-80"
             >
               <Image
-                src={`data:${image.mime_type};base64,${image.data}`}
+                src={imageSrc(image)}
                 alt={image.name}
                 width={256}
                 height={256}
@@ -179,7 +180,7 @@ export const GeneratedImagesBlock = memo(function GeneratedImagesBlock({
       {footer ? <div className="mt-2">{footer}</div> : null}
 
       <ImagePreviewDialog
-        src={image ? `data:${image.mime_type};base64,${image.data}` : ""}
+        src={imageSrc(image)}
         alt={image?.name ?? ""}
         open={previewOpen && image !== null}
         onOpenChange={(open) => setPreviewOpen(open)}

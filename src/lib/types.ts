@@ -187,12 +187,27 @@ export type AgentTranscriptEntry =
     }
 
 /**
+ * An image stored on the server (fork, `src-tauri/src/web/blob_store.rs`):
+ * a client that asks for `imageRefs` gets this in place of inline `data`
+ * and loads the bytes from `/api/img/{id}` (see `lib/conversation-images.ts`).
+ * `w`/`h` are absent when the header could not be read.
+ */
+export interface ImageBlobRef {
+  id: string
+  bytes: number
+  w?: number
+  h?: number
+}
+
+/**
  * Image payload shared across `ContentBlock::Image` /
  * `ContentBlock::ImageGeneration` / ACP wire `ToolCallImageInfo`. Mirror of
- * Rust `models::message::ImageData`.
+ * Rust `models::message::ImageData`. Exactly one of `data` (base64) and
+ * `blob` is present (fork: `blob` only when the client asked for refs).
  */
 export interface ImageData {
-  data: string
+  data?: string
+  blob?: ImageBlobRef
   mime_type: string
   uri?: string | null
 }
@@ -201,7 +216,8 @@ export type ContentBlock =
   | { type: "text"; text: string }
   | {
       type: "image"
-      data: string
+      data?: string
+      blob?: ImageBlobRef
       mime_type: string
       uri?: string | null
     }
@@ -3168,7 +3184,8 @@ export interface SessionUsageUpdateInfo {
  * live `tool_call(_update)` events.
  */
 export interface ToolCallImageWire {
-  data: string
+  data?: string
+  blob?: ImageBlobRef
   mime_type: string
   uri?: string | null
 }
@@ -3740,7 +3757,7 @@ export type ConfigStaleKind = "agent_config" | "model_provider"
  *  `text` markdown links backend-side. */
 export type UserMessageBlock =
   | { type: "text"; text: string }
-  | { type: "image"; data: string; mime_type: string }
+  | { type: "image"; data?: string; blob?: ImageBlobRef; mime_type: string }
 
 /**
  * Mirror of Rust `DelegationResultSummary`. `kind` discriminates Ok vs Err;

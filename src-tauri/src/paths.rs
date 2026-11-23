@@ -114,6 +114,12 @@ pub fn codeg_forge_images_root() -> PathBuf {
     codeg_uploads_root().with_file_name("cache").join("forge-images")
 }
 
+/// Conversation images and large tool bodies by content id (fork,
+/// `web::blob_store`), beside the forge image cache.
+pub fn codeg_blobs_root() -> PathBuf {
+    codeg_uploads_root().with_file_name("cache").join("blobs")
+}
+
 /// Root directory for the user-selected workspace background image.
 ///
 /// Resolution mirrors [`codeg_pets_root`] exactly:

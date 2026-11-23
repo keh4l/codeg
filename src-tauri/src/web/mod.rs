@@ -1,8 +1,10 @@
 pub mod auth;
+pub mod blob_store;
 pub mod browser_bridge;
 pub mod browser_tunnel;
 pub mod compression;
 pub mod event_bridge;
+pub mod image_refs;
 pub mod handlers;
 pub mod port_probe;
 pub mod proxy_auth;

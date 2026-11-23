@@ -2323,6 +2323,10 @@ pub fn build_router_with_srn(
             "/forge_image/{key}",
             get(crate::forge::image_cache::serve_image),
         )
+        // Conversation images by content id (fork). The id is an HMAC the
+        // server keys and only tells authenticated clients: a capability,
+        // stable so the browser caches it for good. See `web::blob_store`.
+        .route("/img/{id}", get(crate::web::blob_store::serve_image))
         .route(
             "/get_system_language_settings",
             post(handlers::system_settings::get_system_language_settings),
@@ -2386,7 +2390,8 @@ pub fn build_router_with_srn(
     let api = public_api.merge(api).layer(middleware::from_fn(
         |req: axum::extract::Request, next: Next| async move {
             let method = req.method().clone();
-            let path = req.uri().path().to_string();
+            // Blob ids are capabilities: never logged (fork).
+            let path = crate::web::blob_store::redact_path(req.uri().path()).into_owned();
             let request_id = uuid::Uuid::new_v4();
             let span = tracing::info_span!("http", %method, %path, %request_id);
             next.run(req).instrument(span).await

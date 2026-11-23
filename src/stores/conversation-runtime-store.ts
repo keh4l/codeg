@@ -46,6 +46,7 @@ import {
 } from "@/lib/background-agent"
 import { imageCardLabel } from "@/lib/image-tool-label"
 import { isImageJobTool } from "@/lib/image-gen/tool-calls"
+import { imageIdentity } from "@/lib/conversation-images"
 
 /**
  * Conversation-runtime shared state as a Zustand store — the per-conversation
@@ -1507,6 +1508,7 @@ export function buildStreamingTurnsFromLiveMessage(
                 revised_prompt: revisedPrompt,
                 image: {
                   data: img.data,
+                  blob: img.blob,
                   mime_type: img.mime_type,
                   uri: img.uri ?? null,
                 },
@@ -2150,7 +2152,9 @@ function updateSessionInState(
  * a parser-assigned id. Id-based dedup therefore can't recognize the two as one
  * message — only content can. Ids and timestamps are deliberately excluded.
  * The encoding is structurally unambiguous (JSON, so block boundaries can't
- * collide) and compares FULL payload — text verbatim and full image data — so a
+ * collide) and compares FULL payload — text verbatim, and each image by type and
+ * decoded size (fork: it may be inline on one side and a reference on the
+ * other) — so a
  * genuinely different prompt is never mistaken for a match. That matters because
  * a match SUPPRESSES a visible user turn (see `APPEND_VIEWER_USER_TURN`), and it
  * runs only on the rare cross-client viewer append, so comparing full data is
@@ -2164,7 +2168,10 @@ function userTurnContentKey(turn: MessageTurn): string {
         case "text":
           return { t: b.text }
         case "image":
-          return { i: b.mime_type, d: b.data }
+          // Fork: by type and size, not the bytes — the persisted copy may
+          // come back as a blob reference while the live one is inline
+          // (`lib/conversation-images.ts`).
+          return { i: imageIdentity(b) }
         default:
           return b
       }

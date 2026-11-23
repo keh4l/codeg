@@ -7,6 +7,7 @@ import { useTranslations } from "next-intl"
 import type { UserImageDisplay } from "@/lib/adapters/ai-elements-adapter"
 import { ImagePreviewDialog } from "@/components/ui/image-preview-dialog"
 import { ImageActions, useImageActions } from "./image-actions"
+import { imageSrc } from "@/lib/conversation-images"
 
 interface UserImageAttachmentsProps {
   images: UserImageDisplay[]
@@ -43,7 +44,7 @@ export function UserImageAttachments({
               className="block cursor-pointer transition-opacity hover:opacity-80"
             >
               <Image
-                src={`data:${image.mime_type};base64,${image.data}`}
+                src={imageSrc(image)}
                 alt={image.name}
                 width={56}
                 height={56}
@@ -67,11 +68,7 @@ export function UserImageAttachments({
         ))}
       </div>
       <ImagePreviewDialog
-        src={
-          previewImage
-            ? `data:${previewImage.mime_type};base64,${previewImage.data}`
-            : ""
-        }
+        src={imageSrc(previewImage)}
         alt={previewImage?.name ?? ""}
         open={previewImage !== null}
         onOpenChange={(open) => {

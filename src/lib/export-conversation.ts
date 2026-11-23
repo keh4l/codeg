@@ -9,6 +9,7 @@ import { getAgentLabel } from "@/lib/custom-agents"
 import { downloadImage } from "@/lib/image-download"
 import { saveTextFile, type SaveFileResult } from "@/lib/save-file"
 import { toPng } from "html-to-image"
+import { withInlineImages } from "@/lib/conversation-images"
 
 /** Outcome of an export operation — see {@link SaveFileResult}. */
 export type ExportResult = SaveFileResult
@@ -205,13 +206,14 @@ function blocksToMarkdown(
             .join("\n")}`
         }
         case "image":
+          if (!block.data) return ""
           return `![image](data:${sanitizeMimeType(block.mime_type)};base64,${block.data})`
         case "image_generation": {
           const lines: string[] = []
           if (block.revised_prompt && block.revised_prompt.trim().length > 0) {
             lines.push(`> _Revised prompt:_ ${block.revised_prompt.trim()}`)
           }
-          if (block.image) {
+          if (block.image?.data) {
             lines.push(
               `![image](data:${sanitizeMimeType(block.image.mime_type)};base64,${block.image.data})`
             )
@@ -251,6 +253,7 @@ function blocksToHtml(blocks: ContentBlock[], labels: ExportLabels): string {
           return `<details class="tool-result ${block.is_error ? "error" : ""}"><summary class="tool-summary">${escapeHtml(label)}</summary>${content ? `<div class="tool-content">${escapeHtml(content).replace(/\n/g, "<br>")}</div>` : ""}</details>`
         }
         case "image":
+          if (!block.data) return ""
           return `<div class="image-block"><img src="data:${sanitizeMimeType(block.mime_type)};base64,${escapeHtml(block.data)}" alt="image" style="max-width:100%;border-radius:8px;" /></div>`
         case "image_generation": {
           const parts: string[] = ['<div class="image-generation-block">']
@@ -259,7 +262,7 @@ function blocksToHtml(blocks: ContentBlock[], labels: ExportLabels): string {
               `<blockquote class="image-generation-prompt"><em>Revised prompt:</em> ${escapeHtml(block.revised_prompt.trim()).replace(/\n/g, "<br>")}</blockquote>`
             )
           }
-          if (block.image) {
+          if (block.image?.data) {
             parts.push(
               `<img src="data:${sanitizeMimeType(block.image.mime_type)};base64,${escapeHtml(block.image.data)}" alt="image" style="max-width:100%;border-radius:8px;" />`
             )
@@ -430,9 +433,13 @@ ${header}
 // Public export functions
 // ---------------------------------------------------------------------------
 
+// Fork: an export carries every image inline, so images the server sent by
+// reference (`lib/conversation-images.ts`) are fetched first.
+
 export async function exportAsMarkdown(
-  data: ExportConversationData
+  input: ExportConversationData
 ): Promise<ExportResult> {
+  const data = await withInlineImages(input)
   const { summary, turns, sessionStats, labels } = data
   const parts: string[] = []
 
@@ -465,8 +472,9 @@ export async function exportAsMarkdown(
 }
 
 export async function exportAsHtml(
-  data: ExportConversationData
+  input: ExportConversationData
 ): Promise<ExportResult> {
+  const data = await withInlineImages(input)
   return saveTextFile({
     content: buildHtmlDocument(data),
     suggestedName: makeExportFilename(data.summary.title, "html"),
@@ -487,8 +495,9 @@ export class ExportTooLongError extends Error {
 }
 
 export async function exportAsImage(
-  data: ExportConversationData
+  input: ExportConversationData
 ): Promise<ExportResult> {
+  const data = await withInlineImages(input)
   const html = buildHtmlDocument(data)
 
   const iframe = document.createElement("iframe")

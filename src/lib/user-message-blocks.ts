@@ -25,7 +25,13 @@ export function contentBlocksFromUserMessage(
 ): ContentBlock[] {
   return blocks.map((b) =>
     b.type === "image"
-      ? { type: "image", data: b.data, mime_type: b.mime_type, uri: null }
+      ? {
+          type: "image",
+          data: b.data,
+          blob: b.blob,
+          mime_type: b.mime_type,
+          uri: null,
+        }
       : { type: "text", text: b.text }
   )
 }

@@ -1,3 +1,5 @@
+import { imageSrc, type ImageSource } from "@/lib/conversation-images"
+
 /**
  * Copy an inline base64 image to the system clipboard as a real image
  * (so Paste in another app inserts pixels, not a path).
@@ -34,15 +36,18 @@ export class ClipboardImageUnsupportedError extends Error {
   }
 }
 
-export async function copyImageToClipboard(opts: {
-  data: string
-  mime_type: string
-}): Promise<void> {
+export async function copyImageToClipboard(opts: ImageSource): Promise<void> {
   if (!canCopyImageToClipboard()) {
     throw new ClipboardImageUnsupportedError()
   }
-  const bytes = base64ToUint8Array(opts.data)
   const sourceType = normalizeImageMime(opts.mime_type)
+  // An image the server sent by reference (fork) is fetched inside the
+  // promise handed to `ClipboardItem`, so the write still starts within the
+  // gesture (see below). Inline data rasterizes at once, as before.
+  const toPng = (bytes: Uint8Array): Blob | Promise<Blob> =>
+    sourceType === "image/png"
+      ? new Blob([bytes as BlobPart], { type: "image/png" })
+      : rasterToPngBlob(bytes, sourceType)
 
   // WebKit — the webview the desktop app runs on — only honours a clipboard
   // write issued inside the user gesture, and a rasterized JPEG takes an image
@@ -52,10 +57,12 @@ export async function copyImageToClipboard(opts: {
   // it: `write()` is called synchronously, still inside the gesture. It also
   // fixes the ordering — two copies in a row land in the order they were
   // asked for, not the order their rasters happened to finish in.
-  const png =
-    sourceType === "image/png"
-      ? Promise.resolve(new Blob([bytes as BlobPart], { type: "image/png" }))
-      : rasterToPngBlob(bytes, sourceType)
+  const png: Promise<Blob> = opts.data
+    ? Promise.resolve(toPng(base64ToUint8Array(opts.data)))
+    : fetch(imageSrc(opts)).then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return toPng(new Uint8Array(await res.arrayBuffer()))
+      })
 
   // `write()` reports a rejected value as a generic error of its own, so keep
   // the real reason and rethrow that instead. Observing without rethrowing is

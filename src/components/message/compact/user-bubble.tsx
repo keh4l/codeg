@@ -43,6 +43,7 @@ import { useSentOriginal } from "../translation-context"
 import { useCreateTaskFromMessage } from "../use-create-task-from-message"
 import { UserResourceLinks } from "../user-resource-links"
 import { useCompactThread } from "./compact-thread"
+import { imageSrc } from "@/lib/conversation-images"
 
 export type UserBubbleGroupPosition = "solo" | "first" | "middle" | "last"
 
@@ -191,7 +192,7 @@ const UserMediaCollage = memo(function UserMediaCollage({
                 className="block w-full cursor-pointer transition-opacity hover:opacity-90"
               >
                 <Image
-                  src={`data:${image.mime_type};base64,${image.data}`}
+                  src={imageSrc(image)}
                   alt={image.name}
                   width={visible.length === 1 ? 320 : 160}
                   height={visible.length === 1 ? 220 : 120}
@@ -231,11 +232,7 @@ const UserMediaCollage = memo(function UserMediaCollage({
       </div>
 
       <ImagePreviewDialog
-        src={
-          previewImage
-            ? `data:${previewImage.mime_type};base64,${previewImage.data}`
-            : ""
-        }
+        src={imageSrc(previewImage)}
         alt={previewImage?.name ?? ""}
         open={previewImage !== null}
         onOpenChange={(open) => {

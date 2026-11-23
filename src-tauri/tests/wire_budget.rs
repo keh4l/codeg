@@ -686,6 +686,40 @@ async fn opening_a_conversation_with_screenshots() {
     let plain = request().await;
     assert_eq!(plain.status_code(), 200, "{}", plain.text());
     let body: Value = plain.json();
+
+    // The same window with images as references (fork, 2.3): the browser
+    // loads each image once from /api/img/{id} and caches it for good.
+    let blobs = tempfile::tempdir().expect("blob dir");
+    codeg_lib::web::blob_store::init_global(blobs.path()).expect("blob store");
+    let with_refs = || {
+        server
+            .post("/api/get_folder_conversation")
+            .add_header("authorization", format!("Bearer {TOKEN}"))
+            .add_header("accept-encoding", "gzip")
+            .json(
+                &json!({ "conversationId": conversation_id, "tailTurns": 120, "imageRefs": true }),
+            )
+    };
+    let refs = with_refs().await;
+    assert_eq!(refs.status_code(), 200, "{}", refs.text());
+    let refs_gzip = refs.as_bytes().len() as u64;
+    let refs_body: Value = server
+        .post("/api/get_folder_conversation")
+        .add_header("authorization", format!("Bearer {TOKEN}"))
+        .json(&json!({ "conversationId": conversation_id, "tailTurns": 120, "imageRefs": true }))
+        .await
+        .json();
+    let first_ref = find_blob_id(&refs_body).expect("images became references");
+    let image = server.get(&format!("/api/img/{first_ref}")).await;
+    assert_eq!(image.status_code(), 200);
+    assert_eq!(
+        image
+            .headers()
+            .get("cache-control")
+            .and_then(|v| v.to_str().ok()),
+        Some("private, max-age=31536000, immutable")
+    );
+    let refs_longest = longest_string(&refs_body);
     let turns = body["turns"].as_array().map(|t| t.len()).unwrap_or(0);
     assert!(turns > 0, "window has turns");
     let longest_string = longest_string(&body);
@@ -709,11 +743,40 @@ async fn opening_a_conversation_with_screenshots() {
             budget: 356_000,
         },
         Measured {
+            name: "open with imageRefs: gzip bytes on the wire",
+            value: refs_gzip,
+            budget: REFS_GZIP_BUDGET,
+        },
+        Measured {
+            name: "open with imageRefs: longest single string",
+            value: refs_longest as u64,
+            budget: REFS_LONGEST_BUDGET,
+        },
+        Measured {
             name: "open: longest single string (inlined image => huge)",
             value: longest_string as u64,
             budget: 225_300,
         },
     ]);
+}
+
+/// With images as references the 120-turn window is 7.5 KB gzipped and its
+/// longest string 4 KB (measured + 10%).
+const REFS_GZIP_BUDGET: u64 = 8_300;
+const REFS_LONGEST_BUDGET: u64 = 4_400;
+
+/// The first image reference's id in a response.
+fn find_blob_id(v: &Value) -> Option<String> {
+    match v {
+        Value::Object(map) => {
+            if let Some(id) = map.get("blob").and_then(|b| b["id"].as_str()) {
+                return Some(id.to_string());
+            }
+            map.values().find_map(find_blob_id)
+        }
+        Value::Array(items) => items.iter().find_map(find_blob_id),
+        _ => None,
+    }
 }
 
 fn longest_string(v: &Value) -> usize {

@@ -8,9 +8,11 @@ import type {
   ToolCallStatus,
   PlanEntryInfo,
   ImageData,
+  ImageBlobRef,
   DelegationResultsMode,
   DelegationResultsTask,
 } from "@/lib/types"
+import { hasImage, imageKey } from "@/lib/conversation-images"
 import {
   isAgentLikeToolName,
   isDelegationStatusToolName,
@@ -238,7 +240,9 @@ export interface UserResourceDisplay {
 
 export interface UserImageDisplay {
   name: string
-  data: string
+  /** Base64, or absent when the server sent a `blob` reference (fork). */
+  data?: string
+  blob?: ImageBlobRef
   mime_type: string
   uri?: string | null
 }
@@ -1020,14 +1024,8 @@ function addResource(
 }
 
 function addImage(images: UserImageDisplay[], image: UserImageDisplay) {
-  const key = `${image.mime_type}:${image.data.length}:${image.data.slice(0, 64)}`
-  if (
-    images.some(
-      (item) =>
-        `${item.mime_type}:${item.data.length}:${item.data.slice(0, 64)}` ===
-        key
-    )
-  ) {
+  const key = imageKey(image)
+  if (images.some((item) => imageKey(item) === key)) {
     return
   }
   images.push(image)
@@ -1503,10 +1501,11 @@ function extractUserImagesFromBlocks(
   const images: UserImageDisplay[] = []
   for (const block of blocks) {
     if (block.type !== "image") continue
-    if (!block.data || !block.mime_type) continue
+    if (!hasImage(block) || !block.mime_type) continue
     addImage(images, {
       name: deriveImageNameFromBlock(block),
       data: block.data,
+      blob: block.blob,
       mime_type: block.mime_type,
       uri: block.uri ?? null,
     })
@@ -1576,10 +1575,11 @@ function adaptContentBlock(
     case "image_generation": {
       const img = block.image ?? null
       const display: UserImageDisplay | null =
-        img && img.data && img.mime_type
+        img && hasImage(img) && img.mime_type
           ? {
               name: deriveImageNameFromImageData(img),
               data: img.data,
+              blob: img.blob,
               mime_type: img.mime_type,
               uri: img.uri ?? null,
             }
@@ -1617,7 +1617,6 @@ function adaptContentBlock(
 }
 
 function deriveImageNameFromImageData(img: {
-  data: string
   mime_type: string
   uri?: string | null
 }): string {
@@ -1666,7 +1665,7 @@ function adaptImageToolResultParts(
   })
   const parts: AdaptedGeneratedImagePart[] = []
   for (const img of images) {
-    if (!img.data || !img.mime_type) continue
+    if (!hasImage(img) || !img.mime_type) continue
     parts.push({
       type: "generated-image",
       // A Read has no model-revised prompt — only codex image generation does.
@@ -1674,6 +1673,7 @@ function adaptImageToolResultParts(
       image: {
         name: deriveImageNameFromImageData(img),
         data: img.data,
+        blob: img.blob,
         mime_type: img.mime_type,
         uri: img.uri ?? null,
       },

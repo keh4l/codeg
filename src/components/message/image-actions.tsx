@@ -40,6 +40,7 @@ export function useImageActions(): {
       try {
         await copyImageToClipboard({
           data: image.data,
+          blob: image.blob,
           mime_type: image.mime_type,
         })
         toast.success(t("copiedImage"))
@@ -61,6 +62,7 @@ export function useImageActions(): {
       try {
         await downloadImage({
           data: image.data,
+          blob: image.blob,
           mime_type: image.mime_type,
           suggestedName: image.name,
         })

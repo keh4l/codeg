@@ -157,12 +157,15 @@ pub struct GetFolderConversationParams {
     pub tail_turns: Option<usize>,
     #[serde(default)]
     pub from_index: Option<usize>,
+    /// Images as blob references (fork, `web::image_refs`).
+    #[serde(default)]
+    pub image_refs: bool,
 }
 
 pub async fn get_folder_conversation(
     Extension(state): Extension<Arc<AppState>>,
     Json(params): Json<GetFolderConversationParams>,
-) -> Result<Json<DbConversationDetail>, AppCommandError> {
+) -> Result<axum::response::Response, AppCommandError> {
     let db = &state.db;
     let window = conv_commands::resolve_turn_window_req(params.tail_turns, params.from_index)?;
     let result = conv_commands::get_folder_conversation_with_live_core(
@@ -174,7 +177,7 @@ pub async fn get_folder_conversation(
         window,
     )
     .await?;
-    Ok(Json(result))
+    crate::web::image_refs::respond(result, params.image_refs).await
 }
 
 #[derive(Deserialize)]
@@ -183,12 +186,15 @@ pub struct GetFolderConversationTurnsParams {
     pub conversation_id: i32,
     pub before_index: usize,
     pub limit: usize,
+    /// Images as blob references (fork, `web::image_refs`).
+    #[serde(default)]
+    pub image_refs: bool,
 }
 
 pub async fn get_folder_conversation_turns(
     Extension(state): Extension<Arc<AppState>>,
     Json(params): Json<GetFolderConversationTurnsParams>,
-) -> Result<Json<ConversationTurnsPage>, AppCommandError> {
+) -> Result<axum::response::Response, AppCommandError> {
     let result = conv_commands::get_folder_conversation_turns_core(
         &state.db.conn,
         params.conversation_id,
@@ -196,7 +202,7 @@ pub async fn get_folder_conversation_turns(
         params.limit,
     )
     .await?;
-    Ok(Json(result))
+    crate::web::image_refs::respond(result, params.image_refs).await
 }
 
 #[derive(Deserialize)]

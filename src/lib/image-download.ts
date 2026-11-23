@@ -1,4 +1,5 @@
 import { isDesktop } from "@/lib/platform"
+import { imageSrc, type ImageSource } from "@/lib/conversation-images"
 
 /**
  * Save an inline base64 image to user-chosen disk location.
@@ -12,12 +13,24 @@ import { isDesktop } from "@/lib/platform"
  * dialog (desktop only). Throws on actual write failure so the caller
  * can surface an error toast.
  */
-export async function downloadImage(opts: {
-  data: string
-  mime_type: string
-  suggestedName: string
-}): Promise<boolean> {
-  const { data, mime_type, suggestedName } = opts
+export async function downloadImage(
+  opts: ImageSource & { suggestedName: string }
+): Promise<boolean> {
+  const { mime_type, suggestedName } = opts
+
+  // Fork: an image the server sent by reference downloads from its URL
+  // (same origin, so `download` names the file). Only the web client asks
+  // for references, so this never runs on the desktop.
+  if (!opts.data && opts.blob) {
+    const link = document.createElement("a")
+    link.href = imageSrc(opts)
+    link.download = suggestedName
+    document.body.append(link)
+    link.click()
+    link.remove()
+    return true
+  }
+  const data = opts.data ?? ""
 
   if (isDesktop()) {
     const { save } = await import("@tauri-apps/plugin-dialog")

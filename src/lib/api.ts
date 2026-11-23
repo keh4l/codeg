@@ -231,6 +231,7 @@ import type {
   TokenUsageSyncResult,
   TokenUsageSyncStatus,
 } from "./types"
+import { wantsImageRefs } from "@/lib/conversation-images"
 
 export async function listConversations(params?: {
   agent_type?: AgentType | null
@@ -2596,6 +2597,9 @@ export async function getFolderConversation(
     conversationId,
     ...(window?.tailTurns != null ? { tailTurns: window.tailTurns } : {}),
     ...(window?.fromIndex != null ? { fromIndex: window.fromIndex } : {}),
+    // Fork: images as blob references (`lib/conversation-images.ts`); an
+    // old server ignores it and sends them inline.
+    ...(wantsImageRefs() ? { imageRefs: true } : {}),
   })
 }
 
@@ -2609,6 +2613,7 @@ export async function getFolderConversationTurns(
     conversationId,
     beforeIndex,
     limit,
+    ...(wantsImageRefs() ? { imageRefs: true } : {}),
   })
 }
 
