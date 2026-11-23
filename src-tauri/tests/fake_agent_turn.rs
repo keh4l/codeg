@@ -156,7 +156,7 @@ async fn fake_agent_connect_prompt_permission_cancel() {
             "spec": { "binary": { platform: {
                 "archive": "https://example.invalid/codeg-fake-acp.tar.gz",
                 "cmd": "codeg-fake-acp",
-                "env": { "FAKE_ACP_TIME_SCALE": "0.05" },
+                "env": { "FAKE_ACP_TIME_SCALE": "0.05", "FAKE_ACP_LOAD_MS": "1500" },
             } } },
         } }),
     )
@@ -318,10 +318,67 @@ async fn fake_agent_connect_prompt_permission_cancel() {
         cancelled_at.elapsed()
     );
 
+    // 4. (fork) `acp_open_session` resuming a session: the new connection
+    // comes back while the agent is still loading it (1.5 s here), and a
+    // second open for the same session, sent meanwhile, waits for the load and
+    // gets that same connection back instead of a second agent.
+    let session_id = call(
+        &server,
+        "acp_get_session_snapshot",
+        json!({ "connectionId": connection_id }),
+    )
+    .await["external_id"]
+    .as_str()
+    .expect("session id")
+    .to_string();
     let _ = call(
         &server,
         "acp_disconnect",
         json!({ "connectionId": connection_id }),
+    )
+    .await;
+    let open = json!({
+        "agentType": "custom:fake-acp",
+        "workingDir": workdir.to_string_lossy(),
+        "sessionId": session_id,
+    });
+    let opened_at = Instant::now();
+    let first = call(&server, "acp_open_session", open.clone()).await;
+    let first_took = opened_at.elapsed();
+    assert_eq!(first["outcome"], "spawned", "{first}");
+    assert!(
+        first_took < Duration::from_millis(1200),
+        "came back after the load: {first_took:?}"
+    );
+    let resumed = first["connection_id"].as_str().expect("id").to_string();
+    // Still loading: the session is not bound to the connection yet.
+    let loading = call(
+        &server,
+        "acp_get_session_snapshot",
+        json!({ "connectionId": resumed }),
+    )
+    .await;
+    assert!(loading["external_id"].is_null(), "{loading}");
+    let second = call(&server, "acp_open_session", open).await;
+    assert_eq!(second["outcome"], "reused", "{second}");
+    assert_eq!(second["connection_id"], first["connection_id"]);
+    let snap = call(
+        &server,
+        "acp_get_session_snapshot",
+        json!({ "connectionId": resumed }),
+    )
+    .await;
+    assert_eq!(snap["status"], "connected", "{snap}");
+    assert_eq!(snap["external_id"], session_id.as_str());
+    println!(
+        "open_session resume: answered in {first_took:?}, the second open after {:?}",
+        opened_at.elapsed()
+    );
+
+    let _ = call(
+        &server,
+        "acp_disconnect",
+        json!({ "connectionId": resumed }),
     )
     .await;
 }

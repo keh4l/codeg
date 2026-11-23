@@ -18,6 +18,8 @@
 //! - `FAKE_ACP_TIME_SCALE`: multiplies every pause (default 1; 0 = no pauses).
 //! - `FAKE_ACP_DEFAULT_SCENARIO`: scenario for prompts without a directive.
 //! - `FAKE_ACP_STREAM_SECS`: length of `stream-steady` (default 20).
+//! - `FAKE_ACP_LOAD_MS`: how long `session/load` / `session/resume` take
+//!   (default 0), for a resumed session's load to be observable.
 //! - `FAKE_ACP_LOG`: append one JSON line per emitted chunk
 //!   (`{"t_ms","sid","kind","offset","len"}`), for emit-to-render latency.
 
@@ -698,6 +700,13 @@ fn handle_request(agent: &Arc<Agent>, id: Value, method: &str, params: Value) {
             );
         }
         "session/load" | "session/resume" => {
+            let load_ms: u64 = std::env::var("FAKE_ACP_LOAD_MS")
+                .ok()
+                .and_then(|raw| raw.parse().ok())
+                .unwrap_or(0);
+            if load_ms > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(load_ms));
+            }
             let session_id = params
                 .get("sessionId")
                 .and_then(Value::as_str)

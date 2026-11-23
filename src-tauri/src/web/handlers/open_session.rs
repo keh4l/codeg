@@ -9,6 +9,12 @@
 //! what `acp_connect` hands back, so the client treats them as before. A
 //! discovery that fails is skipped, as the client skipped it. Clients fall
 //! back to the two calls on a server without it.
+//!
+//! Unlike `acp_connect`, a new connection resuming a session comes back
+//! before its agent has loaded the session
+//! ([`ConnectionManager::spawn_agent_returning_early`]): the client's attach
+//! then overlaps the load, and the connection reads `connecting` until the
+//! session has started, as a connection just made always did on the client.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -111,8 +117,10 @@ pub(crate) async fn acp_open_session_core(
     )
     .await?;
     acp_commands::verify_agent_installed(params.agent_type).await?;
+    // A resumed session comes back while its agent is still loading it, so
+    // the client's attach overlaps the load.
     let outcome = manager
-        .spawn_agent_with_outcome(
+        .spawn_agent_returning_early(
             params.agent_type,
             params.working_dir,
             params.session_id,

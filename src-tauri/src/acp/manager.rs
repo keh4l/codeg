@@ -921,6 +921,41 @@ impl ConnectionManager {
             preferred_mode_id,
             preferred_config_values,
             None,
+            false,
+        )
+        .await
+    }
+
+    /// [`Self::spawn_agent_with_outcome`], but a NEW connection resuming a
+    /// session is handed back as soon as it exists, while its agent is still
+    /// loading the session (fork, `acp_open_session`): a client attaching to
+    /// it then overlaps the load instead of waiting a round trip after it.
+    /// The dedup lock is still held until the session has started, by a task,
+    /// so a concurrent connect for the same session still waits for it and
+    /// gets it back. The connection reads `connecting` until then.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn spawn_agent_returning_early(
+        &self,
+        agent_type: AgentType,
+        working_dir: Option<String>,
+        session_id: Option<String>,
+        runtime_env: BTreeMap<String, String>,
+        owner_window_label: String,
+        emitter: EventEmitter,
+        preferred_mode_id: Option<String>,
+        preferred_config_values: BTreeMap<String, String>,
+    ) -> Result<SpawnOutcome, AcpError> {
+        self.spawn_agent_seeded(
+            agent_type,
+            working_dir,
+            session_id,
+            runtime_env,
+            owner_window_label,
+            emitter,
+            preferred_mode_id,
+            preferred_config_values,
+            None,
+            true,
         )
         .await
     }
@@ -950,6 +985,7 @@ impl ConnectionManager {
             preferred_mode_id,
             preferred_config_values,
             Some(seed),
+            false,
         )
         .await
         .map(|outcome| outcome.connection_id)
@@ -967,6 +1003,7 @@ impl ConnectionManager {
         preferred_mode_id: Option<String>,
         preferred_config_values: BTreeMap<String, String>,
         cli_root: Option<crate::cli_run::RootSeed>,
+        early_return: bool,
     ) -> Result<SpawnOutcome, AcpError> {
         // Held for the whole establishment. A restore writing back to the
         // agents' own directories takes the write side, so it can never see an
@@ -1065,6 +1102,28 @@ impl ConnectionManager {
         // next waiter), aborted (connection died), or the timeout fires.
         // Logged on every wait so production can audit real-world handshake
         // latencies and tune `CODEG_ACP_SPAWN_HANDSHAKE_TIMEOUT_SECS`.
+        // Fork: `spawn_agent_returning_early` waits in a task instead.
+        if early_return && dedup_lock.is_some() {
+            let timeout = self.spawn_handshake_timeout;
+            let log_id = connection_id.clone();
+            tokio::spawn(async move {
+                let (outcome, elapsed) =
+                    wait_for_session_started(session_started_rx, timeout).await;
+                tracing::info!(
+                    "[ACP] dedup_wait (early) connection_id={} session_id={} outcome={} \
+                     elapsed_ms={}",
+                    log_id,
+                    session_id_for_log.as_deref().unwrap_or(""),
+                    outcome.as_str(),
+                    elapsed.as_millis(),
+                );
+                drop(dedup_lock);
+            });
+            return Ok(SpawnOutcome {
+                connection_id,
+                reused: false,
+            });
+        }
         if dedup_lock.is_some() {
             let timeout = self.spawn_handshake_timeout;
             let (outcome, elapsed) = wait_for_session_started(session_started_rx, timeout).await;
