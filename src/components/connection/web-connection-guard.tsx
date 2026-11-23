@@ -29,7 +29,10 @@ import { redirectToCodegLogin } from "@/lib/transport/web-auth"
 // UI deciding when the interruption is worth interrupting the user over.
 // `unauthorized` and `proxyUnauthorized` bypass this — a rejected session is a
 // definitive signal worth telling the user about immediately.
-const RECONNECT_DIALOG_GRACE_MS = 4_000
+// Fork: 8 s (was 4 s). Over a far, lossy link a reconnect — the jittered quick
+// retry, TCP, the upgrade, the re-attach — typically takes 1.5–2.5 s and
+// about 5 s at the tail; it should finish unseen.
+const RECONNECT_DIALOG_GRACE_MS = 8_000
 
 /**
  * Global, single-instance guard mounted once at the root layout. Watches the

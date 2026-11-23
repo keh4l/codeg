@@ -7,7 +7,8 @@ import type {
   Transport,
   UnsubscribeFn,
 } from "./types"
-import { buildCodegWebSocketProtocols } from "./ws-auth"
+import { buildCodegWebSocketProtocols, CODEG_WS_PROTOCOL_V2 } from "./ws-auth"
+import { supportsCompressedFrames, WsFrameDecoder } from "./ws-frame-decoder"
 import { parseJsonOrThrow } from "../json-parse-error"
 import {
   codegAuthHeaders,
@@ -49,12 +50,35 @@ const WS_BACKOFF_MAX_MS = 32_000
 // completing the TCP handshake) can't hang the "Reconnect now" button.
 const HEALTH_PROBE_TIMEOUT_MS = 8_000
 // Periodic application-level WebSocket heartbeat. The server's `ws.rs` replies
-// to `{"action":"ping"}` with `{"type":"pong"}`. A 20s cadence keeps NATs and
-// reverse proxies from silently dropping idle sockets and catches half-open
-// zombie connections (laptop sleep/wake, mobile network switch) within 5s
-// instead of hanging indefinitely with `readyState === OPEN`.
-const WS_PING_INTERVAL_MS = 20_000
-const WS_PONG_TIMEOUT_MS = 5_000
+// to `{"action":"ping"}` with `{"type":"pong"}`; any inbound message counts as
+// the answer. Fork: a ping every 5 s, and the socket is given up only after
+// 15 s with nothing at all inbound. The old 20 s / 5 s pair tore down healthy
+// sockets on a slow lossy link — a pong behind one retransmission, or behind
+// a large frame, took longer than 5 s — and each teardown meant a snapshot
+// re-sent over that same link. Frequent pings keep the detection time about
+// the same (about 15–20 s in steady state; wake checks below are faster).
+const WS_PING_INTERVAL_MS = 5_000
+const WS_PONG_TIMEOUT_MS = 15_000
+// Fork: losing a socket that was up goes straight back after 125–250 ms of
+// jitter, without a health probe first (the server was just there; the
+// probe's round trip is pure delay on a far link). Later attempts back off
+// with jitter and probe, which is what tells a 401 from "unreachable".
+const WS_FIRST_RETRY_MIN_MS = 125
+const WS_FIRST_RETRY_JITTER_MS = 125
+// The backoff ladder starts over only once a socket has stayed up this long,
+// so a link that keeps dropping right after connecting backs off.
+const WS_STABLE_RESET_MS = 30_000
+// A socket that has not opened by now is given up and retried (a browser can
+// otherwise wait on a black-holed connect for a minute or more).
+const WS_OPEN_TIMEOUT_MS = 10_000
+// Wake check (tab visible again, page restored, back online): ping, and if
+// nothing comes back within `WAKE_PONG_WAIT_MS`, ask `/api/health` (bounded by
+// `WAKE_HEALTH_TIMEOUT_MS`). A reachable server with a socket silent for at
+// least `WAKE_SILENCE_MS` means the socket is half-open: replace it at once
+// instead of waiting out the 15 s rule.
+const WAKE_PONG_WAIT_MS = 500
+const WAKE_HEALTH_TIMEOUT_MS = 3_000
+const WAKE_SILENCE_MS = 3_000
 
 // Connection health of the web transport, surfaced to React via
 // `subscribeConnection`/`getConnectionSnapshot` so a single global dialog can
@@ -130,6 +154,19 @@ export class WebTransport implements Transport {
   // Periodic application-level ping/pong timers for half-open WS detection.
   private pingIntervalTimer: ReturnType<typeof setInterval> | null = null
   private pongTimeoutTimer: ReturnType<typeof setTimeout> | null = null
+  // Fork: socket liveness and reconnect ladder (see the constants above).
+  private lastInboundAt = 0
+  private socketReadied = false
+  private stableTimer: ReturnType<typeof setTimeout> | null = null
+  private openTimer: ReturnType<typeof setTimeout> | null = null
+  private wakeTimer: ReturnType<typeof setTimeout> | null = null
+  // Whether the server selected protocol v2 for the current socket.
+  private protocolV2 = false
+  // Turns v2 binary messages back into frames, in arrival order.
+  private frameDecoder = new WsFrameDecoder(
+    (text) => this.handleFrameText(text),
+    (error) => this.handleDecodeError(error)
+  )
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl
@@ -271,6 +308,11 @@ export class WebTransport implements Transport {
     return false
   }
 
+  /** Whether the current socket speaks `/ws/events` protocol v2 (fork). */
+  usesProtocolV2(): boolean {
+    return this.wsOpen && this.protocolV2
+  }
+
   onReconnect(callback: () => void): UnsubscribeFn {
     this.reconnectCallbacks.add(callback)
     return () => {
@@ -322,9 +364,11 @@ export class WebTransport implements Transport {
    * visible, `pageshow`, and `online`):
    * - If already `reconnecting`, triggers an immediate health probe instead of
    *   waiting out exponential backoff.
-   * - If `connected` with an open socket, sends an immediate ping frame so a
-   *   half-open zombie connection (e.g. after sleep/wake or NAT timeout) is
-   *   detected and rebuilt within `WS_PONG_TIMEOUT_MS`.
+   * - If `connected` with an open socket, sends an immediate ping frame. If
+   *   nothing comes back within `WAKE_PONG_WAIT_MS`, asks `/api/health`; a
+   *   reachable server while the socket has been silent for `WAKE_SILENCE_MS`
+   *   means a half-open socket (sleep/wake, network change), replaced at once
+   *   (fork). Otherwise the `WS_PONG_TIMEOUT_MS` rule decides.
    * - If `unauthorized` / `proxyUnauthorized`, does nothing.
    */
   verifyConnection(): void {
@@ -340,7 +384,14 @@ export class WebTransport implements Transport {
       return
     }
     if (this.wsOpen && this.ws?.readyState === WebSocket.OPEN) {
+      const askedAt = Date.now()
       this.sendPing()
+      if (this.wakeTimer !== null) clearTimeout(this.wakeTimer)
+      this.wakeTimer = setTimeout(() => {
+        this.wakeTimer = null
+        if (this.lastInboundAt >= askedAt) return
+        void this.checkAfterWake(askedAt)
+      }, WAKE_PONG_WAIT_MS)
     } else if (
       !this.ws &&
       hasCodegCredentials() &&
@@ -368,6 +419,66 @@ export class WebTransport implements Transport {
     this.invalidateProbe()
     this.teardownWs()
     this.setConnState(source === "proxy" ? "proxyUnauthorized" : "unauthorized")
+  }
+
+  // The second half of the wake check (`verifyConnection`): the socket did not
+  // answer a ping quickly, so ask the server directly. Bounded and silent on
+  // failure — an unreachable server is the 15 s rule's to handle.
+  private async checkAfterWake(askedAt: number): Promise<void> {
+    const socket = this.ws
+    if (this.destroyed || !socket || !hasCodegCredentials()) return
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), WAKE_HEALTH_TIMEOUT_MS)
+    let res: Response
+    try {
+      res = await fetch(`${this.baseUrl}/api/health`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...codegAuthHeaders(getToken()),
+        },
+        body: "{}",
+        signal: controller.signal,
+      })
+    } catch {
+      return
+    } finally {
+      clearTimeout(timeout)
+    }
+    if (this.destroyed || this.ws !== socket) return
+    if (res.status === 401) {
+      this.markUnauthorized(
+        unauthorizedSource(res.headers.get("www-authenticate"))
+      )
+      return
+    }
+    if (!res.ok) return
+    if (this.lastInboundAt >= askedAt) return
+    if (Date.now() - this.lastInboundAt < WAKE_SILENCE_MS) return
+    this.replaceSocket()
+  }
+
+  // The current socket is unusable while the server is reachable: open a new
+  // one now (no backoff, no probe). Attach subscriptions re-attach from their
+  // cursors on the new socket's open.
+  private replaceSocket(): void {
+    if (this.destroyed) return
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
+    this.teardownWs()
+    this.resetReady()
+    this.setConnState("reconnecting")
+    if (!this.connectWs()) this.markUnauthorized()
+  }
+
+  // A v2 frame that would not inflate: the stream is no longer trustworthy
+  // (a frame is missing), so start a fresh socket, whose attaches catch up
+  // from each subscription's cursor.
+  private handleDecodeError(error: unknown): void {
+    console.warn("[WebTransport] dropping a socket after a bad frame:", error)
+    this.replaceSocket()
   }
 
   // Bump the epoch (so a pending probe's post-await guard bails) and abort its
@@ -483,10 +594,29 @@ export class WebTransport implements Transport {
     this.teardownWs()
 
     const wsUrl = this.baseUrl.replace(/^http/, "ws") + "/ws/events"
-    this.ws = new WebSocket(wsUrl, buildCodegWebSocketProtocols(token))
+    this.ws = new WebSocket(
+      wsUrl,
+      buildCodegWebSocketProtocols(token, { v2: supportsCompressedFrames() })
+    )
+    // v2 frames arrive as binary; read them as ArrayBuffers, not Blobs.
+    this.ws.binaryType = "arraybuffer"
+    this.socketReadied = false
+    this.protocolV2 = false
+    this.frameDecoder.reset()
+    this.openTimer = setTimeout(() => {
+      this.openTimer = null
+      if (this.destroyed || this.wsOpen) return
+      // Never opened: give it up and retry like any failed connect.
+      this.teardownWs()
+      this.setConnState("reconnecting")
+      this.scheduleReconnect()
+    }, WS_OPEN_TIMEOUT_MS)
 
     this.ws.onopen = () => {
+      this.clearOpenTimer()
       this.wsOpen = true
+      this.lastInboundAt = Date.now()
+      this.protocolV2 = this.ws?.protocol === CODEG_WS_PROTOCOL_V2
       this.startHeartbeat()
       // NB: connection health is NOT flipped to "connected" here. `onopen`
       // only means the socket is physically up; the application-level
@@ -510,72 +640,22 @@ export class WebTransport implements Transport {
     }
 
     this.ws.onmessage = (msg) => {
-      // Any incoming frame proves the server-to-client path is alive.
+      // Any incoming message — each part of a split frame included — proves
+      // the server-to-client path is alive.
       this.clearPongTimeout()
-      try {
-        const parsed = JSON.parse(msg.data) as unknown
-        // Attach-protocol frames carry a `type` discriminator; legacy
-        // global-broadcast frames carry a `channel` discriminator. Routing
-        // by which field is present lets the two coexist on the same WS.
-        if (
-          parsed &&
-          typeof parsed === "object" &&
-          "type" in (parsed as object)
-        ) {
-          if ((parsed as { type?: unknown }).type === "pong") {
-            return
-          }
-          this.eventStreamInstance?.handleServerFrame(parsed)
-          return
-        }
-        const event = parsed as WebEvent
-        if (event.channel === WS_READY_CHANNEL) {
-          this.readyResolve()
-          // Application-level ready: the link is fully usable again. Reset the
-          // backoff counter and clear the reconnect dialog. Reset happens here
-          // (not in onopen) so a socket that opens then drops before `__ready__`
-          // keeps growing its backoff instead of restarting from 1s.
-          this.wsFailCount = 0
-          this.setConnState("connected")
-          for (const cb of this.readyCallbacks) {
-            try {
-              cb()
-            } catch (err) {
-              console.error("[WebTransport] ready callback threw:", err)
-            }
-          }
-          if (this.hasReadiedOnce) {
-            // Reconnect path: server-side receiver_count was 0 during the
-            // disconnect window, so any event fired in that gap was dropped.
-            // Notify consumers to recover state (e.g. refetch snapshots).
-            // Errors in user callbacks must not break sibling callbacks.
-            for (const cb of this.reconnectCallbacks) {
-              try {
-                cb()
-              } catch (err) {
-                console.error("[WebTransport] reconnect callback threw:", err)
-              }
-            }
-          } else {
-            this.hasReadiedOnce = true
-          }
-          return
-        }
-        const handlers = this.handlers.get(event.channel)
-        if (handlers) {
-          for (const h of handlers) {
-            h(event.payload)
-          }
-        }
-      } catch {
-        // ignore malformed messages
-      }
+      this.lastInboundAt = Date.now()
+      this.frameDecoder.push(msg.data)
     }
 
     this.ws.onclose = () => {
+      const wasReady = this.socketReadied
       this.stopHeartbeat()
+      this.clearOpenTimer()
+      this.clearStableTimer()
+      this.frameDecoder.reset()
       this.ws = null
       this.wsOpen = false
+      this.socketReadied = false
       // New subscribers (and any concurrent subscribe() calls in flight)
       // must wait for the next connection's `__ready__` before resolving.
       this.resetReady()
@@ -586,7 +666,7 @@ export class WebTransport implements Transport {
       // health probe can do that (see probeHealth).
       if (this.destroyed) return
       this.setConnState("reconnecting")
-      this.scheduleReconnect()
+      this.scheduleReconnect(wasReady)
     }
 
     this.ws.onerror = () => {
@@ -596,17 +676,101 @@ export class WebTransport implements Transport {
     return true
   }
 
-  // Schedule the next reconnect attempt with exponential backoff. Each failed
-  // cycle (a drop, or a probe that found the server unreachable) grows the
-  // delay 1s → 2s → 4s → … → 32s; we keep retrying forever. The timer fires a
-  // health probe (not a bare connectWs) so every attempt re-classifies the
-  // failure — crucially catching a token that expired while we were offline.
-  private scheduleReconnect() {
+  /**
+   * One complete frame's JSON, in arrival order (`frameDecoder`). Attach
+   * frames go to the event stream; legacy frames to channel handlers.
+   */
+  private handleFrameText(text: string): void {
+    try {
+      const parsed = JSON.parse(text) as unknown
+      // Attach-protocol frames carry a `type` discriminator; legacy
+      // global-broadcast frames carry a `channel` discriminator. Routing
+      // by which field is present lets the two coexist on the same WS.
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        "type" in (parsed as object)
+      ) {
+        if ((parsed as { type?: unknown }).type === "pong") {
+          return
+        }
+        this.eventStreamInstance?.handleServerFrame(parsed)
+        return
+      }
+      const event = parsed as WebEvent
+      if (event.channel === WS_READY_CHANNEL) {
+        this.readyResolve()
+        // Application-level ready: the link is fully usable again; clear
+        // the reconnect dialog. Fork: the backoff ladder starts over only
+        // once this socket has stayed up `WS_STABLE_RESET_MS` (it used to
+        // reset here, so a link dropping right after every connect retried
+        // at full speed forever).
+        this.socketReadied = true
+        this.clearStableTimer()
+        this.stableTimer = setTimeout(() => {
+          this.stableTimer = null
+          this.wsFailCount = 0
+        }, WS_STABLE_RESET_MS)
+        this.setConnState("connected")
+        for (const cb of this.readyCallbacks) {
+          try {
+            cb()
+          } catch (err) {
+            console.error("[WebTransport] ready callback threw:", err)
+          }
+        }
+        if (this.hasReadiedOnce) {
+          // Reconnect path: server-side receiver_count was 0 during the
+          // disconnect window, so any event fired in that gap was dropped.
+          // Notify consumers to recover state (e.g. refetch snapshots).
+          // Errors in user callbacks must not break sibling callbacks.
+          for (const cb of this.reconnectCallbacks) {
+            try {
+              cb()
+            } catch (err) {
+              console.error("[WebTransport] reconnect callback threw:", err)
+            }
+          }
+        } else {
+          this.hasReadiedOnce = true
+        }
+        return
+      }
+      const handlers = this.handlers.get(event.channel)
+      if (handlers) {
+        for (const h of handlers) {
+          h(event.payload)
+        }
+      }
+    } catch {
+      // ignore malformed messages
+    }
+  }
+
+  // Schedule the next reconnect attempt. Fork: losing a socket that was up
+  // (`afterReadySocket`) is retried once straight away, after 125–250 ms of
+  // jitter and without a probe. Every other attempt backs off with jitter —
+  // 1–2 s, 1–2 s, 2–4 s, 4–8 s … capped at 32 s; we keep retrying forever — and
+  // fires a health probe (not a bare connectWs) so it re-classifies the
+  // failure, crucially catching a token that expired while we were offline.
+  // The ladder starts over once a socket has stayed up `WS_STABLE_RESET_MS`.
+  private scheduleReconnect(afterReadySocket = false) {
     if (this.destroyed) return
     this.wsFailCount++
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
-    const shift = Math.min(this.wsFailCount - 1, 8)
-    const delay = Math.min(WS_BACKOFF_INITIAL_MS << shift, WS_BACKOFF_MAX_MS)
+    if (afterReadySocket && this.wsFailCount === 1) {
+      const delay =
+        WS_FIRST_RETRY_MIN_MS + Math.random() * WS_FIRST_RETRY_JITTER_MS
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null
+        if (this.destroyed || this.ws) return
+        if (!this.connectWs()) this.markUnauthorized()
+      }, delay)
+      return
+    }
+    const shift = Math.min(Math.max(this.wsFailCount - 2, 0), 5)
+    const base = Math.min(WS_BACKOFF_INITIAL_MS << shift, WS_BACKOFF_MAX_MS)
+    const delay = Math.min(base + Math.random() * base, WS_BACKOFF_MAX_MS)
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
       void this.probeHealth()
@@ -691,6 +855,20 @@ export class WebTransport implements Transport {
     }
   }
 
+  private clearOpenTimer() {
+    if (this.openTimer !== null) {
+      clearTimeout(this.openTimer)
+      this.openTimer = null
+    }
+  }
+
+  private clearStableTimer() {
+    if (this.stableTimer !== null) {
+      clearTimeout(this.stableTimer)
+      this.stableTimer = null
+    }
+  }
+
   private stopHeartbeat() {
     if (this.pingIntervalTimer !== null) {
       clearInterval(this.pingIntervalTimer)
@@ -725,7 +903,7 @@ export class WebTransport implements Transport {
     this.stopHeartbeat()
     this.teardownWs()
     this.resetReady()
-    this.wsFailCount = 0
+    // Fork: no ladder reset here — a link that keeps going silent backs off.
     this.setConnState("reconnecting")
     void this.probeHealth()
   }
@@ -736,6 +914,14 @@ export class WebTransport implements Transport {
   // destroy. Idempotent — a no-op when there's no live socket.
   private teardownWs() {
     this.stopHeartbeat()
+    this.clearOpenTimer()
+    this.clearStableTimer()
+    if (this.wakeTimer !== null) {
+      clearTimeout(this.wakeTimer)
+      this.wakeTimer = null
+    }
+    this.frameDecoder.reset()
+    this.socketReadied = false
     if (this.ws) {
       this.ws.onopen = null
       this.ws.onmessage = null

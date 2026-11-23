@@ -85,7 +85,7 @@ describe("WebConnectionGuard", () => {
     expect(screen.queryByText("Connection lost")).not.toBeInTheDocument()
 
     act(() => {
-      vi.advanceTimersByTime(4000)
+      vi.advanceTimersByTime(8000)
     })
     expect(screen.getByRole("status")).toBeInTheDocument()
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument()
@@ -99,7 +99,7 @@ describe("WebConnectionGuard", () => {
     renderGuard()
     act(() => store.setState("reconnecting"))
     act(() => {
-      vi.advanceTimersByTime(4000)
+      vi.advanceTimersByTime(8000)
     })
     fireEvent.click(screen.getByRole("button", { name: "Reconnect now" }))
     expect(store.reconnectWebNow).toHaveBeenCalledTimes(1)
@@ -140,7 +140,7 @@ describe("WebConnectionGuard", () => {
     renderGuard()
     act(() => store.setState("reconnecting"))
     act(() => {
-      vi.advanceTimersByTime(4000)
+      vi.advanceTimersByTime(8000)
     })
     expect(screen.getByText("Connection lost")).toBeInTheDocument()
 

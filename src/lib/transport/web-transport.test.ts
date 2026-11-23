@@ -7,6 +7,7 @@ import {
   vi,
   type Mock,
 } from "vitest"
+import { deflateSync } from "node:zlib"
 import { WebTransport } from "./web-transport"
 
 // Minimal controllable WebSocket stand-in: records instances and lets the test
@@ -20,8 +21,11 @@ class MockWebSocket {
   static CLOSED = 3
   static instances: MockWebSocket[] = []
   readyState = MockWebSocket.CONNECTING
+  binaryType = "blob"
+  // The subprotocol the server selected; set by a test before `open()`.
+  protocol = ""
   onopen: (() => void) | null = null
-  onmessage: ((ev: { data: string }) => void) | null = null
+  onmessage: ((ev: { data: string | ArrayBuffer }) => void) | null = null
   onclose: (() => void) | null = null
   onerror: (() => void) | null = null
   sent: string[] = []
@@ -87,6 +91,18 @@ function connectReady() {
 }
 
 const ok200 = () => ({ status: 200, ok: true, json: async () => ({}) })
+
+// Fork: losing a socket that was up is retried once straight away (125–250 ms,
+// no probe). Let that retry fail before it opens, so the next attempt is the
+// backed-off one that probes `/api/health` (after 1–2 s).
+async function dropAndFailTheQuickRetry(ws: MockWebSocket) {
+  ws.drop()
+  await vi.advanceTimersByTimeAsync(250)
+  const retry = lastWs()
+  expect(retry).not.toBe(ws)
+  expect(fetchMock).not.toHaveBeenCalled()
+  retry.drop()
+}
 // Codeg's own 401 carries its bearer challenge (`web/auth.rs`); a 401 from an
 // identity-aware proxy in front of it carries the proxy's challenge instead.
 const resp401 = () => ({
@@ -137,7 +153,30 @@ describe("WebTransport connection state machine", () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it("probes /api/health on backoff and reconnects on 200; the 2nd ready fires reconnect callbacks", async () => {
+  it("goes straight back after losing a socket that was up; the 2nd ready fires reconnect callbacks", async () => {
+    const { t, ws } = connectReady()
+    const onReconnect = vi.fn()
+    const onReady = vi.fn()
+    t.onReconnect(onReconnect)
+    t.onReady(onReady)
+
+    ws.drop()
+    await vi.advanceTimersByTimeAsync(124)
+    expect(lastWs()).toBe(ws) // jittered, not instant
+    await vi.advanceTimersByTimeAsync(126)
+    // No health probe first: the server was just there.
+    expect(fetchMock).not.toHaveBeenCalled()
+    const ws2 = lastWs()
+    expect(ws2).not.toBe(ws)
+
+    ws2.open()
+    ws2.ready()
+    expect(t.getConnectionSnapshot()).toBe("connected")
+    expect(onReconnect).toHaveBeenCalledTimes(1)
+    expect(onReady).toHaveBeenCalledTimes(1)
+  })
+
+  it("probes /api/health on backoff and reconnects on 200 when the quick retry fails", async () => {
     const { t, ws } = connectReady()
     const onReconnect = vi.fn()
     const onReady = vi.fn()
@@ -145,30 +184,79 @@ describe("WebTransport connection state machine", () => {
     t.onReady(onReady)
     fetchMock.mockResolvedValue(ok200())
 
-    ws.drop()
-    await vi.advanceTimersByTimeAsync(1000) // first backoff tick → probe
+    await dropAndFailTheQuickRetry(ws)
+    await vi.advanceTimersByTimeAsync(2000) // backoff (1–2 s) → probe
 
     expect(fetchMock).toHaveBeenCalledWith(
       "http://localhost/api/health",
       expect.objectContaining({ method: "POST" })
     )
-    const ws2 = lastWs()
-    expect(ws2).not.toBe(ws) // a fresh socket was opened
+    const ws3 = lastWs()
+    expect(MockWebSocket.instances).toHaveLength(3) // a fresh socket was opened
 
-    ws2.open()
-    ws2.ready()
+    ws3.open()
+    ws3.ready()
     expect(t.getConnectionSnapshot()).toBe("connected")
     // Reconnect (2nd ready) refreshes consumer state exactly once.
     expect(onReconnect).toHaveBeenCalledTimes(1)
     expect(onReady).toHaveBeenCalledTimes(1)
   })
 
+  it("starts the ladder over only once a socket has stayed up 30 s", async () => {
+    const { ws } = connectReady()
+    fetchMock.mockResolvedValue(ok200())
+
+    ws.drop()
+    await vi.advanceTimersByTimeAsync(250)
+    const ws2 = lastWs()
+    ws2.open()
+    ws2.ready()
+    for (let i = 0; i < 2; i++) {
+      await vi.advanceTimersByTimeAsync(5_000)
+      ws2.onmessage?.({ data: JSON.stringify({ type: "pong" }) })
+    }
+
+    // Up 10 s, then gone again: no second quick retry, a backed-off probe.
+    ws2.drop()
+    await vi.advanceTimersByTimeAsync(250)
+    expect(lastWs()).toBe(ws2)
+    await vi.advanceTimersByTimeAsync(1750)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const ws3 = lastWs()
+    expect(ws3).not.toBe(ws2)
+    ws3.open()
+    ws3.ready()
+
+    // Up 30 s (answering pings): the next loss is a quick retry again.
+    for (let i = 0; i < 6; i++) {
+      await vi.advanceTimersByTimeAsync(5_000)
+      ws3.onmessage?.({ data: JSON.stringify({ type: "pong" }) })
+    }
+    ws3.drop()
+    await vi.advanceTimersByTimeAsync(250)
+    expect(lastWs()).not.toBe(ws3)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("gives up a socket that never opens and retries", async () => {
+    const t = new WebTransport("http://localhost")
+    fetchMock.mockResolvedValue(ok200())
+    t.eventStream()
+    const ws = lastWs() // never opens: a black-holed connect
+
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(t.getConnectionSnapshot()).toBe("reconnecting")
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(lastWs()).not.toBe(ws)
+  })
+
   it("enters unauthorized on a 401 probe and stops retrying (token left intact)", async () => {
     const { t, ws } = connectReady()
     fetchMock.mockResolvedValue(resp401())
 
-    ws.drop()
-    await vi.advanceTimersByTimeAsync(1000)
+    await dropAndFailTheQuickRetry(ws)
+    await vi.advanceTimersByTimeAsync(2000)
 
     expect(t.getConnectionSnapshot()).toBe("unauthorized")
     // markUnauthorized must NOT clear the token — only the user's "Go to
@@ -184,12 +272,12 @@ describe("WebTransport connection state machine", () => {
     const { t, ws } = connectReady()
     fetchMock.mockRejectedValue(new TypeError("Failed to fetch"))
 
-    ws.drop()
-    await vi.advanceTimersByTimeAsync(1000) // first probe fails
+    await dropAndFailTheQuickRetry(ws)
+    await vi.advanceTimersByTimeAsync(2000) // first probe fails
     expect(t.getConnectionSnapshot()).toBe("reconnecting")
     const calls1 = fetchMock.mock.calls.length
 
-    await vi.advanceTimersByTimeAsync(2000) // second backoff tick (2s)
+    await vi.advanceTimersByTimeAsync(4000) // next backoff tick (2–4 s)
     expect(fetchMock.mock.calls.length).toBeGreaterThan(calls1)
     expect(t.getConnectionSnapshot()).toBe("reconnecting")
   })
@@ -232,8 +320,8 @@ describe("WebTransport connection state machine", () => {
         })
     )
 
-    ws.drop()
-    await vi.advanceTimersByTimeAsync(1000) // probe starts, fetch hangs
+    await dropAndFailTheQuickRetry(ws)
+    await vi.advanceTimersByTimeAsync(2000) // probe starts, fetch hangs
     expect(t.getConnectionSnapshot()).toBe("reconnecting")
 
     await vi.advanceTimersByTimeAsync(8000) // HEALTH_PROBE_TIMEOUT_MS → abort
@@ -274,8 +362,8 @@ describe("WebTransport connection state machine", () => {
       })
     )
 
-    ws.drop()
-    await vi.advanceTimersByTimeAsync(1000) // probe starts, stays pending
+    await dropAndFailTheQuickRetry(ws)
+    await vi.advanceTimersByTimeAsync(2000) // probe starts, stays pending
     expect(t.getConnectionSnapshot()).toBe("reconnecting")
 
     // A definitive 401 arrives via another path while the probe is in flight.
@@ -286,7 +374,8 @@ describe("WebTransport connection state machine", () => {
     resolveProbe(ok200())
     await vi.advanceTimersByTimeAsync(0)
     expect(t.getConnectionSnapshot()).toBe("unauthorized")
-    expect(MockWebSocket.instances).toHaveLength(1) // no second socket opened
+    // No socket after the failed quick retry.
+    expect(MockWebSocket.instances).toHaveLength(2)
 
     const calls = fetchMock.mock.calls.length
     await vi.advanceTimersByTimeAsync(60_000)
@@ -302,8 +391,8 @@ describe("WebTransport connection state machine", () => {
       return ok200()
     })
 
-    ws.drop()
-    await vi.advanceTimersByTimeAsync(1000)
+    await dropAndFailTheQuickRetry(ws)
+    await vi.advanceTimersByTimeAsync(2000)
 
     // Must not dead-end in "reconnecting" with no socket and no timer.
     expect(t.getConnectionSnapshot()).toBe("unauthorized")
@@ -323,8 +412,8 @@ describe("WebTransport connection state machine", () => {
     const { ws } = connectReady()
     fetchMock.mockResolvedValue(ok200())
 
-    ws.drop()
-    await vi.advanceTimersByTimeAsync(1000)
+    await dropAndFailTheQuickRetry(ws)
+    await vi.advanceTimersByTimeAsync(2000)
 
     const [, init] = fetchMock.mock.calls[0]
     expect(init.headers).toMatchObject({
@@ -337,8 +426,8 @@ describe("WebTransport connection state machine", () => {
     const { t, ws } = connectReady()
     fetchMock.mockResolvedValue(proxy401())
 
-    ws.drop()
-    await vi.advanceTimersByTimeAsync(1000)
+    await dropAndFailTheQuickRetry(ws)
+    await vi.advanceTimersByTimeAsync(2000)
 
     expect(t.getConnectionSnapshot()).toBe("proxyUnauthorized")
     // The Codeg token is still valid; only the proxy's session expired.
@@ -392,7 +481,7 @@ describe("WebTransport signed in through a proxy (no token)", () => {
     const t = new WebTransport("http://localhost")
     t.eventStream()
     expect(MockWebSocket.instances).toHaveLength(1)
-    expect(lastWs().protocols).toEqual(["codeg-events"])
+    expect(lastWs().protocols).toEqual(["codeg-events.v2", "codeg-events"])
   })
 
   it("calls the API without an Authorization header", async () => {
@@ -410,8 +499,8 @@ describe("WebTransport signed in through a proxy (no token)", () => {
   it("probes health after a drop instead of declaring the session gone", async () => {
     const { t, ws } = connectReady()
     fetchMock.mockResolvedValue(ok200())
-    ws.drop()
-    await vi.advanceTimersByTimeAsync(1000)
+    await dropAndFailTheQuickRetry(ws)
+    await vi.advanceTimersByTimeAsync(2000)
     expect(fetchMock).toHaveBeenCalled()
     expect(t.getConnectionSnapshot()).toBe("reconnecting")
   })
@@ -419,8 +508,8 @@ describe("WebTransport signed in through a proxy (no token)", () => {
   it("treats any 401 as the proxy's: a reload is the only way back in", async () => {
     const { t, ws } = connectReady()
     fetchMock.mockResolvedValue(resp401())
-    ws.drop()
-    await vi.advanceTimersByTimeAsync(1000)
+    await dropAndFailTheQuickRetry(ws)
+    await vi.advanceTimersByTimeAsync(2000)
     expect(t.getConnectionSnapshot()).toBe("proxyUnauthorized")
   })
 })
@@ -450,7 +539,7 @@ describe("WebTransport opened without any credential", () => {
     expect(init.headers).not.toHaveProperty("Authorization")
     expect(localStorage.getItem("codeg_proxy_auth")).toBe("1")
     expect(MockWebSocket.instances).toHaveLength(1)
-    expect(lastWs().protocols).toEqual(["codeg-events"])
+    expect(lastWs().protocols).toEqual(["codeg-events.v2", "codeg-events"])
 
     // subscribe() still resolves only once the server-side receiver is in.
     lastWs().open()
@@ -507,30 +596,33 @@ describe("WebTransport opened without any credential", () => {
 })
 
 describe("WebTransport heartbeat and wake verification", () => {
-  it("sends periodic ping frames and stays connected when pong arrives", async () => {
+  it("sends a ping every 5 s and stays connected while anything comes back", async () => {
     const { t, ws } = connectReady()
 
-    // 20s → periodic ping fires.
-    await vi.advanceTimersByTimeAsync(20_000)
+    await vi.advanceTimersByTimeAsync(5_000)
     expect(ws.sent).toContain(JSON.stringify({ action: "ping" }))
     expect(t.getConnectionSnapshot()).toBe("connected")
 
-    // Server answers pong before the 5s timeout → connection stays healthy.
+    // A slow pong (a retransmission, a large frame ahead of it) is fine.
+    await vi.advanceTimersByTimeAsync(12_000)
     ws.onmessage?.({ data: JSON.stringify({ type: "pong" }) })
-    await vi.advanceTimersByTimeAsync(5_000)
+    // The next ping (at 20 s) is answered 14 s later: still in time.
+    await vi.advanceTimersByTimeAsync(17_000)
+    ws.onmessage?.({ data: JSON.stringify({ type: "pong" }) })
     expect(t.getConnectionSnapshot()).toBe("connected")
     expect(fetchMock).not.toHaveBeenCalled()
     t.destroy()
   })
 
-  it("tears down a half-open socket when pong times out and probes health immediately", async () => {
+  it("tears down a socket silent for 15 s after a ping and probes health", async () => {
     const { t, ws } = connectReady()
     fetchMock.mockResolvedValue(ok200())
 
-    // 20s ping + 5s without any reply → zombie socket torn down & probed.
-    await vi.advanceTimersByTimeAsync(20_000)
-    expect(ws.sent).toContain(JSON.stringify({ action: "ping" }))
     await vi.advanceTimersByTimeAsync(5_000)
+    expect(ws.sent).toContain(JSON.stringify({ action: "ping" }))
+    await vi.advanceTimersByTimeAsync(14_000)
+    expect(t.getConnectionSnapshot()).toBe("connected")
+    await vi.advanceTimersByTimeAsync(1_000)
 
     expect(t.getConnectionSnapshot()).toBe("reconnecting")
     expect(fetchMock).toHaveBeenCalledWith(
@@ -545,19 +637,55 @@ describe("WebTransport heartbeat and wake verification", () => {
     t.destroy()
   })
 
-  it("verifyConnection() pings an open socket and detects half-open links on wake", async () => {
+  it("on wake, replaces a silent socket at once when the server answers", async () => {
     const { t, ws } = connectReady()
     fetchMock.mockResolvedValue(ok200())
 
-    // Simulate returning from sleep while the socket still looks connected.
+    // The laptop slept a minute: no timers ran, nothing arrived.
+    vi.setSystemTime(Date.now() + 60_000)
     t.verifyConnection()
     expect(ws.sent).toContain(JSON.stringify({ action: "ping" }))
-    expect(t.getConnectionSnapshot()).toBe("connected")
+    await vi.advanceTimersByTimeAsync(499)
+    expect(fetchMock).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
 
-    // No pong within 5s → proactively torn down and probed.
-    await vi.advanceTimersByTimeAsync(5_000)
-    expect(t.getConnectionSnapshot()).toBe("reconnecting")
     expect(fetchMock).toHaveBeenCalledTimes(1)
+    const ws2 = lastWs()
+    expect(ws2).not.toBe(ws) // not 15 s later: now
+    expect(t.getConnectionSnapshot()).toBe("reconnecting")
+    ws2.open()
+    ws2.ready()
+    expect(t.getConnectionSnapshot()).toBe("connected")
+    t.destroy()
+  })
+
+  it("on wake, keeps a socket that answers the ping", async () => {
+    const { t, ws } = connectReady()
+    fetchMock.mockResolvedValue(ok200())
+
+    vi.setSystemTime(Date.now() + 60_000)
+    t.verifyConnection()
+    await vi.advanceTimersByTimeAsync(300)
+    ws.onmessage?.({ data: JSON.stringify({ type: "pong" }) })
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(lastWs()).toBe(ws)
+    expect(t.getConnectionSnapshot()).toBe("connected")
+    t.destroy()
+  })
+
+  it("on wake, leaves a recently active socket to the 15 s rule", async () => {
+    const { t, ws } = connectReady()
+    fetchMock.mockResolvedValue(ok200())
+
+    // Nothing for 1 s only: a slow answer, not proof of a dead socket.
+    await vi.advanceTimersByTimeAsync(1_000)
+    t.verifyConnection()
+    await vi.advanceTimersByTimeAsync(500)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(lastWs()).toBe(ws)
+    expect(t.getConnectionSnapshot()).toBe("connected")
     t.destroy()
   })
 
@@ -575,6 +703,47 @@ describe("WebTransport heartbeat and wake verification", () => {
     t.verifyConnection()
     await vi.advanceTimersByTimeAsync(0)
     expect(fetchMock).not.toHaveBeenCalled()
+    t.destroy()
+  })
+})
+
+describe("WebTransport on protocol v2", () => {
+  function zlibFrame(value: unknown): ArrayBuffer {
+    const stream = deflateSync(Buffer.from(JSON.stringify(value), "utf8"))
+    const out = new Uint8Array(stream.length + 1)
+    out[0] = 0x01
+    out.set(stream, 1)
+    return out.buffer
+  }
+
+  it("offers v2, reads compressed frames, and keeps their order with text", async () => {
+    const t = new WebTransport("http://localhost")
+    const seen: unknown[] = []
+    const subscribed = t.subscribe<number>("numbers", (n) => seen.push(n))
+    const ws = lastWs()
+    expect(ws.protocols?.slice(0, 2)).toEqual([
+      "codeg-events.v2",
+      "codeg-events",
+    ])
+    expect(ws.binaryType).toBe("arraybuffer")
+    ws.protocol = "codeg-events.v2"
+    ws.open()
+    ws.ready()
+    await subscribed
+    expect(t.usesProtocolV2()).toBe(true)
+
+    ws.onmessage?.({ data: zlibFrame({ channel: "numbers", payload: 1 }) })
+    ws.onmessage?.({
+      data: JSON.stringify({ channel: "numbers", payload: 2 }),
+    })
+    ws.onmessage?.({ data: zlibFrame({ channel: "numbers", payload: 3 }) })
+    await vi.waitFor(() => expect(seen).toEqual([1, 2, 3]))
+    t.destroy()
+  })
+
+  it("stays on v1 with a server that selects it", () => {
+    const { t } = connectReady()
+    expect(t.usesProtocolV2()).toBe(false)
     t.destroy()
   })
 })

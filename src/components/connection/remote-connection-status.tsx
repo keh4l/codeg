@@ -47,7 +47,9 @@ export function RemoteConnectionStatus({
 
   useEffect(() => {
     if (state !== "reconnecting") return
-    const timer = setTimeout(() => setGraceElapsed(true), 4_000)
+    // Fork: 8 s, as in `web-connection-guard.tsx` (a reconnect over a far,
+    // lossy link should finish unseen).
+    const timer = setTimeout(() => setGraceElapsed(true), 8_000)
     return () => {
       clearTimeout(timer)
       setGraceElapsed(false)

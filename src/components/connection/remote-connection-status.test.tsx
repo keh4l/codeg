@@ -48,7 +48,7 @@ describe("RemoteConnectionStatus", () => {
     expect(transport.eventStream).toHaveBeenCalledTimes(1)
     expect(screen.queryByRole("status")).not.toBeInTheDocument()
     act(() => {
-      vi.advanceTimersByTime(3_999)
+      vi.advanceTimersByTime(7_999)
       transport.setState("connected")
     })
     act(() => vi.advanceTimersByTime(10_000))
@@ -57,7 +57,7 @@ describe("RemoteConnectionStatus", () => {
 
   it("shows initial offline retries, then an honest terminal state and reconnect action", () => {
     const { transport } = renderStatus()
-    act(() => vi.advanceTimersByTime(4_000))
+    act(() => vi.advanceTimersByTime(8_000))
     expect(screen.getByRole("status")).toHaveTextContent("Connection lost")
     expect(
       screen.getByText(enMessages.WebConnection.reconnectingDescription)
@@ -83,11 +83,11 @@ describe("RemoteConnectionStatus", () => {
 
   it("starts a fresh grace window for each later outage", () => {
     const { transport } = renderStatus()
-    act(() => vi.advanceTimersByTime(4_000))
+    act(() => vi.advanceTimersByTime(8_000))
     expect(screen.getByRole("status")).toBeInTheDocument()
     act(() => transport.setState("connected"))
     act(() => transport.setState("reconnecting"))
-    act(() => vi.advanceTimersByTime(3_999))
+    act(() => vi.advanceTimersByTime(7_999))
     expect(screen.queryByRole("status")).not.toBeInTheDocument()
     act(() => vi.advanceTimersByTime(1))
     expect(screen.getByRole("status")).toBeInTheDocument()
@@ -118,7 +118,7 @@ describe("RemoteConnectionStatus", () => {
     act(() => transport.setState("connected"))
     act(() => transport.setState("reconnecting"))
     expect(screen.queryByRole("status")).not.toBeInTheDocument()
-    act(() => vi.advanceTimersByTime(4_000))
+    act(() => vi.advanceTimersByTime(8_000))
     expect(screen.getByRole("status")).toBeInTheDocument()
   })
 
