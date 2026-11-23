@@ -497,6 +497,9 @@ pub struct ConnectionManager {
     /// to-do task's retry still resumes its session wherever the task put it.
     /// Bounded by the number of conversations moved in one process lifetime.
     relocated: Arc<std::sync::Mutex<std::collections::HashSet<i32>>>,
+    /// Connections a conversation view opened, which the idle cap may end
+    /// (fork, `acp::idle_cap`).
+    pub(crate) ui_connections: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 }
 
 /// A parked `ask_user_question` awaiting its answer. The `sender` resolves the
@@ -588,7 +591,7 @@ pub enum ConnectionBusy {
 /// either. `child_live` answers whether a delegated child connection is still
 /// in the connection map: an entry whose terminal frame never arrived must not
 /// pin the parent forever.
-fn teardown_blocker(
+pub(crate) fn teardown_blocker(
     state: &crate::acp::session_state::SessionState,
     now: chrono::DateTime<chrono::Utc>,
     child_live: impl Fn(&str) -> bool,
@@ -696,6 +699,7 @@ impl ConnectionManager {
             question_registration: Arc::new(Mutex::new(())),
             pending_plan_approvals: Arc::new(Mutex::new(HashMap::new())),
             relocated: Arc::new(std::sync::Mutex::new(Default::default())),
+            ui_connections: Arc::new(std::sync::Mutex::new(Default::default())),
         }
     }
 
@@ -715,6 +719,7 @@ impl ConnectionManager {
             question_registration: self.question_registration.clone(),
             pending_plan_approvals: self.pending_plan_approvals.clone(),
             relocated: self.relocated.clone(),
+            ui_connections: self.ui_connections.clone(),
         }
     }
 
@@ -770,6 +775,7 @@ impl ConnectionManager {
             question_registration: Arc::new(Mutex::new(())),
             pending_plan_approvals: Arc::new(Mutex::new(HashMap::new())),
             relocated: Arc::new(std::sync::Mutex::new(Default::default())),
+            ui_connections: Arc::new(std::sync::Mutex::new(Default::default())),
         }
     }
 

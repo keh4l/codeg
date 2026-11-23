@@ -12326,7 +12326,7 @@ pub async fn acp_connect(
     verify_agent_installed(agent_type).await?;
 
     let emitter = EventEmitter::from_app(&app_handle);
-    manager
+    let connection_id = manager
         .spawn_agent(
             agent_type,
             working_dir,
@@ -12337,7 +12337,10 @@ pub async fn acp_connect(
             preferred_mode_id,
             preferred_config_values.unwrap_or_default(),
         )
-        .await
+        .await?;
+    // Fork: a conversation view's agent, kept warm under the idle cap.
+    manager.mark_ui_session(&connection_id);
+    Ok(connection_id)
 }
 
 #[cfg(feature = "tauri-runtime")]

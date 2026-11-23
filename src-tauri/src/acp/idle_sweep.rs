@@ -74,6 +74,8 @@ pub async fn idle_sweep_task(
         if n > 0 {
             tracing::info!("[ACP] idle sweep disconnected {n} connection(s)");
         }
+        // Fork: past the cap on idle agents opened from a view, end the oldest.
+        manager.enforce_configured_idle_cap().await;
     }
 }
 

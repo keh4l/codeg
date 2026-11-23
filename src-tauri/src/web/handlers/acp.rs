@@ -113,6 +113,8 @@ pub async fn acp_connect(
         )
         .await
         .map_err(|e| AppCommandError::task_execution_failed(e.to_string()))?;
+    // Fork: a conversation view's agent, kept warm under the idle cap.
+    manager.mark_ui_session(&connection_id);
 
     Ok(Json(connection_id))
 }

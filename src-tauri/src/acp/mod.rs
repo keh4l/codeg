@@ -31,6 +31,7 @@ pub mod file_system_runtime;
 pub mod follow_up;
 pub mod fork;
 pub mod host_tools_policy;
+pub mod idle_cap;
 pub mod idle_sweep;
 pub mod internal_bus;
 pub mod js_text;
