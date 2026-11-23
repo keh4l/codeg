@@ -130,6 +130,7 @@ import {
 } from "@/lib/acp-error-presentation"
 import { dismissNotification, notify, type NotifyAction } from "@/lib/notify"
 import type { SnapshotPatch } from "@/lib/snapshot-denormalize"
+import { getFreshAcpAgent } from "@/hooks/use-acp-agents"
 import {
   bodyRefsFromEvent,
   mergeToolCallBodyRefs,
@@ -7754,6 +7755,19 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       let configuredAgent: AcpAgentStatus | null = null
 
       try {
+        // Fork: an entry already `connected` for the same agent and folder is
+        // the answer, before any round trip. (`connected` is the one status
+        // the keepalive keeps honest — the stale gate below probes the other
+        // two; this is the fast path further down, taken first.)
+        const ready = storeRef.current.connections.get(contextKey)
+        if (
+          ready &&
+          ready.status === "connected" &&
+          ready.agentType === agentType &&
+          ready.workingDir === (workingDir ?? null)
+        ) {
+          return
+        }
         // Preflight: read agent status and block if the SDK / binary is
         // not installed. The session page must never trigger a download
         // or install — if the agent is not ready, prompt the user to
@@ -7764,8 +7778,17 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
         // of the surface's connection-status heart. It is thrown as an
         // "alerted" error so the catch-all at the bottom doesn't publish a
         // second, vaguer copy of it.
+        //
+        // Fork: the shared agents list, while fresh, already says whether the
+        // agent is ready; only an agent it does not show as ready is asked
+        // about (it may have been installed since). The server checks the
+        // install again when it spawns.
+        const known = getFreshAcpAgent(agentType)
         try {
-          configuredAgent = await acpGetAgentStatus(agentType)
+          configuredAgent =
+            known && resolveConnectBlockState(known).kind === "none"
+              ? known
+              : await acpGetAgentStatus(agentType)
         } catch (error) {
           const reason = t("unableReadAgentConfig", {
             message: normalizeErrorMessage(error),

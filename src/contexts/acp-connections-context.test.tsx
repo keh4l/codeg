@@ -64,6 +64,8 @@ const h = vi.hoisted(() => {
     store: null as unknown as ReturnType<typeof useConnectionStore> | null,
     // api spies
     acpGetAgentStatus: vi.fn(),
+    // Fork: the shared agents list the preflight reads first (cold here).
+    getFreshAcpAgent: vi.fn<(agentType: string) => unknown>(() => null),
     acpFindConnectionForConversation: vi.fn(),
     acpConnect: vi.fn(),
     acpDisconnect: vi.fn(),
@@ -99,6 +101,10 @@ vi.mock("next-intl", () => ({
     h.tCalls.push([key, values])
     return key
   },
+}))
+
+vi.mock("@/hooks/use-acp-agents", () => ({
+  getFreshAcpAgent: (agentType: string) => h.getFreshAcpAgent(agentType),
 }))
 
 vi.mock("@/lib/platform", () => ({
@@ -204,6 +210,8 @@ beforeEach(() => {
   h.eventStreamValue = h.stream
   h.buildDelegationSeedEnvelopes.mockClear()
   h.acpGetAgentStatus.mockReset()
+  h.getFreshAcpAgent.mockReset()
+  h.getFreshAcpAgent.mockReturnValue(null)
   h.acpFindConnectionForConversation.mockReset()
   h.acpConnect.mockReset()
   h.acpDisconnect.mockReset()
@@ -1889,6 +1897,65 @@ describe("AcpConnectionsProvider reconnect (status-icon button)", () => {
       undefined,
       {}
     )
+  })
+
+  // Fork: no round trip before the spawn for an agent the agents list shows
+  // ready, and none at all for a key already connected.
+  it("skips the preflight for an agent the fresh agents list shows ready", async () => {
+    h.getFreshAcpAgent.mockReturnValue({
+      agent_type: "claude_code",
+      enabled: true,
+      available: true,
+      installed_version: "1.0.0",
+      is_acp_adapter: true,
+    })
+    h.acpFindConnectionForConversation.mockResolvedValue(null)
+    await mountProvider()
+    await act(async () => {
+      await h.actions!.connect(TAB, "claude_code", "/tmp/x", "sess-1", 42)
+    })
+    expect(h.acpGetAgentStatus).not.toHaveBeenCalled()
+    expect(h.acpConnect).toHaveBeenCalledTimes(1)
+  })
+
+  it("still asks about an agent the agents list does not show ready", async () => {
+    h.getFreshAcpAgent.mockReturnValue({
+      agent_type: "claude_code",
+      enabled: true,
+      available: true,
+      installed_version: null,
+      is_acp_adapter: true,
+    })
+    h.acpFindConnectionForConversation.mockResolvedValue(null)
+    await mountProvider()
+    await act(async () => {
+      await h.actions!.connect(TAB, "claude_code", "/tmp/x", "sess-1", 42)
+    })
+    expect(h.acpGetAgentStatus).toHaveBeenCalledTimes(1)
+    expect(h.acpConnect).toHaveBeenCalledTimes(1)
+  })
+
+  it("returns at once for a key already connected to the same agent and folder", async () => {
+    h.acpFindConnectionForConversation.mockResolvedValue(null)
+    await mountProvider()
+    await act(async () => {
+      await h.actions!.connect(TAB, "claude_code", "/tmp/x", "sess-1", 42)
+    })
+    h.denormalizeSnapshot.mockReturnValue(snapshotBase())
+    hydrateSnapshot(latestAttachHandlers(), {
+      event_seq: 0,
+    } as unknown as LiveSessionSnapshot)
+    expect(h.store!.getConnection(TAB)?.status).toBe("connected")
+    h.acpGetAgentStatus.mockClear()
+    h.acpConnect.mockClear()
+    h.acpFindConnectionForConversation.mockClear()
+
+    await act(async () => {
+      await h.actions!.connect(TAB, "claude_code", "/tmp/x", "sess-1", 42)
+    })
+    expect(h.acpGetAgentStatus).not.toHaveBeenCalled()
+    expect(h.acpFindConnectionForConversation).not.toHaveBeenCalled()
+    expect(h.acpConnect).not.toHaveBeenCalled()
   })
 
   it("reconnects after a connect that never produced a connection", async () => {

@@ -197,6 +197,18 @@ function acquireSharedSubscription(): () => void {
  * cache prevents a transient API blip from silently degrading downstream
  * defaults.
  */
+/**
+ * The shared list's entry for `agentType` while the list is fresh (a reload
+ * has succeeded and the subscription is alive), else `null` (fork). The
+ * connect preflight reads it to skip asking the server for an agent it
+ * already knows is ready.
+ */
+export function getFreshAcpAgent(agentType: string): AcpAgentInfo | null {
+  const { agents, fresh } = useAcpAgentsStore.getState()
+  if (!fresh) return null
+  return agents.find((agent) => agent.agent_type === agentType) ?? null
+}
+
 export function useAcpAgents(): UseAcpAgentsResult {
   useEffect(() => acquireSharedSubscription(), [])
   const agents = useAcpAgentsStore((s) => s.agents)
