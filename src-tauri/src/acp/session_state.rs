@@ -1396,11 +1396,28 @@ impl SessionState {
                 content,
                 raw_input,
                 raw_output,
+                raw_output_append,
                 locations,
                 meta,
                 images,
-                ..
             } => {
+                // Fork: streamed output (`raw_output_append`) extends what
+                // the call has so far. It used to replace it, so a snapshot
+                // of a running command held only its latest chunk.
+                let appended = match raw_output {
+                    Some(suffix) if *raw_output_append == Some(true) => {
+                        append_tool_call_output(
+                            &mut self
+                                .active_tool_calls
+                                .entry(tool_call_id.clone())
+                                .or_insert_with(|| new_tool_call_state(tool_call_id))
+                                .output,
+                            suffix,
+                        );
+                        true
+                    }
+                    _ => false,
+                };
                 self.upsert_tool_call(
                     tool_call_id,
                     None,
@@ -1408,7 +1425,11 @@ impl SessionState {
                     status.as_deref(),
                     content.as_deref(),
                     raw_input.as_deref(),
-                    raw_output.as_deref(),
+                    if appended {
+                        None
+                    } else {
+                        raw_output.as_deref()
+                    },
                     locations.as_ref(),
                     meta.as_ref(),
                     images.as_deref(),
@@ -2438,19 +2459,7 @@ impl SessionState {
         let entry = self
             .active_tool_calls
             .entry(id.to_string())
-            .or_insert_with(|| ToolCallState {
-                id: id.to_string(),
-                kind: ToolKind::Other,
-                label: String::new(),
-                status: ToolCallStatus::Pending,
-                input: None,
-                output: None,
-                content: None,
-                locations: None,
-                meta: None,
-                images: Vec::new(),
-                raw_input_chunks: Vec::new(),
-            });
+            .or_insert_with(|| new_tool_call_state(id));
         if let Some(k) = kind {
             entry.kind = parse_tool_kind(k);
         }
@@ -3006,6 +3015,73 @@ fn parse_tool_call_status(s: &str) -> ToolCallStatus {
 
 /// `raw_output` 是已序列化的 JSON 文本。尽力解析为结构化 JSON；解析失败时回退为
 /// 文本。如果解析后的 JSON 顶层有 `"error"` 字段，提升为 `Error` 变体。
+/// A tool call first heard of by `id`, with nothing known about it yet.
+fn new_tool_call_state(id: &str) -> ToolCallState {
+    ToolCallState {
+        id: id.to_string(),
+        kind: ToolKind::Other,
+        label: String::new(),
+        status: ToolCallStatus::Pending,
+        input: None,
+        output: None,
+        content: None,
+        locations: None,
+        meta: None,
+        images: Vec::new(),
+        raw_input_chunks: Vec::new(),
+    }
+}
+
+/// Plain-text output a running tool call keeps for the snapshot (fork): its
+/// tail, as much as the client keeps (`MAX_LIVE_TOOL_RAW_OUTPUT_CHARS` in
+/// `src/lib/live-tool-output.ts`). Output that opens like JSON is kept whole,
+/// as the client does: a cut would make it unreadable.
+const MAX_LIVE_TOOL_OUTPUT_TAIL_CHARS: usize = 200_000;
+
+/// How much of an output's head decides whether it is structured.
+const STRUCTURED_PROBE_BYTES: usize = 1024;
+
+/// Whether `text` opens with a JSON object or array (possibly incomplete).
+/// Terminal output often starts with a bracket too — `[1/200] Building`,
+/// `[INFO]`, `{{ … }}` — which a JSON parser rejects as a syntax error, while
+/// a structured result cut short only runs out of input.
+fn looks_structured(text: &str) -> bool {
+    let head = text.trim_start();
+    if !matches!(head.as_bytes().first(), Some(b'{' | b'[')) {
+        return false;
+    }
+    let mut end = head.len().min(STRUCTURED_PROBE_BYTES);
+    while !head.is_char_boundary(end) {
+        end -= 1;
+    }
+    match serde_json::from_str::<serde::de::IgnoredAny>(&head[..end]) {
+        Ok(_) => true,
+        Err(err) => err.is_eof(),
+    }
+}
+
+/// Append streamed output (`raw_output_append`) to what a call has so far,
+/// bounding plain text to its tail.
+fn append_tool_call_output(output: &mut Option<ToolCallOutput>, suffix: &str) {
+    let mut text = match output.take() {
+        Some(ToolCallOutput::Text { content }) => content,
+        Some(ToolCallOutput::Json { value }) => value.to_string(),
+        Some(ToolCallOutput::Error { message }) => message,
+        None => String::new(),
+    };
+    text.push_str(suffix);
+    if text.len() > MAX_LIVE_TOOL_OUTPUT_TAIL_CHARS && !looks_structured(&text) {
+        if let Some((cut, _)) = text
+            .char_indices()
+            .rev()
+            .nth(MAX_LIVE_TOOL_OUTPUT_TAIL_CHARS - 1)
+        {
+            text.drain(..cut);
+        }
+    }
+    *output = Some(ToolCallOutput::Text { content: text });
+}
+
 fn parse_tool_call_output_text(text: &str) -> ToolCallOutput {
     match serde_json::from_str::<serde_json::Value>(text) {
         Ok(value) => {
@@ -4958,6 +5034,82 @@ mod tests {
             kept > 32 && kept < CALLS,
             "expected a bounded recent window to keep its output, got {kept}"
         );
+    }
+
+    fn streamed_output(s: &mut SessionState, id: &str, chunk: &str, append: bool) {
+        s.apply_event(&AcpEvent::ToolCallUpdate {
+            tool_call_id: id.into(),
+            title: None,
+            status: None,
+            content: None,
+            raw_input: None,
+            raw_output: Some(chunk.into()),
+            raw_output_append: Some(append),
+            locations: None,
+            meta: None,
+            images: None,
+        });
+    }
+
+    fn output_text(s: &SessionState, id: &str) -> String {
+        match &s.active_tool_calls.get(id).expect("call").output {
+            Some(ToolCallOutput::Text { content }) => content.clone(),
+            other => panic!("expected text output, got {other:?}"),
+        }
+    }
+
+    /// Fork: a running command's streamed output accumulates; the snapshot
+    /// used to hold only its latest chunk.
+    #[test]
+    fn streamed_tool_output_accumulates_in_the_snapshot() {
+        let mut s = fresh_state();
+        run_tool_call(&mut s, "tc-run", 0, false);
+        streamed_output(&mut s, "tc-run", "line 1\n", false);
+        streamed_output(&mut s, "tc-run", "line 2\n", true);
+        streamed_output(&mut s, "tc-run", "123", true);
+        assert_eq!(output_text(&s, "tc-run"), "line 1\nline 2\n123");
+
+        // A full update still replaces it.
+        streamed_output(&mut s, "tc-run", "done", false);
+        assert_eq!(output_text(&s, "tc-run"), "done");
+
+        // An append for a call not seen yet starts its output.
+        streamed_output(&mut s, "tc-late", "first", true);
+        assert_eq!(output_text(&s, "tc-late"), "first");
+
+        // Appending to a value that parsed as JSON keeps the text.
+        streamed_output(&mut s, "tc-num", "42", false);
+        streamed_output(&mut s, "tc-num", "\n43", true);
+        assert_eq!(output_text(&s, "tc-num"), "42\n43");
+    }
+
+    /// Plain text keeps its tail, as the client does; output that opens like
+    /// JSON is never cut.
+    #[test]
+    fn streamed_tool_output_keeps_the_tail_of_plain_text() {
+        let mut s = fresh_state();
+        let line = "[1/200] building crate 测试 ok\n";
+        for _ in 0..12_000 {
+            streamed_output(&mut s, "tc-log", line, true);
+        }
+        let text = output_text(&s, "tc-log");
+        assert_eq!(text.chars().count(), MAX_LIVE_TOOL_OUTPUT_TAIL_CHARS);
+        assert!(text.ends_with(line));
+
+        let mut json = String::from("{\"items\":[");
+        streamed_output(&mut s, "tc-json", &json, true);
+        let item = "{\"name\":\"x\",\"size\":12345},";
+        for _ in 0..10_000 {
+            streamed_output(&mut s, "tc-json", item, true);
+            json.push_str(item);
+        }
+        assert_eq!(output_text(&s, "tc-json"), json);
+
+        assert!(looks_structured("  {\"a\": [1, 2"));
+        assert!(looks_structured("[{\"a\":1}]"));
+        assert!(!looks_structured("[INFO] starting"));
+        assert!(!looks_structured("{{ template }}"));
+        assert!(!looks_structured("plain"));
     }
 
     /// The budget bounds finished work only. A single running call bigger than
