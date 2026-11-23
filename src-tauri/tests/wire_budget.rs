@@ -1083,3 +1083,72 @@ async fn session_flags_instead_of_the_snapshot() {
         budget: 200,
     }]);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The minimap's list with the first window (fork, 3.10): a client opening a
+// long conversation asked for it in a second round trip once the window came.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn minimap_comes_with_a_later_window() {
+    let (server, state, _d, _s) = build_server().await;
+    let config_dir = tempfile::tempdir().expect("claude config dir");
+    let cwd = "/tmp/codeg-wire-budget-minimap";
+    let session = "1c2d3e4f-5a6b-4c7d-8e9f-a0b1c2d3e4f5";
+    write_claude_rounds(config_dir.path(), cwd, session, 40, false, |_| {
+        tool_output(4)
+    });
+    let conversation_id = claude_conversation(&state, config_dir.path(), cwd, session).await;
+    let post = |cmd: &'static str, body: Value| {
+        server
+            .post(&format!("/api/{cmd}"))
+            .add_header("authorization", format!("Bearer {TOKEN}"))
+            .json(&body)
+    };
+
+    let windowed: Value = post(
+        "get_folder_conversation",
+        json!({
+            "conversationId": conversation_id,
+            "tailTurns": 120,
+            "windowMaxBytes": 512 * 1024,
+            "windowMaxUserTurns": 8,
+            "minimap": true,
+        }),
+    )
+    .await
+    .json();
+    assert!(windowed["turns_offset"].as_u64().unwrap_or(0) > 0, "a later window");
+    let separate: Value = post(
+        "get_conversation_minimap",
+        json!({ "conversationId": conversation_id }),
+    )
+    .await
+    .json();
+    assert_eq!(windowed["minimap"], separate, "the same list as asked for alone");
+    assert_eq!(separate.as_array().map(Vec::len), Some(40));
+
+    // Not asked for: as before.
+    let plain: Value = post(
+        "get_folder_conversation",
+        json!({
+            "conversationId": conversation_id,
+            "tailTurns": 120,
+            "windowMaxBytes": 512 * 1024,
+            "windowMaxUserTurns": 8,
+        }),
+    )
+    .await
+    .json();
+    assert!(plain.get("minimap").is_none());
+
+    // The whole history loaded: the client draws it from the turns.
+    let whole: Value = post(
+        "get_folder_conversation",
+        json!({ "conversationId": conversation_id, "tailTurns": 1000, "minimap": true }),
+    )
+    .await
+    .json();
+    assert_eq!(whole["turns_offset"].as_u64().unwrap_or(0), 0);
+    assert!(whole.get("minimap").is_none());
+}

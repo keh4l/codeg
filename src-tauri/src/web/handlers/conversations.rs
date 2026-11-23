@@ -170,6 +170,10 @@ pub struct GetFolderConversationParams {
     pub window_max_bytes: Option<usize>,
     #[serde(default)]
     pub window_max_user_turns: Option<usize>,
+    /// Bring the timeline minimap's list along when the window does not start
+    /// at the first turn (fork, `transcript_view::with_minimap`).
+    #[serde(default)]
+    pub minimap: bool,
 }
 
 pub async fn get_folder_conversation(
@@ -187,13 +191,20 @@ pub async fn get_folder_conversation(
             params.tool_bodies,
         ),
     );
-    let result = conv_commands::get_folder_conversation_with_live_core(
+    let detail = conv_commands::get_folder_conversation_with_live_core(
         &db.conn,
         &state.connection_manager,
         &state.chat_channel_manager,
         &state.emitter,
         params.conversation_id,
         window,
+    );
+    // Fork: the minimap's list, read alongside.
+    let result = crate::commands::transcript_view::with_minimap(
+        &db.conn,
+        params.conversation_id,
+        params.minimap,
+        detail,
     )
     .await?;
     crate::web::image_refs::respond(result, params.image_refs, params.tool_bodies).await

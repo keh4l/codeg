@@ -31,13 +31,13 @@ import {
   type FollowUpQueueView,
   type FollowUpSteerResult,
   followUpEnqueue,
-  followUpList,
   followUpRemove,
   followUpReorder,
   followUpResume,
   followUpSendNow,
   followUpUpdate,
 } from "@/lib/follow-up/api"
+import { cachedFollowUpQueue, loadFollowUpQueue } from "@/lib/follow-up/cache"
 import {
   onTransportReconnect,
   subscribe as subscribePlatform,
@@ -142,13 +142,17 @@ export function useFollowUpQueue({
     if (conversationId == null) return
     let cancelled = false
     const load = () => {
-      followUpList(conversationId)
+      loadFollowUpQueue(conversationId)
         .then((view) => {
           if (!cancelled) apply(view)
         })
         .catch(() => {})
     }
-    load()
+    // Fork: what the broadcasts kept since it was last open, if anything.
+    const cached = cachedFollowUpQueue(conversationId)
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the kept view stands in for the read, as its result would
+    if (cached) apply(cached)
+    else load()
     // Broadcasts sent while a web client was offline are lost: reload.
     const stopReconnect = onTransportReconnect(load)
     let unlisten: (() => void) | null = null

@@ -41,8 +41,8 @@ import {
   followUpEnqueue,
   followUpKick,
   followUpSteer,
-  followUpSteers,
 } from "@/lib/follow-up/api"
+import { cachedFollowUpSteers, loadFollowUpSteers } from "@/lib/follow-up/cache"
 import { setFollowUpComposerBridge } from "@/lib/follow-up/composer-bridge"
 import {
   onTransportReconnect,
@@ -91,13 +91,17 @@ export function useFollowUpPanel({
     if (conversationId == null) return
     let cancelled = false
     const load = () => {
-      followUpSteers(conversationId)
+      loadFollowUpSteers(conversationId)
         .then((items) => {
           if (!cancelled) setRecords({ conversationId, items })
         })
         .catch(() => {})
     }
-    load()
+    // Fork: the records kept since it was last open, if none changed since.
+    const cached = cachedFollowUpSteers(conversationId)
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the kept answer stands in for the read, as its result would
+    if (cached) setRecords({ conversationId, items: cached })
+    else load()
     const stopReconnect = onTransportReconnect(load)
     let unlisten: (() => void) | null = null
     void subscribePlatform<{ conversationId: number }>(

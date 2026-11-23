@@ -435,6 +435,45 @@ pub async fn get_conversation_minimap_core(
     Ok(minimap_entries(&detail.turns))
 }
 
+/// A conversation detail with the minimap's list alongside (fork): what a
+/// client opening a long conversation would otherwise ask for in a second
+/// round trip once the window arrived.
+#[derive(Debug, Serialize)]
+pub struct DetailWithMinimap {
+    #[serde(flatten)]
+    pub detail: crate::models::DbConversationDetail,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub minimap: Option<Vec<ConversationMinimapEntry>>,
+}
+
+/// `detail` (a windowed detail read), with the minimap's list read alongside
+/// when `wanted`. The list is sent only when the window does not start at the
+/// first turn — otherwise the loaded turns are the whole history and the
+/// client draws the minimap from them. A list that fails to read is left out;
+/// the client then asks for it as before. Both reads parse the same
+/// transcript, which the detail cache (`commands::detail_cache`) turns into
+/// one parse for Claude Code.
+pub async fn with_minimap(
+    conn: &sea_orm::DatabaseConnection,
+    conversation_id: i32,
+    wanted: bool,
+    detail: impl std::future::Future<
+        Output = Result<crate::models::DbConversationDetail, AppCommandError>,
+    >,
+) -> Result<DetailWithMinimap, AppCommandError> {
+    let minimap = async {
+        if wanted {
+            get_conversation_minimap_core(conn, conversation_id).await.ok()
+        } else {
+            None
+        }
+    };
+    let (detail, minimap) = tokio::join!(detail, minimap);
+    let detail = detail?;
+    let minimap = minimap.filter(|_| detail.turns_offset.is_some_and(|offset| offset > 0));
+    Ok(DetailWithMinimap { detail, minimap })
+}
+
 // ── Tauri commands ───────────────────────────────────────────────────────────
 
 #[cfg(feature = "tauri-runtime")]

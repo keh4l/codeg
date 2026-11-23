@@ -3,53 +3,15 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTranslations } from "next-intl"
 
+import { cachedMinimap, rememberMinimap } from "@/lib/minimap-cache"
 import {
   getConversationMinimap,
   type ConversationMinimapEntry,
 } from "@/lib/transcript-view-api"
 import { cn } from "@/lib/utils"
 
-/**
- * Server lists kept per conversation (fork), so a remount, a reconnect or a
- * page of older history loading in does not ask the server again. A list
- * covers every turn before the window it was fetched for; it is fetched again
- * only when the window starts later than that (turns it does not know sit
- * between), or starts at the same turn over a different history (the
- * window's `prefixHash` changed: the history before it was rewritten).
- */
-interface CachedMinimap {
-  entries: ConversationMinimapEntry[]
-  offset: number
-  prefixHash: string | null
-}
-const MAX_CACHED_MINIMAPS = 32
-const minimapCache = new Map<number, CachedMinimap>()
-
-function cachedMinimap(
-  conversationId: number,
-  offset: number,
-  prefixHash: string | null
-): ConversationMinimapEntry[] | null {
-  const cached = minimapCache.get(conversationId)
-  if (!cached) return null
-  if (offset > cached.offset) return null
-  if (offset === cached.offset && prefixHash !== cached.prefixHash) return null
-  return cached.entries
-}
-
-function rememberMinimap(conversationId: number, value: CachedMinimap) {
-  minimapCache.delete(conversationId)
-  minimapCache.set(conversationId, value)
-  if (minimapCache.size > MAX_CACHED_MINIMAPS) {
-    const oldest = minimapCache.keys().next().value
-    if (oldest !== undefined) minimapCache.delete(oldest)
-  }
-}
-
 /** @internal Test-only. */
-export function __resetMinimapCacheForTests() {
-  minimapCache.clear()
-}
+export { __resetMinimapCacheForTests } from "@/lib/minimap-cache"
 
 export interface MinimapLocalTurn {
   turnIndex: number

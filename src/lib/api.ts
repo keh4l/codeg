@@ -232,6 +232,9 @@ import type {
   TokenUsageSyncStatus,
 } from "./types"
 import { wantsImageRefs } from "@/lib/conversation-images"
+import { readChatViewPrefs } from "@/lib/chat-view-prefs"
+import { hasCachedMinimap, rememberMinimap } from "@/lib/minimap-cache"
+import type { ConversationMinimapEntry } from "@/lib/transcript-view-api"
 import { isUnsupportedCommandError } from "@/lib/harness/errors"
 
 export async function listConversations(params?: {
@@ -2698,8 +2701,21 @@ export async function getFolderConversation(
   conversationId: number,
   window?: { tailTurns?: number; fromIndex?: number }
 ): Promise<DbConversationDetail> {
-  return getTransport().call("get_folder_conversation", {
+  // Fork: over a network, a first window brings the minimap's list of the
+  // turns before it along (one round trip less on open) when the minimap is
+  // shown and no list is kept yet; an old server ignores it.
+  const prefs = readChatViewPrefs()
+  const minimap =
+    window?.tailTurns != null &&
+    fetchesOverNetwork() &&
+    prefs.view === "compact" &&
+    prefs.minimap &&
+    !hasCachedMinimap(conversationId)
+  const detail = await getTransport().call<
+    DbConversationDetail & { minimap?: ConversationMinimapEntry[] }
+  >("get_folder_conversation", {
     conversationId,
+    ...(minimap ? { minimap: true } : {}),
     ...(window?.tailTurns != null ? { tailTurns: window.tailTurns } : {}),
     ...(window?.fromIndex != null ? { fromIndex: window.fromIndex } : {}),
     // Fork: images as blob references (`lib/conversation-images.ts`); an
@@ -2712,6 +2728,16 @@ export async function getFolderConversation(
     // on demand (`lib/tool-bodies.ts`); an old server ignores it.
     ...(fetchesOverNetwork() ? { toolBodies: true } : {}),
   })
+  if (detail.minimap === undefined) return detail
+  const { minimap: entries, ...rest } = detail
+  if ((rest.turns_offset ?? 0) > 0) {
+    rememberMinimap(conversationId, {
+      entries,
+      offset: rest.turns_offset ?? 0,
+      prefixHash: rest.prefix_hash ?? null,
+    })
+  }
+  return rest
 }
 
 /**
