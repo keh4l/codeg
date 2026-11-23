@@ -264,14 +264,18 @@ async fn ws_hot_attach_with_cursor_receives_replay() {
     assert_eq!(frame["subscription_id"], "sub-replay");
     assert_eq!(frame["connection_id"], conn_id);
     let events = frame["events"].as_array().expect("events array");
+    // Fork: the two missed text chunks are adjacent, so they come back merged
+    // into one envelope covering seq 2..=3 (`web::ws_coalesce`).
     assert_eq!(
         events.len(),
-        2,
-        "expected 2 missed events, got {:?}",
+        1,
+        "expected the 2 missed chunks merged, got {:?}",
         events
     );
-    assert_eq!(events[0]["seq"], 2);
-    assert_eq!(events[1]["seq"], 3);
+    assert_eq!(events[0]["first_seq"], 2);
+    assert_eq!(events[0]["seq"], 3);
+    assert_eq!(events[0]["type"], "content_delta");
+    assert_eq!(events[0]["text"], "delta-1delta-2");
     assert_eq!(frame["high_water_seq"], 3);
 }
 

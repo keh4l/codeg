@@ -4984,6 +4984,60 @@ describe("streaming flush window widens with the run it re-renders", () => {
       vi.useRealTimers()
     }
   })
+
+  // Fork: the server merges adjacent streamed chunks into one envelope
+  // (`first_seq..=seq`, `src-tauri/src/web/ws_coalesce.rs`), live and in a
+  // replay. The client needs nothing new for it: the merged text is applied
+  // once, the cursor lands on `seq`, and a chunk inside the merged range is a
+  // duplicate like any other.
+  it("applies a merged envelope once, live and replayed", async () => {
+    const handlers = await mountStreamingOwner()
+    vi.useFakeTimers()
+    try {
+      emitAcpEvent(handlers, {
+        seq: 4,
+        first_seq: 2,
+        connection_id: "spawned-conn",
+        type: "content_delta",
+        text: "one two three",
+      })
+      // A chunk the merge already covered (a stale duplicate) is dropped.
+      emitAcpEvent(handlers, {
+        seq: 3,
+        connection_id: "spawned-conn",
+        type: "content_delta",
+        text: " two",
+      })
+      act(() => {
+        handlers.onReplay(
+          [
+            {
+              seq: 4,
+              first_seq: 2,
+              connection_id: "spawned-conn",
+              type: "content_delta",
+              text: "one two three",
+            },
+            {
+              seq: 7,
+              first_seq: 5,
+              connection_id: "spawned-conn",
+              type: "content_delta",
+              text: " four five six",
+            },
+          ],
+          7
+        )
+      })
+      act(() => {
+        vi.advanceTimersByTime(STREAM_FLUSH_MAX_MS)
+      })
+      expect(liveText()).toBe("one two three four five six")
+      expect(h.store!.getConnection(TAB)?.lastAppliedSeq).toBe(7)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe("AcpConnectionsProvider Grok cross-agent-type model switch", () => {

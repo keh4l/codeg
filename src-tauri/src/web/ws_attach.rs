@@ -12,22 +12,52 @@
 //! for backward compatibility; Phase 4 retires it.
 
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use tokio::time::Instant;
 
 use crate::acp::internal_bus::EventBusMetrics;
 use crate::acp::manager::ConnectionManager;
 use crate::acp::session_state::LiveSessionSnapshot;
 use crate::acp::types::EventEnvelope;
 
-/// Maximum number of events delivered in a single `replay` response. Larger
-/// gaps fall through to a `snapshot` even when the ring buffer can satisfy
-/// them — past this many events, snapshot serialization is comparable in
-/// size and avoids forcing the client to apply the events one-by-one.
-pub const REPLAY_BATCH_THRESHOLD: usize = 32;
+use super::ws_coalesce::{self, Run, WireEnvelope};
+
+/// Largest `replay` (fork): at most this many wire envelopes and this many
+/// estimated bytes, after merging streamed text (`ws_coalesce`). A bigger gap
+/// falls through to a `snapshot` even when the ring buffer covers it.
+///
+/// This replaced a flat 32-event limit, under which a reconnect a few seconds
+/// into a streamed reply already took a snapshot of the whole live turn —
+/// hundreds of KB with tool output — however little had changed. Merged, a
+/// minute of streaming text is a handful of envelopes, so the limits now
+/// follow what the client is missing rather than how it was chunked.
+pub const REPLAY_MAX_ITEMS: usize = 512;
+pub const REPLAY_MAX_BYTES: usize = 512 * 1024;
+
+/// Default window for merging streamed text on the live stream (fork). The
+/// first chunk after a quiet spell goes out at once; chunks arriving within
+/// this long of the last frame are held and merged into the next one. So a
+/// stream costs at most ~10 frames a second, and text is never held longer
+/// than this. `CODEG_WS_COALESCE_MS` overrides it; `0` sends every chunk as
+/// its own frame.
+pub const DEFAULT_COALESCE_MS: u64 = 100;
+
+/// The server-wide merge window (`CODEG_WS_COALESCE_MS`, read once).
+pub fn default_coalesce_window() -> Duration {
+    static WINDOW: OnceLock<Duration> = OnceLock::new();
+    *WINDOW.get_or_init(|| {
+        let ms = std::env::var("CODEG_WS_COALESCE_MS")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(DEFAULT_COALESCE_MS);
+        Duration::from_millis(ms.min(1000))
+    })
+}
 
 /// Capacity of the per-WS-connection outbound mpsc channel. Backpressure
 /// from a slow WS write naturally throttles per-subscription forwarders;
@@ -68,16 +98,18 @@ pub enum ServerMsg {
     },
     /// Batched catch-up for a small gap. `high_water_seq` is the largest
     /// seq in `events`; subsequent `event` frames carry `seq > high_water_seq`.
+    /// Adjacent streamed text in `events` is merged (`ws_coalesce`).
     Replay {
         subscription_id: String,
         connection_id: String,
-        events: Vec<Arc<EventEnvelope>>,
+        events: Vec<WireEnvelope>,
         high_water_seq: u64,
     },
-    /// Live event delivered after the initial Snapshot/Replay frame.
+    /// Live event delivered after the initial Snapshot/Replay frame; may be
+    /// several adjacent text chunks merged (`ws_coalesce`).
     Event {
         subscription_id: String,
-        envelope: Arc<EventEnvelope>,
+        envelope: WireEnvelope,
     },
     /// Subscription was terminated by the server. `reason` is a stable code
     /// the client maps to UX (re-attach vs. drop the conversation).
@@ -119,7 +151,8 @@ pub struct AttachOutcome {
 ///
 /// `metrics` records which response shape was returned (cold snapshot vs.
 /// resumed replay vs. snapshot fallback) so operators can spot when the
-/// `REPLAY_BATCH_THRESHOLD` / ring-buffer caps need tuning.
+/// replay limits (`REPLAY_MAX_ITEMS` / `REPLAY_MAX_BYTES`) or ring-buffer caps
+/// need tuning.
 pub async fn handle_attach(
     manager: &ConnectionManager,
     metrics: &EventBusMetrics,
@@ -147,6 +180,7 @@ pub async fn handle_attach(
     //   - cursor in ring buffer with small gap → replay
     //   - cursor in ring buffer with large gap → snapshot (cheaper)
     //   - cursor older than ring buffer → snapshot (only choice)
+    //   (fork: "small" is decided on the merged replay, `decide_resume`)
     let snapshot_msg = || ServerMsg::Snapshot {
         subscription_id: subscription_id.clone(),
         connection_id: connection_id.clone(),
@@ -175,14 +209,16 @@ pub async fn handle_attach(
             metrics.snapshot_cold_count.fetch_add(1, Ordering::Relaxed);
             snapshot_msg()
         }
-        Some(cursor) => match s.recent_events_after(cursor) {
-            Some(events) if events.len() <= REPLAY_BATCH_THRESHOLD && !events.is_empty() => {
-                let event_count = events.len() as u64;
-                let high_water_seq = events.last().expect("non-empty checked above").seq;
+        Some(cursor) => match decide_resume(s.recent_events_after(cursor)) {
+            Some((events, event_count)) => {
+                let high_water_seq = events
+                    .last()
+                    .expect("decide_resume never returns empty")
+                    .seq();
                 metrics.replay_count.fetch_add(1, Ordering::Relaxed);
                 metrics
                     .replay_event_total
-                    .fetch_add(event_count, Ordering::Relaxed);
+                    .fetch_add(event_count as u64, Ordering::Relaxed);
                 ServerMsg::Replay {
                     subscription_id: subscription_id.clone(),
                     connection_id: connection_id.clone(),
@@ -207,6 +243,29 @@ pub async fn handle_attach(
         initial_msg,
         receiver,
     })
+}
+
+/// Whether a gap the ring buffer covers (`events`, `None` when it does not)
+/// goes back as a replay: merged, it must be non-empty and within
+/// `REPLAY_MAX_ITEMS` / `REPLAY_MAX_BYTES`. Returns the merged replay and how
+/// many events it covers, or `None` for a snapshot.
+pub fn decide_resume(
+    events: Option<Vec<Arc<EventEnvelope>>>,
+) -> Option<(Vec<WireEnvelope>, usize)> {
+    let events = events?;
+    if events.is_empty() {
+        return None;
+    }
+    let covered = events.len();
+    let merged = ws_coalesce::coalesce(events);
+    if merged.len() > REPLAY_MAX_ITEMS {
+        return None;
+    }
+    let bytes: usize = merged.iter().map(WireEnvelope::estimated_size).sum();
+    if bytes > REPLAY_MAX_BYTES {
+        return None;
+    }
+    Some((merged, covered))
 }
 
 /// Spawn a forwarding task that drains the per-connection broadcast receiver
@@ -235,6 +294,14 @@ pub async fn handle_attach(
 /// task, so it stays ahead of the subscription's live events without the
 /// socket's reader ever waiting on the outbound queue (fork: the reader used
 /// to queue it itself, and a full queue then held up pings and detaches).
+///
+/// `coalesce` is the window for merging streamed text (fork, see
+/// `DEFAULT_COALESCE_MS`; zero sends every event as received). Text is merged
+/// only with the text right after it, so the order of everything the client
+/// sees is unchanged; any other event first sends the text held before it.
+/// While the socket is slow to drain, events wait in the broadcast receiver
+/// and are merged as they are read, so a backlog leaves as fewer, larger
+/// frames instead of falling further behind.
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_forwarder(
     subscription_id: String,
@@ -244,10 +311,15 @@ pub fn spawn_forwarder(
     mut receiver: tokio::sync::broadcast::Receiver<Arc<EventEnvelope>>,
     outbound: mpsc::Sender<ServerMsg>,
     cleanup_tx: mpsc::Sender<(String, u64)>,
+    coalesce: Duration,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let signal_cleanup = || {
             let _ = cleanup_tx.try_send((subscription_id.clone(), epoch));
+        };
+        let event = |envelope: WireEnvelope| ServerMsg::Event {
+            subscription_id: subscription_id.clone(),
+            envelope,
         };
         if let Some(initial) = initial {
             if outbound.send(initial).await.is_err() {
@@ -255,49 +327,260 @@ pub fn spawn_forwarder(
                 return;
             }
         }
-        loop {
-            match receiver.recv().await {
-                Ok(envelope) => {
-                    let msg = ServerMsg::Event {
-                        subscription_id: subscription_id.clone(),
-                        envelope,
-                    };
-                    if outbound.send(msg).await.is_err() {
-                        // WS closed; nothing to forward to. Map cleanup
-                        // is handled by the main loop's drain on exit,
-                        // but the signal is harmless either way.
+        // Text held for merging, and when it must go out.
+        let mut pending: Option<(Run, Instant)> = None;
+        // When the last frame of this subscription was queued.
+        let mut last_sent: Option<Instant> = None;
+        let detach_reason = loop {
+            let flush_at = pending.as_ref().map(|(_, at)| *at);
+            let received = tokio::select! {
+                // Read first: a backlog merges into what is pending instead
+                // of being cut into window-sized frames.
+                biased;
+                received = receiver.recv() => received,
+                _ = tokio::time::sleep_until(flush_at.unwrap_or_else(Instant::now)), if flush_at.is_some() => {
+                    let (run, _) = pending.take().expect("a flush time implies pending text");
+                    if outbound.send(event(run.finish())).await.is_err() {
                         signal_cleanup();
                         return;
                     }
+                    last_sent = Some(Instant::now());
+                    continue;
                 }
+            };
+            let envelope = match received {
+                Ok(envelope) => envelope,
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                     tracing::warn!(
                         "[WS attach] subscription {} lagged ({} events dropped); detaching",
-                        subscription_id, n
+                        subscription_id,
+                        n
                     );
                     metrics
                         .forwarder_lagged_count
                         .fetch_add(1, Ordering::Relaxed);
-                    let _ = outbound
-                        .send(ServerMsg::Detached {
-                            subscription_id: subscription_id.clone(),
-                            reason: DetachReason::Lagged,
-                        })
-                        .await;
-                    signal_cleanup();
-                    return;
+                    break DetachReason::Lagged;
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    let _ = outbound
-                        .send(ServerMsg::Detached {
-                            subscription_id: subscription_id.clone(),
-                            reason: DetachReason::ConnectionGone,
-                        })
-                        .await;
+                    break DetachReason::ConnectionGone;
+                }
+            };
+            if let Some((run, _)) = pending.as_mut() {
+                if run.try_push(&envelope) {
+                    continue;
+                }
+            }
+            if let Some((run, _)) = pending.take() {
+                if outbound.send(event(run.finish())).await.is_err() {
                     signal_cleanup();
                     return;
                 }
+                last_sent = Some(Instant::now());
             }
+            let now = Instant::now();
+            let quiet = last_sent.is_none_or(|at| now.duration_since(at) >= coalesce);
+            if !coalesce.is_zero() && !quiet && ws_coalesce::is_mergeable(&envelope.payload) {
+                let at = last_sent.map_or(now, |at| at + coalesce);
+                pending = Some((Run::new(envelope), at));
+                continue;
+            }
+            if outbound
+                .send(event(WireEnvelope::Single(envelope)))
+                .await
+                .is_err()
+            {
+                // WS closed; nothing to forward to. Map cleanup is handled by
+                // the main loop's drain on exit, but the signal is harmless
+                // either way.
+                signal_cleanup();
+                return;
+            }
+            last_sent = Some(Instant::now());
+        };
+        // Text already received goes out before the detach, so the client's
+        // cursor covers it and the re-attach does not ask for it again.
+        if let Some((run, _)) = pending.take() {
+            let _ = outbound.send(event(run.finish())).await;
         }
+        let _ = outbound
+            .send(ServerMsg::Detached {
+                subscription_id: subscription_id.clone(),
+                reason: detach_reason,
+            })
+            .await;
+        signal_cleanup();
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::acp::types::AcpEvent;
+    use serde_json::Value;
+    use tokio::sync::broadcast;
+
+    fn text(seq: u64, t: &str) -> Arc<EventEnvelope> {
+        Arc::new(EventEnvelope {
+            seq,
+            connection_id: "c".into(),
+            payload: AcpEvent::ContentDelta {
+                text: t.into(),
+                parent_tool_use_id: None,
+            },
+        })
+    }
+
+    fn usage(seq: u64) -> Arc<EventEnvelope> {
+        Arc::new(EventEnvelope {
+            seq,
+            connection_id: "c".into(),
+            payload: AcpEvent::UsageUpdate { used: 1, size: 2 },
+        })
+    }
+
+    struct Forwarder {
+        events: broadcast::Sender<Arc<EventEnvelope>>,
+        out: mpsc::Receiver<ServerMsg>,
+        _cleanup: mpsc::Receiver<(String, u64)>,
+    }
+
+    fn forwarder(window_ms: u64) -> Forwarder {
+        let (events, receiver) = broadcast::channel(64);
+        let (out_tx, out) = mpsc::channel(64);
+        let (cleanup_tx, cleanup) = mpsc::channel(4);
+        spawn_forwarder(
+            "s".into(),
+            1,
+            Arc::new(EventBusMetrics::default()),
+            None,
+            receiver,
+            out_tx,
+            cleanup_tx,
+            Duration::from_millis(window_ms),
+        );
+        Forwarder {
+            events,
+            out,
+            _cleanup: cleanup,
+        }
+    }
+
+    async fn next(f: &mut Forwarder) -> Value {
+        serde_json::to_value(f.out.recv().await.expect("a frame")).unwrap()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn first_chunk_goes_at_once_and_the_rest_within_the_window() {
+        let mut f = forwarder(100);
+        let start = Instant::now();
+        f.events.send(text(1, "a")).unwrap();
+        let first = next(&mut f).await;
+        assert_eq!(first["envelope"]["text"], "a");
+        assert!(first["envelope"].get("first_seq").is_none());
+        assert_eq!(start.elapsed(), Duration::ZERO, "leading edge is not held");
+
+        f.events.send(text(2, "b")).unwrap();
+        f.events.send(text(3, "c")).unwrap();
+        let merged = next(&mut f).await;
+        assert_eq!(merged["type"], "event");
+        assert_eq!(merged["envelope"]["text"], "bc");
+        assert_eq!(merged["envelope"]["first_seq"], 2);
+        assert_eq!(merged["envelope"]["seq"], 3);
+        assert_eq!(
+            start.elapsed(),
+            Duration::from_millis(100),
+            "held until one window after the last frame, no longer"
+        );
+
+        // A quiet spell: the next chunk is a leading edge again.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let quiet = Instant::now();
+        f.events.send(text(4, "d")).unwrap();
+        assert_eq!(next(&mut f).await["envelope"]["text"], "d");
+        assert_eq!(quiet.elapsed(), Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn another_event_sends_the_held_text_first_without_waiting() {
+        let mut f = forwarder(100);
+        f.events.send(text(1, "a")).unwrap();
+        next(&mut f).await;
+        let start = Instant::now();
+        f.events.send(text(2, "b")).unwrap();
+        f.events.send(text(3, "c")).unwrap();
+        f.events.send(usage(4)).unwrap();
+        f.events.send(text(5, "d")).unwrap();
+        let held = next(&mut f).await;
+        assert_eq!(held["envelope"]["text"], "bc");
+        assert_eq!(next(&mut f).await["envelope"]["type"], "usage_update");
+        assert_eq!(start.elapsed(), Duration::ZERO, "a barrier flushes at once");
+        let after = next(&mut f).await;
+        assert_eq!(after["envelope"]["text"], "d");
+        assert_eq!(after["envelope"]["seq"], 5);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn held_text_goes_out_before_the_detach() {
+        let mut f = forwarder(100);
+        f.events.send(text(1, "a")).unwrap();
+        next(&mut f).await;
+        f.events.send(text(2, "b")).unwrap();
+        f.events.send(text(3, "c")).unwrap();
+        drop(f.events);
+        let mut frames = Vec::new();
+        while let Some(frame) = f.out.recv().await {
+            frames.push(serde_json::to_value(frame).unwrap());
+        }
+        assert_eq!(frames.len(), 2, "{frames:?}");
+        assert_eq!(frames[0]["envelope"]["text"], "bc");
+        assert_eq!(frames[1]["type"], "detached");
+        assert_eq!(frames[1]["reason"], "connection_gone");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_zero_window_sends_every_chunk_as_received() {
+        let mut f = forwarder(0);
+        for seq in 1..=3 {
+            f.events.send(text(seq, "x")).unwrap();
+        }
+        for seq in 1..=3 {
+            let frame = next(&mut f).await;
+            assert_eq!(frame["envelope"]["seq"], seq);
+            assert!(frame["envelope"].get("first_seq").is_none());
+        }
+    }
+
+    #[test]
+    fn resume_replays_a_merged_gap_and_snapshots_past_the_limits() {
+        assert!(decide_resume(None).is_none(), "the ring does not cover it");
+        assert!(decide_resume(Some(Vec::new())).is_none());
+
+        // Ten seconds of streaming at 50 chunks a second: 500 events, one
+        // envelope merged.
+        let streamed: Vec<_> = (1..=500).map(|seq| text(seq, "word ")).collect();
+        let (replay, covered) = decide_resume(Some(streamed)).expect("replayed");
+        assert_eq!(covered, 500);
+        assert_eq!(replay.len(), 1);
+        assert_eq!(replay[0].seq(), 500);
+
+        // Interleaved with other events, merging cannot help: past the item
+        // limit it is a snapshot.
+        let choppy: Vec<_> = (1..=(REPLAY_MAX_ITEMS as u64 + 2))
+            .map(|seq| {
+                if seq % 2 == 0 {
+                    usage(seq)
+                } else {
+                    text(seq, "x")
+                }
+            })
+            .collect();
+        assert!(decide_resume(Some(choppy)).is_none());
+
+        // Or past the byte limit.
+        let big = "y".repeat(ws_coalesce::MAX_MERGED_TEXT);
+        let heavy: Vec<_> = (1..=(REPLAY_MAX_BYTES / ws_coalesce::MAX_MERGED_TEXT) as u64 + 1)
+            .map(|seq| text(seq, &big))
+            .collect();
+        assert!(decide_resume(Some(heavy)).is_none());
+    }
 }

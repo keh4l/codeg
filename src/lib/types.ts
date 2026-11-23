@@ -3766,9 +3766,15 @@ export type DelegationResultSummary =
  * live event stream (drop events with seq <= last_event_seq from snapshot).
  *
  * 所有 ACP 事件统一通过此 envelope 发出，详见 spec phase 0/1。
+ *
+ * `first_seq` (fork, web/remote only): present when the server merged
+ * adjacent streamed text chunks `first_seq..=seq` into this one envelope
+ * (`src-tauri/src/web/ws_coalesce.rs`). Its text is all of theirs in order,
+ * so applying it once and advancing to `seq` is the same as applying each.
  */
 export type EventEnvelope = {
   seq: number
+  first_seq?: number
   connection_id: string
 } & AcpEvent
 

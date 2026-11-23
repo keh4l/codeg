@@ -282,7 +282,11 @@ async fn handle_ws_connection(
     // detaches and close, if any) and stops; give it a moment, then stop it.
     drop(control_tx);
     drop(outbound_tx);
-    if !writer_done && tokio::time::timeout(Duration::from_secs(2), &mut writer).await.is_err() {
+    if !writer_done
+        && tokio::time::timeout(Duration::from_secs(2), &mut writer)
+            .await
+            .is_err()
+    {
         writer.abort();
     }
 }
@@ -467,6 +471,7 @@ async fn handle_client_msg(
                         outcome.receiver,
                         outbound_tx.clone(),
                         cleanup_tx.clone(),
+                        ws_attach::default_coalesce_window(),
                     );
                     subscriptions.insert(subscription_id, ActiveSubscription { handle, epoch });
                 }
@@ -572,14 +577,21 @@ mod tests {
 
     /// A writer over a channel sink, with `queued` data frames already waiting
     /// when it starts.
-    fn writer(queued: Vec<ServerMsg>, control: Vec<Control>, ping: Duration, silence: Duration) -> Writer {
+    fn writer(
+        queued: Vec<ServerMsg>,
+        control: Vec<Control>,
+        ping: Duration,
+        silence: Duration,
+    ) -> Writer {
         let (control_tx, control_rx) = mpsc::channel(CONTROL_CAPACITY);
         let (outbound_tx, outbound_rx) = mpsc::channel(OUTBOUND_CAPACITY);
         for msg in queued {
             outbound_tx.try_send(msg).unwrap();
         }
         for c in control {
-            control_tx.try_send(c).unwrap_or_else(|_| panic!("control lane full"));
+            control_tx
+                .try_send(c)
+                .unwrap_or_else(|_| panic!("control lane full"));
         }
         let (global_tx, global_rx) = tokio::sync::broadcast::channel(16);
         let (sink, frames) = futures::channel::mpsc::unbounded::<Message>();
@@ -615,7 +627,9 @@ mod tests {
     /// the client waits).
     #[tokio::test]
     async fn a_pong_goes_out_before_frames_already_queued() {
-        let queued = (0..OUTBOUND_CAPACITY).map(|i| detached(&format!("sub-{i}"))).collect();
+        let queued = (0..OUTBOUND_CAPACITY)
+            .map(|i| detached(&format!("sub-{i}")))
+            .collect();
         let mut w = writer(
             queued,
             vec![Control::Msg(ServerMsg::Pong)],
@@ -633,9 +647,17 @@ mod tests {
     /// written.
     #[tokio::test]
     async fn a_pong_overtakes_data_queued_before_it() {
-        let mut w = writer(Vec::new(), Vec::new(), Duration::from_secs(3600), Duration::from_secs(3600));
+        let mut w = writer(
+            Vec::new(),
+            Vec::new(),
+            Duration::from_secs(3600),
+            Duration::from_secs(3600),
+        );
         for i in 0..10 {
-            w.outbound.send(detached(&format!("sub-{i}"))).await.unwrap();
+            w.outbound
+                .send(detached(&format!("sub-{i}")))
+                .await
+                .unwrap();
         }
         w.control.send(Control::Msg(ServerMsg::Pong)).await.unwrap();
         let mut seen = Vec::new();
@@ -664,7 +686,12 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn pings_while_the_client_answers_and_closes_a_silent_socket() {
-        let mut w = writer(Vec::new(), Vec::new(), Duration::from_secs(30), Duration::from_secs(90));
+        let mut w = writer(
+            Vec::new(),
+            Vec::new(),
+            Duration::from_secs(30),
+            Duration::from_secs(90),
+        );
         // Let the writer start (and arm its ping timer) before time moves.
         for _ in 0..5 {
             tokio::task::yield_now().await;
@@ -697,7 +724,12 @@ mod tests {
 
     #[tokio::test]
     async fn writer_stops_when_the_socket_is_gone() {
-        let w = writer(Vec::new(), Vec::new(), Duration::from_secs(3600), Duration::from_secs(3600));
+        let w = writer(
+            Vec::new(),
+            Vec::new(),
+            Duration::from_secs(3600),
+            Duration::from_secs(3600),
+        );
         drop(w.frames);
         w.outbound.send(detached("x")).await.unwrap();
         tokio::time::timeout(Duration::from_secs(5), w.task)

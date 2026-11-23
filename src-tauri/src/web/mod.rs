@@ -12,6 +12,7 @@ pub mod socket_inherit;
 pub mod socket_tuning;
 pub mod ws;
 pub mod ws_attach;
+pub mod ws_coalesce;
 
 pub use port_probe::{PortState, WebServicePortProbe};
 

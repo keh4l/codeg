@@ -273,6 +273,21 @@ async fn emit_all(state: &Arc<AppState>, conn: &str, events: Vec<AcpEvent>) {
     }
 }
 
+/// Emit like a streaming agent: one event every `gap`, which is what lets
+/// the live stream merge text (it merges what arrives within a window of the
+/// last frame, so a burst is not what a user sees).
+async fn emit_paced(state: &Arc<AppState>, conn: &str, events: Vec<AcpEvent>, gap: Duration) {
+    let session = state
+        .connection_manager
+        .get_state(conn)
+        .await
+        .expect("registered connection");
+    for event in events {
+        emit_with_state(&session, &state.emitter, event).await;
+        tokio::time::sleep(gap).await;
+    }
+}
+
 async fn new_connection(state: &Arc<AppState>, conn: &str) {
     state
         .connection_manager
@@ -314,33 +329,55 @@ async fn streaming_turn_frames_and_bytes() {
             _ => 0,
         })
         .sum();
-    emit_all(&state, "turn", events).await;
+    let reply: String = events
+        .iter()
+        .filter_map(|e| match e {
+            AcpEvent::ContentDelta { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    // About 50 chunks a second, the rate of a fast model's reply.
+    let emitter = {
+        let state = Arc::clone(&state);
+        tokio::spawn(async move {
+            emit_paced(&state, "turn", events, Duration::from_millis(20)).await
+        })
+    };
 
     let (mut frames, mut bytes) = (0u64, 0u64);
+    let mut received = String::new();
     loop {
         let text = next_text(&mut ws).await;
         frames += 1;
         bytes += text.len() as u64;
+        let frame: Value = serde_json::from_str(&text).expect("json frame");
+        if frame["envelope"]["type"] == "content_delta" {
+            received.push_str(frame["envelope"]["text"].as_str().unwrap_or_default());
+        }
         if text.contains("\"turn_complete\"") {
             break;
         }
     }
+    emitter.await.unwrap();
     assert!(frames > 0 && emitted > 0);
+    assert_eq!(received, reply, "merging loses or reorders no text");
     check(&[
         Measured {
             name: "turn: ws frames",
             value: frames,
-            budget: 232,
+            // Paced in real time, so a loaded machine can split a merge:
+            // more headroom than the byte budgets.
+            budget: 64,
         },
         Measured {
             name: "turn: ws frames per 1000 streamed chars",
             value: frames * 1000 / text_chars as u64,
-            budget: 64,
+            budget: 17,
         },
         Measured {
             name: "turn: ws bytes",
             value: bytes,
-            budget: 98_500,
+            budget: 79_000,
         },
     ]);
 }
@@ -385,6 +422,7 @@ async fn cold_attach_snapshot_with_big_tool_output() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Reconnecting: a client that saw everything, and one that missed 40 events.
+// Both are replays: empty, and the 40 chunks merged into one envelope.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// A turn still running: 20 commands with 200 lines of output each, then a
@@ -443,6 +481,9 @@ async fn reattach_mid_turn_when_caught_up_and_after_short_gap() {
     );
     // A client that missed nothing gets an empty replay, not the live turn.
     assert_eq!(caught_up["type"], "replay");
+    // One that missed a few seconds of text gets that text, merged.
+    assert_eq!(gap["type"], "replay");
+    assert_eq!(gap["events"].as_array().map(Vec::len), Some(1));
     check(&[
         Measured {
             name: "re-attach mid-turn, nothing missed: bytes",
@@ -452,7 +493,7 @@ async fn reattach_mid_turn_when_caught_up_and_after_short_gap() {
         Measured {
             name: "re-attach mid-turn, missed 40 chunks: bytes",
             value: gap_bytes,
-            budget: 906_000,
+            budget: 1_400,
         },
     ]);
 }

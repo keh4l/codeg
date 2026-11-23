@@ -97,8 +97,8 @@ pub struct EventBusMetrics {
     /// buffer and was small enough to batch. Tracks happy-path resync.
     pub replay_count: AtomicU64,
     /// Sum of envelope counts across all replay batches. Average batch size
-    /// = `replay_event_total / replay_count`, useful for sizing
-    /// `REPLAY_BATCH_THRESHOLD`.
+    /// = `replay_event_total / replay_count`, useful for sizing the replay
+    /// limits (`ws_attach::REPLAY_MAX_ITEMS` / `REPLAY_MAX_BYTES`).
     pub replay_event_total: AtomicU64,
     /// Attach decisions: client supplied a cursor that fell outside the
     /// ring buffer (or buffer was too large to batch), so the server fell

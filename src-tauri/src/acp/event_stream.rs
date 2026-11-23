@@ -15,13 +15,23 @@ const BROADCAST_CAPACITY: usize = 4096;
 /// even an active streaming session with several tool-call updates fits
 /// comfortably; oversized images push past this bound and force a snapshot
 /// fallback on the next attach (see `RecentEventsBuffer::push`).
-pub const RECENT_BUFFER_MAX_BYTES: usize = 128 * 1024;
+///
+/// Fork: raised from 128 KB with the count cap below. The estimate charges
+/// every event a 256-byte overhead, so the old pair held about 25 seconds of
+/// streamed reply — shorter than one reconnect over a slow link, after which
+/// the re-attach had to take the whole live turn as a snapshot. 2 MB of
+/// estimate is under 1 MB of memory for a streaming session.
+pub const RECENT_BUFFER_MAX_BYTES: usize = 2 * 1024 * 1024;
 
 /// Hard cap on event count regardless of byte total. Defends against a
 /// pathological flood of tiny events filling the buffer past the byte limit
 /// (each event has a small overhead — connection_id, seq — that doesn't
 /// contribute meaningfully to byte_total but does to memory).
-pub const RECENT_BUFFER_MAX_COUNT: usize = 128;
+///
+/// Fork: 4096 (was 128), several minutes of streaming; a reconnect's replay
+/// is merged on the wire (`web::ws_coalesce`), so its size follows what
+/// changed, not how many chunks it arrived in.
+pub const RECENT_BUFFER_MAX_COUNT: usize = 4096;
 
 /// Single-event size threshold above which we refuse to store the event.
 /// Stored events would be replayed on reconnect; an oversized event blows
@@ -358,7 +368,7 @@ fn user_block_size(block: &UserMessageBlock) -> usize {
 /// replaced. Every other variant is small and infrequent, so it falls back to an
 /// exact serialized length — cheap here, faithful to the prior sizing, and
 /// needing no upkeep as variants are added.
-fn estimate_envelope_size(envelope: &EventEnvelope) -> usize {
+pub(crate) fn estimate_envelope_size(envelope: &EventEnvelope) -> usize {
     // Conservative fixed overhead: the envelope skeleton (`{"seq":N,...}`), the
     // `type` tag, and every structural variant's field KEYS/colons plus the
     // `null`s that its non-skipped `Option::None` fields serialize to. It must
