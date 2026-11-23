@@ -326,5 +326,6 @@ function toolStateToInfo(tc: ToolCallState): ToolCallInfo {
     locations: tc.locations ?? null,
     meta: stripKimiMcpOAuth(tc.meta ?? null),
     images: tc.images ?? [],
+    ...(tc.body_refs ? { body_refs: tc.body_refs } : {}),
   }
 }

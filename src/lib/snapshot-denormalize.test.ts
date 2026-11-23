@@ -240,6 +240,18 @@ describe("denormalizeSnapshot — tool call raw output", () => {
     expect(JSON.parse(info.raw_output_chunks[0])).toEqual({ error: "boom" })
   })
 
+  // Fork: a `wire: 2` snapshot shortens a finished call's bodies; the
+  // references go with the call so its row can load the full text.
+  it("keeps the references of the bodies the server shortened", () => {
+    const ref = { id: "e".repeat(32), bytes: 300_000, extra_lines: 4_000 }
+    const snap = snapshotWithOutput({ kind: "text", content: "a\n…\nz" })
+    snap.active_tool_calls[0].body_refs = { output: ref }
+    const block = denormalizeSnapshot(snap).liveMessage?.content[0]
+    if (block?.type !== "tool_call") throw new Error("expected a tool_call")
+    expect(block.info.body_refs).toEqual({ output: ref })
+    expect(hydratedToolInfo(null)).not.toHaveProperty("body_refs")
+  })
+
   it("leaves the chunks empty when the tool call has no output yet", () => {
     const info = hydratedToolInfo(null)
     expect(info.raw_output_chunks).toEqual([])

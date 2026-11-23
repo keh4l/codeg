@@ -4272,6 +4272,13 @@
           "rejected": "已拒絕",
           "viaChatChannel": "來自聊天頻道",
           "byPolicy": "由執行的權限原則決定"
+        },
+        "shortened": {
+          "note": "已縮短，只顯示開頭和結尾（完整 {size}）。",
+          "load": "載入完整內容",
+          "loading": "正在載入完整內容…",
+          "failed": "完整內容載入失敗。",
+          "retry": "重試"
         }
       },
       "messageNav": {

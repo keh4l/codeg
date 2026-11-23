@@ -130,24 +130,31 @@ fn dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
         .ok()
 }
 
-/// A handler's JSON response, with images as references when the client
-/// asked for them (and the store is available). Serializing and projecting a
-/// detail with megabytes of base64 runs on a blocking thread.
+/// A handler's JSON response, with images as references and long tool bodies
+/// shortened (`web::body_caps`) when the client asked for them (and the store
+/// is available). Serializing and projecting a detail with megabytes of
+/// base64 runs on a blocking thread.
 pub async fn respond<T>(
     value: T,
     image_refs: bool,
+    tool_bodies: bool,
 ) -> Result<axum::response::Response, crate::app_error::AppCommandError>
 where
     T: serde::Serialize + Send + 'static,
 {
     use axum::response::IntoResponse as _;
-    let store = match (image_refs, super::blob_store::global()) {
+    let store = match (image_refs || tool_bodies, super::blob_store::global()) {
         (true, Some(store)) => store,
         _ => return Ok(axum::Json(value).into_response()),
     };
     let projected = tokio::task::spawn_blocking(move || {
         let mut json = serde_json::to_value(&value)?;
-        project_images(&mut json, store);
+        if image_refs {
+            project_images(&mut json, store);
+        }
+        if tool_bodies {
+            super::body_caps::project_turn_bodies(&mut json, store);
+        }
         Ok::<_, serde_json::Error>(json)
     })
     .await

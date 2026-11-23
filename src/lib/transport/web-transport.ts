@@ -512,6 +512,9 @@ export class WebTransport implements Transport {
             this.wsReadyCallbacks.delete(callback)
           }
         },
+        // Fork: the browser loads images by reference and long tool bodies
+        // on demand (`lib/conversation-images.ts`, `lib/tool-bodies.ts`).
+        attachOptions: () => ({ wire: 2 }),
       }
       this.eventStreamInstance = new WebEventStream(host)
       // If credentials are present but the WS hasn't been opened yet (no legacy

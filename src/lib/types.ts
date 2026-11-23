@@ -202,6 +202,19 @@ export interface ImageBlobRef {
 }
 
 /**
+ * The full text of a tool body the server shortened (fork, `web::body_caps`):
+ * the shortened text keeps its start and end around a `…`; the full text
+ * loads from `get_blob_text` (see `lib/tool-bodies.ts`). `bytes` is the full
+ * text's UTF-8 length; `extra_lines` how many more `\n` it has than the
+ * shortened one, so a line count is right before it loads.
+ */
+export interface ToolBodyRef {
+  id: string
+  bytes: number
+  extra_lines: number
+}
+
+/**
  * Image payload shared across `ContentBlock::Image` /
  * `ContentBlock::ImageGeneration` / ACP wire `ToolCallImageInfo`. Mirror of
  * Rust `models::message::ImageData`. Exactly one of `data` (base64) and
@@ -269,12 +282,16 @@ export type ContentBlock =
        * child_conversation_id, error_code? }` here.
        */
       meta?: Record<string, unknown> | null
+      /** `input_preview` was shortened (fork, `ToolBodyRef`). */
+      body_refs?: { input_preview?: ToolBodyRef }
     }
   | {
       type: "tool_result"
       tool_use_id: string | null
       output_preview: string | null
       is_error: boolean
+      /** `output_preview` was shortened (fork, `ToolBodyRef`). */
+      body_refs?: { output_preview?: ToolBodyRef }
       agent_stats?: AgentExecutionStats | null
       /**
        * Images returned in a tool result (e.g. Claude Code's `Read` of a
@@ -3274,6 +3291,12 @@ export type AcpEvent =
       meta?: unknown
       /** Present iff agent attached images (e.g. codex-acp v0.14+ image gen). */
       images?: ToolCallImageWire[]
+      /** Bodies the server shortened for a `wire: 2` subscriber (fork). */
+      body_refs?: {
+        raw_output?: ToolBodyRef
+        raw_input?: ToolBodyRef
+        content?: ToolBodyRef
+      }
     }
   | {
       type: "tool_call_update"
@@ -3292,6 +3315,12 @@ export type AcpEvent =
        * `Option<Vec<...>>` semantics on the Rust side.
        */
       images?: ToolCallImageWire[]
+      /** Bodies the server shortened for a `wire: 2` subscriber (fork). */
+      body_refs?: {
+        raw_output?: ToolBodyRef
+        raw_input?: ToolBodyRef
+        content?: ToolBodyRef
+      }
     }
   | {
       type: "permission_request"
@@ -3835,6 +3864,16 @@ export interface ToolCallState {
    * refresh sees the same image. May be absent on older snapshots.
    */
   images?: ToolCallImageWire[]
+  /**
+   * Fields of a finished call the server shortened for a `wire: 2` attach
+   * (fork, `web::body_caps::slim_snapshot`): `output` holds the text the
+   * client rebuilds from `output`, `input` the JSON text of `input`.
+   */
+  body_refs?: {
+    output?: ToolBodyRef
+    input?: ToolBodyRef
+    content?: ToolBodyRef
+  }
 }
 
 export type LiveContentBlock =

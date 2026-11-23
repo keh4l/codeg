@@ -4272,6 +4272,13 @@
           "rejected": "recusado",
           "viaChatChannel": "por um canal de chat",
           "byPolicy": "pela política de permissões da execução"
+        },
+        "shortened": {
+          "note": "Encurtado para o início e o fim ({size} no total).",
+          "load": "Carregar completo",
+          "loading": "Carregando o texto completo…",
+          "failed": "Não foi possível carregar o texto completo.",
+          "retry": "Tentar novamente"
         }
       },
       "messageNav": {

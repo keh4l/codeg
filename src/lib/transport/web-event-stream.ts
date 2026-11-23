@@ -59,6 +59,12 @@ export interface AttachTransportHost {
    * (initial connect and every reconnect). Returns an unsubscribe fn.
    */
   onWsReady(callback: () => void): () => void
+  /**
+   * Extra fields for an `attach` frame (fork): `{ wire: 2 }` when this client
+   * reads snapshots with images by reference and long tool bodies shortened
+   * (`web::body_caps::slim_snapshot`). An old server ignores them.
+   */
+  attachOptions?(): Record<string, unknown>
 }
 
 interface ActiveSub {
@@ -182,6 +188,7 @@ export class WebEventStream implements EventStream {
       subscription_id: subscriptionId,
       connection_id: sub.connectionId,
       since_seq: sub.lastAppliedSeq,
+      ...this.host.attachOptions?.(),
     })
   }
 

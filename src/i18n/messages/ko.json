@@ -4272,6 +4272,13 @@
           "rejected": "거부됨",
           "viaChatChannel": "채팅 채널에서",
           "byPolicy": "실행 권한 정책에 따름"
+        },
+        "shortened": {
+          "note": "앞부분과 끝부분만 표시합니다(전체 {size}).",
+          "load": "전체 불러오기",
+          "loading": "전체 내용을 불러오는 중…",
+          "failed": "전체 내용을 불러오지 못했습니다.",
+          "retry": "다시 시도"
         }
       },
       "messageNav": {

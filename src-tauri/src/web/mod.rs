@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod blob_store;
+pub mod body_caps;
 pub mod browser_bridge;
 pub mod browser_tunnel;
 pub mod compression;

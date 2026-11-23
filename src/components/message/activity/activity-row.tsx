@@ -21,6 +21,7 @@ import { useActivityLive } from "./activity-live-context"
 import { ApprovalChip, showsApproval } from "./approval-chip"
 import { useFoldRow } from "./fold-back"
 import { TimelineFoot } from "./timeline-foot"
+import { ToolBodyNotice } from "./tool-body-notice"
 import { useRailGrowth } from "./use-rail-growth"
 import {
   TimelineRevealContext,
@@ -281,6 +282,7 @@ export function ActivityRow({
           )}
         >
           {detail()}
+          <ToolBodyNotice stepKey={stepKey} />
         </div>
       ) : null}
     </li>

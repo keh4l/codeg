@@ -4272,6 +4272,13 @@
           "rejected": "abgelehnt",
           "viaChatChannel": "über einen Chat-Kanal",
           "byPolicy": "durch die Berechtigungsrichtlinie des Laufs"
+        },
+        "shortened": {
+          "note": "Gekürzt auf Anfang und Ende ({size} insgesamt).",
+          "load": "Vollständig laden",
+          "loading": "Vollständiger Text wird geladen…",
+          "failed": "Der vollständige Text konnte nicht geladen werden.",
+          "retry": "Erneut versuchen"
         }
       },
       "messageNav": {

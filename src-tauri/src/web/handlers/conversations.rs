@@ -160,6 +160,10 @@ pub struct GetFolderConversationParams {
     /// Images as blob references (fork, `web::image_refs`).
     #[serde(default)]
     pub image_refs: bool,
+    /// Long tool bodies shortened, full text by reference (fork,
+    /// `web::body_caps`).
+    #[serde(default)]
+    pub tool_bodies: bool,
     /// Byte / round budget for a `tailTurns` window (fork,
     /// `turn_window::WindowBudget`).
     #[serde(default)]
@@ -180,6 +184,7 @@ pub async fn get_folder_conversation(
             params.window_max_bytes,
             params.window_max_user_turns,
             params.image_refs,
+            params.tool_bodies,
         ),
     );
     let result = conv_commands::get_folder_conversation_with_live_core(
@@ -191,7 +196,7 @@ pub async fn get_folder_conversation(
         window,
     )
     .await?;
-    crate::web::image_refs::respond(result, params.image_refs).await
+    crate::web::image_refs::respond(result, params.image_refs, params.tool_bodies).await
 }
 
 #[derive(Deserialize)]
@@ -203,6 +208,10 @@ pub struct GetFolderConversationTurnsParams {
     /// Images as blob references (fork, `web::image_refs`).
     #[serde(default)]
     pub image_refs: bool,
+    /// Long tool bodies shortened, full text by reference (fork,
+    /// `web::body_caps`).
+    #[serde(default)]
+    pub tool_bodies: bool,
     /// Byte / round budget for the page (fork, `turn_window::WindowBudget`).
     #[serde(default)]
     pub window_max_bytes: Option<usize>,
@@ -218,6 +227,7 @@ pub async fn get_folder_conversation_turns(
         params.window_max_bytes,
         params.window_max_user_turns,
         params.image_refs,
+        params.tool_bodies,
     );
     let result = conv_commands::get_folder_conversation_turns_budget_core(
         &state.db.conn,
@@ -227,7 +237,7 @@ pub async fn get_folder_conversation_turns(
         budget,
     )
     .await?;
-    crate::web::image_refs::respond(result, params.image_refs).await
+    crate::web::image_refs::respond(result, params.image_refs, params.tool_bodies).await
 }
 
 #[derive(Deserialize)]

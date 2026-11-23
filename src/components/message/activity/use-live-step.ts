@@ -3,7 +3,9 @@
 import { useMemo } from "react"
 
 import { approvalFromInfo } from "@/lib/activity/approval"
+import { describeToolCall } from "@/lib/activity/describe-tool-call"
 import type { ActivityStep } from "@/lib/activity/types"
+import { useLoadedBodies, withFullBodies } from "@/lib/tool-bodies"
 import { useActivityLive } from "./activity-live-context"
 
 type ToolStep = Extract<ActivityStep, { type: "tool" }>
@@ -32,8 +34,25 @@ function isAwaited(step: ToolStep, awaitingToolCallId: string | null): boolean {
  * Returns `step` itself when nothing applies, so the memoized rows below keep
  * their props.
  */
-export function useLiveToolStep(step: ToolStep): ToolStep {
+export function useLiveToolStep(given: ToolStep): ToolStep {
   const { awaitingToolCallId, approvals } = useActivityLive()
+  // Fork: a body the server shortened, once the reader loaded it whole
+  // (`lib/tool-bodies.ts`), is read in full by every row.
+  const loaded = useLoadedBodies(given.part)
+  const step = useMemo(() => {
+    if (loaded.input === null && loaded.output === null) return given
+    const part = withFullBodies(given.part, loaded.input, loaded.output)
+    const tool = describeToolCall(part)
+    return {
+      ...given,
+      part,
+      tool: {
+        ...tool,
+        status: given.tool.status,
+        approval: given.tool.approval,
+      },
+    }
+  }, [given, loaded.input, loaded.output])
   const awaiting = isAwaited(step, awaitingToolCallId)
   const record = approvals[step.part.toolCallId]
   return useMemo(() => {

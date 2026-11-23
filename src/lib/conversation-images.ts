@@ -58,6 +58,15 @@ export function wantsImageRefs(): boolean {
   return !isDesktop()
 }
 
+/**
+ * Whether a remote-desktop window can take images by reference: its image
+ * listener is up (asked for on first use). What its event stream offers the
+ * server as `wire: 2` (fork).
+ */
+export function remoteWindowTakesImageRefs(): boolean {
+  return typeof window !== "undefined" && remoteImageUrlBase() !== null
+}
+
 /** @internal Test-only. */
 export function __setRemoteImageBaseForTests(base: string | null): void {
   remoteImageBase = base

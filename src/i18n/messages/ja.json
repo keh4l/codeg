@@ -4272,6 +4272,13 @@
           "rejected": "拒否",
           "viaChatChannel": "チャットチャネル経由",
           "byPolicy": "実行の権限ポリシーによる"
+        },
+        "shortened": {
+          "note": "先頭と末尾だけを表示しています（全体 {size}）。",
+          "load": "全文を読み込む",
+          "loading": "全文を読み込んでいます…",
+          "failed": "全文を読み込めませんでした。",
+          "retry": "再試行"
         }
       },
       "messageNav": {

@@ -509,7 +509,12 @@ export async function acpListConnections(): Promise<ConnectionInfo[]> {
 export async function acpGetSessionSnapshot(
   connectionId: string
 ): Promise<LiveSessionSnapshot | null> {
-  return getTransport().call("acp_get_session_snapshot", { connectionId })
+  return getTransport().call("acp_get_session_snapshot", {
+    connectionId,
+    // Fork: images by reference and long finished tool bodies shortened, as
+    // the event stream's `wire: 2` attach; an old server ignores it.
+    ...(wantsImageRefs() ? { wire: 2 } : {}),
+  })
 }
 
 /**
@@ -2645,6 +2650,9 @@ export async function getFolderConversation(
     // Fork: over a network, the first window is bounded by size and rounds
     // too (older turns page in on scroll); an old server ignores it.
     ...(window?.tailTurns != null && fetchesOverNetwork() ? WINDOW_BUDGET : {}),
+    // Fork: over a network, long tool bodies come shortened, the full text
+    // on demand (`lib/tool-bodies.ts`); an old server ignores it.
+    ...(fetchesOverNetwork() ? { toolBodies: true } : {}),
   })
 }
 
@@ -2673,7 +2681,17 @@ export async function getFolderConversationTurns(
     limit,
     ...(wantsImageRefs() ? { imageRefs: true } : {}),
     ...(options?.budget && fetchesOverNetwork() ? WINDOW_BUDGET : {}),
+    ...(fetchesOverNetwork() ? { toolBodies: true } : {}),
   })
+}
+
+/** The full text of a tool body the server shortened (fork,
+ *  `lib/tool-bodies.ts`). */
+export async function getBlobText(id: string): Promise<string> {
+  const result = await getTransport().call<{ text: string }>("get_blob_text", {
+    id,
+  })
+  return result.text
 }
 
 /** Fetch the message navigator's outline of the history before `beforeIndex`. */

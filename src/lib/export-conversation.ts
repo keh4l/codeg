@@ -10,6 +10,7 @@ import { downloadImage } from "@/lib/image-download"
 import { saveTextFile, type SaveFileResult } from "@/lib/save-file"
 import { toPng } from "html-to-image"
 import { withInlineImages } from "@/lib/conversation-images"
+import { withFullToolBodies } from "@/lib/tool-bodies"
 
 /** Outcome of an export operation — see {@link SaveFileResult}. */
 export type ExportResult = SaveFileResult
@@ -433,13 +434,19 @@ ${header}
 // Public export functions
 // ---------------------------------------------------------------------------
 
-// Fork: an export carries every image inline, so images the server sent by
-// reference (`lib/conversation-images.ts`) are fetched first.
+// Fork: an export carries every image inline and every tool body whole, so
+// images the server sent by reference (`lib/conversation-images.ts`) and
+// bodies it shortened (`lib/tool-bodies.ts`) are fetched first.
+function exportData(
+  input: ExportConversationData
+): Promise<ExportConversationData> {
+  return withInlineImages(input).then(withFullToolBodies)
+}
 
 export async function exportAsMarkdown(
   input: ExportConversationData
 ): Promise<ExportResult> {
-  const data = await withInlineImages(input)
+  const data = await exportData(input)
   const { summary, turns, sessionStats, labels } = data
   const parts: string[] = []
 
@@ -474,7 +481,7 @@ export async function exportAsMarkdown(
 export async function exportAsHtml(
   input: ExportConversationData
 ): Promise<ExportResult> {
-  const data = await withInlineImages(input)
+  const data = await exportData(input)
   return saveTextFile({
     content: buildHtmlDocument(data),
     suggestedName: makeExportFilename(data.summary.title, "html"),
@@ -497,7 +504,7 @@ export class ExportTooLongError extends Error {
 export async function exportAsImage(
   input: ExportConversationData
 ): Promise<ExportResult> {
-  const data = await withInlineImages(input)
+  const data = await exportData(input)
   const html = buildHtmlDocument(data)
 
   const iframe = document.createElement("iframe")

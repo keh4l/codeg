@@ -621,19 +621,22 @@ pub async fn acp_list_connections(
 #[serde(rename_all = "camelCase")]
 pub struct AcpGetSessionSnapshotParams {
     pub connection_id: String,
+    /// `2`: slimmed as for a `wire: 2` attach (fork, `web::body_caps`).
+    #[serde(default)]
+    pub wire: Option<u8>,
 }
 
 pub async fn acp_get_session_snapshot(
     Extension(state): Extension<Arc<AppState>>,
     Json(params): Json<AcpGetSessionSnapshotParams>,
-) -> Result<Json<Option<crate::acp::LiveSessionSnapshot>>, AppCommandError> {
+) -> Result<axum::response::Response, AppCommandError> {
     let snap = acp_commands::acp_get_session_snapshot_core(
         &state.connection_manager,
         &params.connection_id,
     )
     .await
     .map_err(|e| AppCommandError::task_execution_failed(e.to_string()))?;
-    Ok(Json(snap))
+    crate::web::body_caps::respond_snapshot(snap, params.wire == Some(2)).await
 }
 
 #[derive(Deserialize)]

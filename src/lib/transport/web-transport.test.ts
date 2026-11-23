@@ -746,4 +746,23 @@ describe("WebTransport on protocol v2", () => {
     expect(t.usesProtocolV2()).toBe(false)
     t.destroy()
   })
+
+  it("asks for the slim snapshot shape on attach (fork, wire 2)", () => {
+    const { t, ws } = connectReady()
+    t.eventStream().attach(
+      "c1",
+      {},
+      {
+        onSnapshot: () => {},
+        onReplay: () => {},
+        onEvent: () => {},
+        onDetached: () => {},
+      }
+    )
+    const attach = ws.sent
+      .map((text) => JSON.parse(text))
+      .find((frame) => frame.action === "attach")
+    expect(attach).toMatchObject({ connection_id: "c1", wire: 2 })
+    t.destroy()
+  })
 })

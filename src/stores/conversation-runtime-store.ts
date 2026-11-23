@@ -1563,6 +1563,10 @@ export function buildStreamingTurnsFromLiveMessage(
           // delegation row. Opaque pass-through — adapter layer
           // does not interpret.
           meta: block.info.meta,
+          // Fork: a shortened input's full text (`lib/tool-bodies.ts`).
+          ...(block.info.body_refs?.input
+            ? { body_refs: { input_preview: block.info.body_refs.input } }
+            : {}),
         })
         const isFinalState =
           block.info.status === "completed" || block.info.status === "failed"
@@ -1574,6 +1578,11 @@ export function buildStreamingTurnsFromLiveMessage(
           block.info.raw_output_chunks.length > 0
             ? getJoinedChunks(block.info.raw_output_chunks)
             : block.info.content
+        // Fork: the full text of whichever of the two was shortened.
+        const outputRef =
+          block.info.raw_output_chunks.length > 0
+            ? block.info.body_refs?.output
+            : block.info.body_refs?.content
 
         // For agent tool calls, build agent_stats from collected children
         const isAgent = toolName === "agent"
@@ -1620,6 +1629,9 @@ export function buildStreamingTurnsFromLiveMessage(
             is_error: block.info.status === "failed",
             ...(agentStats ? { agent_stats: agentStats } : {}),
             ...(transcript?.length ? { agent_transcript: transcript } : {}),
+            ...(outputRef && !isAgent
+              ? { body_refs: { output_preview: outputRef } }
+              : {}),
           })
           currentGroupHasCompletedTool = true
         } else if (

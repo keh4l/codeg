@@ -130,6 +130,12 @@ import {
 } from "@/lib/acp-error-presentation"
 import { dismissNotification, notify, type NotifyAction } from "@/lib/notify"
 import type { SnapshotPatch } from "@/lib/snapshot-denormalize"
+import {
+  bodyRefsFromEvent,
+  mergeToolCallBodyRefs,
+  type ToolCallBodyRefs,
+  type WireToolBodyRefs,
+} from "@/lib/tool-bodies"
 import { salvageSnapshot, type SnapshotSalvage } from "@/lib/snapshot-salvage"
 import {
   appendLiveToolRawOutput,
@@ -210,6 +216,12 @@ export interface ToolCallInfo {
    * frontend reconnecting mid-turn or after refresh sees the same image.
    */
   images: ToolCallImage[]
+  /**
+   * Bodies the server shortened (fork, `ToolBodyRef`): `output` the raw
+   * output, `input` the raw input, `content` the content. Each goes when a
+   * later update replaces that body.
+   */
+  body_refs?: ToolCallBodyRefs
 }
 
 type PermissionToolContext = Pick<
@@ -706,6 +718,8 @@ type Action =
       meta: ToolCallMeta
       /** `null` when the wire event omitted the field (no images). */
       images: ToolCallImage[] | null
+      /** Bodies the server shortened (fork, `lib/tool-bodies.ts`). */
+      body_refs?: WireToolBodyRefs | null
     }
   | {
       type: "TOOL_CALL_UPDATE"
@@ -727,6 +741,8 @@ type Action =
        * `[a, b]` to replace.
        */
       images: ToolCallImage[] | null
+      /** Bodies the server shortened (fork, `lib/tool-bodies.ts`). */
+      body_refs?: WireToolBodyRefs | null
     }
   | {
       type: "BATCH_TOOL_CALL_UPDATES"
@@ -746,6 +762,7 @@ type Action =
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         meta: any | null
         images: ToolCallImage[] | null
+        body_refs?: WireToolBodyRefs | null
       }>
     }
   | {
@@ -1948,7 +1965,7 @@ function mergeToolCallUpdate(
       : replaceLiveToolRawOutput(update.raw_output)
 
   const oauth = readKimiMcpOAuth(info.meta)
-  return {
+  const merged: ToolCallInfo = {
     ...info,
     title: oauth?.toolName ?? update.title ?? info.title,
     status: update.status ?? info.status,
@@ -1959,6 +1976,24 @@ function mergeToolCallUpdate(
     meta: updateKimiMcpOAuth(info.meta, update, info.status),
     images: update.images !== null ? update.images : info.images,
   }
+  return setBodyRefs(merged, mergeToolCallBodyRefs(info.body_refs, update))
+}
+
+/** `{ body_refs }` when there are any, else nothing (fork). */
+function bodyRefsField(refs: ToolCallBodyRefs | undefined): {
+  body_refs?: ToolCallBodyRefs
+} {
+  return refs ? { body_refs: refs } : {}
+}
+
+/** `info` (a fresh object) with exactly `refs` as its body references. */
+function setBodyRefs(
+  info: ToolCallInfo,
+  refs: ToolCallBodyRefs | undefined
+): ToolCallInfo {
+  if (refs) info.body_refs = refs
+  else delete info.body_refs
+  return info
 }
 
 /** A stopped turn's record (`ConnectionState.cancelledTurn`), or `null` when
@@ -2622,26 +2657,29 @@ function connectionsReducer(
             ...prev.content.slice(0, existingIndex),
             {
               type: "tool_call",
-              info: {
-                ...block.info,
-                title: action.title ?? block.info.title,
-                kind: action.kind ?? block.info.kind,
-                status: action.status ?? block.info.status,
-                content: action.content ?? block.info.content,
-                raw_input: action.raw_input ?? block.info.raw_input,
-                ...(action.raw_output !== null
-                  ? replaceLiveToolRawOutput(action.raw_output)
-                  : appendLiveToolRawOutput(block.info, null)),
-                // The block may be the placeholder a permission request drew
-                // before this frame was applied (the agent's announcement and
-                // its request reach codeg on separate paths, either first).
-                // The announcement is what names the tool
-                // (`_meta.claudeCode.toolName`), so its `_meta` must land.
-                locations: action.locations ?? block.info.locations,
-                meta: meta ?? block.info.meta,
-                images:
-                  action.images !== null ? action.images : block.info.images,
-              },
+              info: setBodyRefs(
+                {
+                  ...block.info,
+                  title: action.title ?? block.info.title,
+                  kind: action.kind ?? block.info.kind,
+                  status: action.status ?? block.info.status,
+                  content: action.content ?? block.info.content,
+                  raw_input: action.raw_input ?? block.info.raw_input,
+                  ...(action.raw_output !== null
+                    ? replaceLiveToolRawOutput(action.raw_output)
+                    : appendLiveToolRawOutput(block.info, null)),
+                  // The block may be the placeholder a permission request drew
+                  // before this frame was applied (the agent's announcement and
+                  // its request reach codeg on separate paths, either first).
+                  // The announcement is what names the tool
+                  // (`_meta.claudeCode.toolName`), so its `_meta` must land.
+                  locations: action.locations ?? block.info.locations,
+                  meta: meta ?? block.info.meta,
+                  images:
+                    action.images !== null ? action.images : block.info.images,
+                },
+                mergeToolCallBodyRefs(block.info.body_refs, action)
+              ),
             },
             ...prev.content.slice(existingIndex + 1),
           ]
@@ -2664,6 +2702,7 @@ function connectionsReducer(
               locations: action.locations ?? null,
               meta,
               images: action.images ?? [],
+              ...bodyRefsField(bodyRefsFromEvent(action.body_refs)),
             },
           },
         ]
@@ -5125,6 +5164,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       locations: unknown
       meta: ToolCallMeta
       images: ToolCallImage[] | null
+      body_refs?: WireToolBodyRefs | null
     }>
   >([])
   const toolCallUpdateRafId = useRef<number | null>(null)
@@ -5468,6 +5508,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
             locations: e.locations ?? null,
             meta: stripKimiMcpOAuth((e.meta as ToolCallMeta) ?? null),
             images: e.images ?? null,
+            body_refs: e.body_refs ?? null,
           })
           break
         case "tool_call_update":
@@ -5486,6 +5527,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
             locations: e.locations ?? null,
             meta: stripKimiMcpOAuth((e.meta as ToolCallMeta) ?? null),
             images: e.images ?? null,
+            body_refs: e.body_refs ?? null,
           })
           scheduleToolCallUpdateFlush()
           break

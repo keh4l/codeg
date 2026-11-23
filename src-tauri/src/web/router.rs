@@ -1297,6 +1297,8 @@ pub fn build_router_with_srn(
             "/acp_get_session_flags",
             post(handlers::session_flags::acp_get_session_flags),
         )
+        // Fork: the full text of a shortened tool body (`web::body_caps`).
+        .route("/get_blob_text", post(crate::web::body_caps::get_blob_text))
         .route(
             "/acp_get_session_snapshot_by_conversation",
             post(handlers::acp::acp_get_session_snapshot_by_conversation),

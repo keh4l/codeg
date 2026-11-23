@@ -16,6 +16,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
@@ -89,6 +90,11 @@ pub enum ClientMsg {
         /// v2 clients). Absent: the server default. Capped at 1000.
         #[serde(default)]
         coalesce_ms: Option<u64>,
+        /// Payload shape this client reads (fork). `2`: the snapshot has its
+        /// images by reference and finished tool calls' bulky payload
+        /// shortened (`web::body_caps::slim_snapshot`). Absent: as before.
+        #[serde(default)]
+        wire: Option<u8>,
     },
     /// Cancel a prior `attach` by `subscription_id`.
     Detach { subscription_id: String },
@@ -132,6 +138,10 @@ pub enum ServerMsg {
     },
     /// Liveness response.
     Pong,
+    /// A frame already serialized (fork): a snapshot projected for a
+    /// `wire: 2` client. Written as is; never goes through serde.
+    #[serde(skip)]
+    Raw(String),
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -316,6 +326,80 @@ pub fn decide_resume(
 /// and are merged as they are read, so a backlog leaves as fewer, larger
 /// frames instead of falling further behind.
 #[allow(clippy::too_many_arguments)]
+/// A frame as a `wire: 2` client reads it (fork, `web::body_caps`): a
+/// snapshot slimmed, and in a replay or an event every tool call with images
+/// or a long finished body projected. Serialized off the runtime (the
+/// projection hashes and stores each image and long body). Any other frame,
+/// or every frame when the store is not there, as is.
+async fn slim_frame(msg: ServerMsg) -> ServerMsg {
+    use super::body_caps;
+    let needs = |envelope: &WireEnvelope| {
+        matches!(envelope, WireEnvelope::Single(env) if body_caps::event_needs_slimming(&env.payload))
+    };
+    let (subscription_id, wanted) = match &msg {
+        ServerMsg::Snapshot {
+            subscription_id, ..
+        } => (subscription_id.clone(), true),
+        ServerMsg::Replay {
+            subscription_id,
+            events,
+            ..
+        } => (subscription_id.clone(), events.iter().any(needs)),
+        ServerMsg::Event {
+            subscription_id,
+            envelope,
+        } => (subscription_id.clone(), needs(envelope)),
+        _ => return msg,
+    };
+    if !wanted {
+        return msg;
+    }
+    let Some(store) = super::blob_store::global() else {
+        return msg;
+    };
+    let projected = tokio::task::spawn_blocking(move || {
+        let mut value = match serde_json::to_value(&msg) {
+            Ok(value) => value,
+            Err(_) => return Err(msg),
+        };
+        if let Some(snapshot) = value.get_mut("snapshot") {
+            body_caps::slim_snapshot(snapshot, store);
+        }
+        if let Some(Value::Array(events)) = value.get_mut("events") {
+            for event in events {
+                if is_tool_event(event) {
+                    body_caps::slim_event(event, store);
+                }
+            }
+        }
+        if let Some(envelope) = value.get_mut("envelope") {
+            body_caps::slim_event(envelope, store);
+        }
+        serde_json::to_string(&value).map_err(|_| msg)
+    })
+    .await;
+    match projected {
+        Ok(Ok(text)) => ServerMsg::Raw(text),
+        Ok(Err(msg)) => msg,
+        Err(err) => {
+            // The frame went with the task; the client re-attaches.
+            tracing::warn!("[WS attach] frame projection failed: {err}");
+            ServerMsg::Detached {
+                subscription_id,
+                reason: DetachReason::Lagged,
+            }
+        }
+    }
+}
+
+fn is_tool_event(event: &Value) -> bool {
+    matches!(
+        event.get("type").and_then(Value::as_str),
+        Some("tool_call" | "tool_call_update")
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_forwarder(
     subscription_id: String,
     epoch: u64,
@@ -325,6 +409,7 @@ pub fn spawn_forwarder(
     outbound: mpsc::Sender<ServerMsg>,
     cleanup_tx: mpsc::Sender<(String, u64)>,
     coalesce: Duration,
+    slim: bool,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let signal_cleanup = || {
@@ -335,6 +420,11 @@ pub fn spawn_forwarder(
             envelope,
         };
         if let Some(initial) = initial {
+            let initial = if slim {
+                slim_frame(initial).await
+            } else {
+                initial
+            };
             if outbound.send(initial).await.is_err() {
                 signal_cleanup();
                 return;
@@ -397,11 +487,11 @@ pub fn spawn_forwarder(
                 pending = Some((Run::new(envelope), at));
                 continue;
             }
-            if outbound
-                .send(event(WireEnvelope::Single(envelope)))
-                .await
-                .is_err()
-            {
+            let mut msg = event(WireEnvelope::Single(envelope));
+            if slim {
+                msg = slim_frame(msg).await;
+            }
+            if outbound.send(msg).await.is_err() {
                 // WS closed; nothing to forward to. Map cleanup is handled by
                 // the main loop's drain on exit, but the signal is harmless
                 // either way.
@@ -470,6 +560,7 @@ mod tests {
             out_tx,
             cleanup_tx,
             Duration::from_millis(window_ms),
+            false,
         );
         Forwarder {
             events,

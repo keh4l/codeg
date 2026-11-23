@@ -354,7 +354,7 @@ async fn run_writer<S>(
 
             outgoing = outbound_rx.recv(), if outbound_open => match outgoing {
                 Some(msg) => {
-                    if let Some(text) = serialize_server_msg(&msg) {
+                    if let Some(text) = serialize_server_msg(msg) {
                         if !write_data(&mut sink, text, codec, &mut control_rx).await {
                             return;
                         }
@@ -412,7 +412,7 @@ where
     S: Sink<Message> + Unpin,
 {
     match control {
-        Control::Msg(msg) => match serialize_server_msg(&msg) {
+        Control::Msg(msg) => match serialize_server_msg(msg) {
             Some(text) => {
                 for message in ws_frame::encode(text, codec).await {
                     if sink.send(message).await.is_err() {
@@ -458,8 +458,11 @@ where
 }
 
 /// A frame's JSON; `None` (logged) if it fails to serialize, which skips it.
-fn serialize_server_msg(msg: &ServerMsg) -> Option<String> {
-    match serde_json::to_string(msg) {
+fn serialize_server_msg(msg: ServerMsg) -> Option<String> {
+    if let ServerMsg::Raw(text) = msg {
+        return Some(text);
+    }
+    match serde_json::to_string(&msg) {
         Ok(text) => Some(text),
         Err(e) => {
             tracing::warn!("[WS][WARN] failed to serialize ServerMsg: {e}");
@@ -485,6 +488,7 @@ async fn handle_client_msg(
             connection_id,
             since_seq,
             coalesce_ms,
+            wire,
         } => {
             // Re-attach with the same subscription_id replaces the prior
             // forwarder. Abort the old one first so its receiver drops
@@ -521,6 +525,7 @@ async fn handle_client_msg(
                         outbound_tx.clone(),
                         cleanup_tx.clone(),
                         ws_attach::coalesce_window(coalesce_ms),
+                        wire == Some(2),
                     );
                     subscriptions.insert(subscription_id, ActiveSubscription { handle, epoch });
                 }

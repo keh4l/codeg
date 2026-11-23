@@ -70,12 +70,21 @@ fn check(items: &[Measured]) {
     assert!(failures.is_empty(), "over budget:\n{}", failures.join("\n"));
 }
 
+/// Every test's blob store (fork): one directory for the process, under the
+/// target dir, so nothing is written into the real data root. Set before any
+/// test can open the store on its default path.
+fn use_test_blob_store() {
+    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("wire-budget-blobs");
+    codeg_lib::web::blob_store::init_global(dir).expect("blob store");
+}
+
 async fn build_server() -> (
     TestServer,
     Arc<AppState>,
     tempfile::TempDir,
     tempfile::TempDir,
 ) {
+    use_test_blob_store();
     let data_dir = tempfile::tempdir().expect("data dir");
     let static_dir = tempfile::tempdir().expect("static dir");
     let db = fresh_in_memory_db().await;
@@ -478,6 +487,51 @@ async fn cold_attach_snapshot_with_big_tool_output() {
     .await;
     let (v2_frame, v2_bytes) = next_frame_v2(&mut v2).await;
     assert_eq!(v2_frame, frame, "v2 carries the same frame");
+
+    // And for a client that reads `wire: 2` (fork, 2.7): the duplicate
+    // `content` gone, the older outputs shortened, each a request away whole.
+    let mut slim = open_ws_v2(&server).await;
+    slim.send_json(&json!({
+        "action": "attach",
+        "subscription_id": "sub",
+        "connection_id": "big",
+        "since_seq": null,
+        "wire": 2,
+    }))
+    .await;
+    let (slim_frame, slim_bytes) = next_frame_v2(&mut slim).await;
+    assert_eq!(slim_frame["type"], "snapshot");
+    assert_eq!(slim_frame["event_seq"], frame["event_seq"]);
+    let full_calls = frame["snapshot"]["active_tool_calls"].as_array().expect("calls");
+    let slim_calls = slim_frame["snapshot"]["active_tool_calls"]
+        .as_array()
+        .expect("calls");
+    assert_eq!(slim_calls.len(), full_calls.len(), "every call is there");
+    let shortened: Vec<(&Value, &Value)> = slim_calls
+        .iter()
+        .zip(full_calls)
+        .filter(|(slim, _)| slim["body_refs"]["output"].is_object())
+        .collect();
+    assert!(!shortened.is_empty(), "older outputs are shortened");
+    let (slim_call, full_call) = shortened[0];
+    let full_text = match full_call["output"]["kind"].as_str() {
+        Some("text") => full_call["output"]["content"].as_str().unwrap().to_string(),
+        _ => full_call["output"]["value"].to_string(),
+    };
+    let blob = server
+        .post("/api/get_blob_text")
+        .add_header("authorization", format!("Bearer {TOKEN}"))
+        .json(&json!({ "id": slim_call["body_refs"]["output"]["id"] }))
+        .await;
+    assert_eq!(blob.status_code(), 200, "{}", blob.text());
+    let blob: Value = blob.json();
+    assert_eq!(blob["text"].as_str(), Some(full_text.as_str()), "the full text");
+    let unauthenticated = server
+        .post("/api/get_blob_text")
+        .json(&json!({ "id": slim_call["body_refs"]["output"]["id"] }))
+        .await;
+    assert_eq!(unauthenticated.status_code(), 401);
+    let slim_json = slim_frame.to_string().len() as u64;
     check(&[
         Measured {
             name: "cold attach: snapshot bytes (60 tool calls x 14 KB)",
@@ -489,8 +543,24 @@ async fn cold_attach_snapshot_with_big_tool_output() {
             value: v2_bytes,
             budget: V2_SNAPSHOT_BUDGET,
         },
+        Measured {
+            name: "cold attach, wire 2: snapshot JSON bytes",
+            value: slim_json,
+            budget: SLIM_SNAPSHOT_JSON_BUDGET,
+        },
+        Measured {
+            name: "cold attach on v2, wire 2: wire bytes (zlib)",
+            value: slim_bytes,
+            budget: SLIM_SNAPSHOT_BUDGET,
+        },
     ]);
 }
+
+/// The same snapshot for a `wire: 2` client (fork, 2.7): 497 KB of JSON,
+/// 15 KB in zlib (measured + 10%; the fixture's outputs repeat, so zlib does
+/// better here than on a real turn).
+const SLIM_SNAPSHOT_JSON_BUDGET: u64 = 547_000;
+const SLIM_SNAPSHOT_BUDGET: u64 = 17_000;
 
 // ─────────────────────────────────────────────────────────────────────────────
 /// v2 cold attach of the snapshot above (2.14 MB of JSON): 285 KB in zlib.
@@ -582,6 +652,20 @@ async fn reattach_mid_turn_when_caught_up_and_after_short_gap() {
 /// a 150 KB (incompressible) screenshot every 15th round, a Bash call per
 /// round with 40 lines of output.
 fn write_claude_transcript(dir: &std::path::Path, cwd: &str, session: &str) {
+    write_claude_rounds(dir, cwd, session, 150, true, |_| tool_output(40));
+}
+
+/// `rounds` rounds of a user message (a 150 KB screenshot every 15th when
+/// `images`), a reply with a Bash call, its result `output(i)` and a closing
+/// line.
+fn write_claude_rounds(
+    dir: &std::path::Path,
+    cwd: &str,
+    session: &str,
+    rounds: u64,
+    images: bool,
+    output: impl Fn(u64) -> String,
+) {
     let project = dir.join("projects").join(cwd.replace(['/', '.'], "-"));
     std::fs::create_dir_all(&project).expect("project dir");
     let mut file = std::fs::File::create(project.join(format!("{session}.jsonl"))).expect("file");
@@ -602,10 +686,10 @@ fn write_claude_transcript(dir: &std::path::Path, cwd: &str, session: &str) {
         t += 1;
         format!("2026-11-22T01:{:02}:{:02}.000Z", (t / 60) % 60, t % 60)
     };
-    for i in 0..150 {
+    for i in 0..rounds {
         let mut content =
             vec![json!({ "type": "text", "text": format!("Round {i}: fix panel {i}") })];
-        if i % 15 == 0 {
+        if images && i % 15 == 0 {
             content.push(json!({ "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": png(150 * 1024) } }));
         }
         let lines = [
@@ -618,7 +702,7 @@ fn write_claude_transcript(dir: &std::path::Path, cwd: &str, session: &str) {
                                      { "type": "tool_use", "id": format!("tu{i}"), "name": "Bash", "input": { "command": format!("rg -n panel{i} src") } },
                                  ] } }),
             json!({ "type": "user", "timestamp": ts(), "uuid": format!("r{i}"), "parentUuid": format!("a{i}"), "cwd": cwd,
-                    "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": format!("tu{i}"), "content": tool_output(40) }] } }),
+                    "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": format!("tu{i}"), "content": output(i) }] } }),
             json!({ "type": "assistant", "timestamp": ts(), "uuid": format!("b{i}"), "parentUuid": format!("r{i}"),
                     "message": { "id": format!("n{i}"), "role": "assistant", "model": "claude-opus-5-5",
                                  "content": [{ "type": "text", "text": format!("Fixed panel {i}.") }] } }),
@@ -629,15 +713,15 @@ fn write_claude_transcript(dir: &std::path::Path, cwd: &str, session: &str) {
     }
 }
 
-#[tokio::test]
-async fn opening_a_conversation_with_screenshots() {
+/// A Claude Code conversation bound to `session`, its transcript read from
+/// `config_dir`.
+async fn claude_conversation(
+    state: &Arc<AppState>,
+    config_dir: &std::path::Path,
+    cwd: &str,
+    session: &str,
+) -> i32 {
     use codeg_lib::db::service::{agent_setting_service, conversation_service, folder_service};
-
-    let (server, state, _d, _s) = build_server().await;
-    let config_dir = tempfile::tempdir().expect("claude config dir");
-    let cwd = "/tmp/codeg-wire-budget-proj";
-    let session = "6b0e1c2d-3f4a-4b5c-8d6e-7f8091a2b3c4";
-    write_claude_transcript(config_dir.path(), cwd, session);
 
     // Point Claude Code at the temp config dir through its agent settings, as
     // the settings page does — nothing here reads the real ~/.claude.
@@ -656,7 +740,7 @@ async fn opening_a_conversation_with_screenshots() {
         AgentType::ClaudeCode,
         agent_setting_service::AgentSettingsUpdate {
             enabled: true,
-            env_json: Some(json!({ "CLAUDE_CONFIG_DIR": config_dir.path() }).to_string()),
+            env_json: Some(json!({ "CLAUDE_CONFIG_DIR": config_dir }).to_string()),
             model_provider_id: None,
         },
     )
@@ -677,6 +761,18 @@ async fn opening_a_conversation_with_screenshots() {
         .await
         .expect("bind session");
 
+    conversation_id
+}
+
+#[tokio::test]
+async fn opening_a_conversation_with_screenshots() {
+    let (server, state, _d, _s) = build_server().await;
+    let config_dir = tempfile::tempdir().expect("claude config dir");
+    let cwd = "/tmp/codeg-wire-budget-proj";
+    let session = "6b0e1c2d-3f4a-4b5c-8d6e-7f8091a2b3c4";
+    write_claude_transcript(config_dir.path(), cwd, session);
+    let conversation_id = claude_conversation(&state, config_dir.path(), cwd, session).await;
+
     let request = || {
         server
             .post("/api/get_folder_conversation")
@@ -689,8 +785,6 @@ async fn opening_a_conversation_with_screenshots() {
 
     // The same window with images as references (fork, 2.3): the browser
     // loads each image once from /api/img/{id} and caches it for good.
-    let blobs = tempfile::tempdir().expect("blob dir");
-    codeg_lib::web::blob_store::init_global(blobs.path()).expect("blob store");
     let with_refs = || {
         server
             .post("/api/get_folder_conversation")
@@ -799,6 +893,118 @@ async fn opening_a_conversation_with_screenshots() {
         },
     ]);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Opening a conversation whose commands printed a lot (fork, 2.8): each long
+// tool output comes shortened, its full text a request away.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn opening_a_conversation_with_long_tool_output() {
+    let (server, state, _d, _s) = build_server().await;
+    let config_dir = tempfile::tempdir().expect("claude config dir");
+    let cwd = "/tmp/codeg-wire-budget-logs";
+    let session = "7c1f2d3e-4a5b-4c6d-9e8f-a0b1c2d3e4f5";
+    // 12 rounds, each printing 3000 lines (~200 KB).
+    write_claude_rounds(config_dir.path(), cwd, session, 12, false, |_| {
+        tool_output(3000)
+    });
+    let conversation_id = claude_conversation(&state, config_dir.path(), cwd, session).await;
+
+    let fetch = |extra: Value, gzip: bool| {
+        let mut body = json!({ "conversationId": conversation_id, "tailTurns": 120 });
+        for (k, v) in extra.as_object().unwrap() {
+            body[k] = v.clone();
+        }
+        let mut request = server
+            .post("/api/get_folder_conversation")
+            .add_header("authorization", format!("Bearer {TOKEN}"));
+        if gzip {
+            request = request.add_header("accept-encoding", "gzip");
+        }
+        request.json(&body)
+    };
+    let plain = fetch(json!({}), true).await;
+    assert_eq!(plain.status_code(), 200, "{}", plain.text());
+    let full: Value = fetch(json!({}), false).await.json();
+    let short_gzip = fetch(json!({ "toolBodies": true }), true).await;
+    assert_eq!(short_gzip.status_code(), 200);
+    let short: Value = fetch(json!({ "toolBodies": true }), false).await.json();
+
+    let results = |detail: &Value| -> Vec<Value> {
+        detail["turns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|t| t["blocks"].as_array().cloned().unwrap_or_default())
+            .filter(|b| b["type"] == "tool_result")
+            .collect()
+    };
+    let full_results = results(&full);
+    let short_results = results(&short);
+    assert_eq!(full_results.len(), 12);
+    assert_eq!(short_results.len(), 12, "same turns, same blocks");
+    let original = full_results[0]["output_preview"].as_str().unwrap();
+    let shortened = &short_results[0];
+    let reference = &shortened["body_refs"]["output_preview"];
+    assert_eq!(reference["bytes"], original.len());
+    let text = shortened["output_preview"].as_str().unwrap();
+    assert!(text.len() < 24 * 1024 && text.contains("\n…\n"));
+    assert_eq!(
+        text.matches('\n').count() as i64 + reference["extra_lines"].as_i64().unwrap(),
+        original.matches('\n').count() as i64,
+        "the line count adds up"
+    );
+    let blob: Value = server
+        .post("/api/get_blob_text")
+        .add_header("authorization", format!("Bearer {TOKEN}"))
+        .json(&json!({ "id": reference["id"] }))
+        .await
+        .json();
+    assert_eq!(blob["text"].as_str(), Some(original), "the full text");
+
+    // With the remote first-window budget the bodies count shortened, so
+    // the window keeps its rounds instead of one or two whole logs.
+    let budgeted: Value = fetch(
+        json!({ "toolBodies": true, "windowMaxBytes": 512 * 1024, "windowMaxUserTurns": 8 }),
+        false,
+    )
+    .await
+    .json();
+    let rounds = budgeted["turns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|t| t["role"] == "user" && t["blocks"][0]["type"] == "text")
+        .count();
+    assert_eq!(rounds, 8, "the first window keeps its 8 rounds");
+    let budgeted_gzip = fetch(
+        json!({ "toolBodies": true, "windowMaxBytes": 512 * 1024, "windowMaxUserTurns": 8 }),
+        true,
+    )
+    .await;
+    check(&[
+        Measured {
+            name: "open (12 x 200 KB logs): gzip bytes on the wire",
+            value: plain.as_bytes().len() as u64,
+            budget: 430_000,
+        },
+        Measured {
+            name: "open (12 x 200 KB logs) with toolBodies: gzip bytes",
+            value: short_gzip.as_bytes().len() as u64,
+            budget: LONG_OUTPUT_GZIP_BUDGET,
+        },
+        Measured {
+            name: "open (12 x 200 KB logs), toolBodies + 8 rounds: gzip bytes",
+            value: budgeted_gzip.as_bytes().len() as u64,
+            budget: LONG_OUTPUT_GZIP_BUDGET,
+        },
+    ]);
+}
+
+/// 12 rounds of 200 KB logs with long tool bodies shortened: 391 KB → 9.7 KB
+/// gzipped (measured + 10%).
+const LONG_OUTPUT_GZIP_BUDGET: u64 = 10_700;
 
 /// With images as references the 120-turn window is 7.5 KB gzipped and its
 /// longest string 4 KB (measured + 10%).

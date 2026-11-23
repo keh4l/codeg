@@ -11,6 +11,7 @@ import type {
   ImageBlobRef,
   DelegationResultsMode,
   DelegationResultsTask,
+  ToolBodyRef,
 } from "@/lib/types"
 import { hasImage, imageKey } from "@/lib/conversation-images"
 import {
@@ -114,6 +115,30 @@ export type AdaptedToolCallPart = {
   /** The command's exit code, when the transcript keeps it as a field
    *  (`ContentBlock.tool_result.exit_code`). */
   exitCode?: number | null
+  /** `input` / `output` (and `errorText`) the server shortened (fork,
+   *  `ToolBodyRef`); the full text loads through `lib/tool-bodies.ts`. */
+  bodyRefs?: ToolPartBodyRefs
+}
+
+export interface ToolPartBodyRefs {
+  input?: ToolBodyRef
+  output?: ToolBodyRef
+}
+
+/** The shortened bodies of a tool call and its result, if any (fork). */
+function toolPartBodyRefs(
+  use: { body_refs?: { input_preview?: ToolBodyRef } } | null,
+  result: { body_refs?: { output_preview?: ToolBodyRef } } | null
+): { bodyRefs?: ToolPartBodyRefs } {
+  const input = use?.body_refs?.input_preview
+  const output = result?.body_refs?.output_preview
+  if (!input && !output) return {}
+  return {
+    bodyRefs: {
+      ...(input ? { input } : {}),
+      ...(output ? { output } : {}),
+    },
+  }
 }
 
 /**
@@ -1545,6 +1570,7 @@ function adaptContentBlock(
         input: block.input_preview,
         state: "input-available",
         meta: block.meta ?? null,
+        ...toolPartBodyRefs(block, null),
       }
 
     case "tool_result": {
@@ -2615,6 +2641,7 @@ export function adaptMessageTurn(
           agentStats: matchedResult.agent_stats ?? undefined,
           exitCode: matchedResult.exit_code ?? undefined,
           meta: block.meta ?? null,
+          ...toolPartBodyRefs(block, matchedResult),
           // The settled card keeps its interleaved view from whichever source
           // survives: the live transcript while localTurns still holds it, the
           // parsed child transcript once history reloads from disk.
@@ -2666,6 +2693,7 @@ export function adaptMessageTurn(
             agentStats: positionalResult.agent_stats ?? undefined,
             exitCode: positionalResult.exit_code ?? undefined,
             meta: block.meta ?? null,
+            ...toolPartBodyRefs(block, positionalResult),
             // Same dual source as the id-matched branch above.
             agentTranscript: positionalResult.agent_transcript?.length
               ? positionalResult.agent_transcript
@@ -2697,6 +2725,7 @@ export function adaptMessageTurn(
             // output-available. See dropEmptyInFlightToolCalls.
             toolStatus: block.status ?? null,
             meta: block.meta ?? null,
+            ...toolPartBodyRefs(block, null),
           })
         }
       }

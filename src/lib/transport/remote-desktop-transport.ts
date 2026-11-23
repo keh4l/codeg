@@ -4,6 +4,7 @@ import type { UnlistenFn } from "@tauri-apps/api/event"
 import { WS_READY_CHANNEL } from "./constants"
 import type { AttachTransportHost } from "./web-event-stream"
 import { WebEventStream } from "./web-event-stream"
+import { remoteWindowTakesImageRefs } from "@/lib/conversation-images"
 import type {
   CallOptions,
   EventStream,
@@ -361,6 +362,10 @@ export class RemoteDesktopTransport implements Transport {
             this.wsReadyCallbacks.delete(callback)
           }
         },
+        // Fork: once the app's image listener is up, the window reads
+        // images by reference and long tool bodies on demand, as the
+        // browser does (`lib/conversation-images.ts`).
+        attachOptions: () => (remoteWindowTakesImageRefs() ? { wire: 2 } : {}),
       }
       this.eventStreamInstance = new WebEventStream(host)
       // Ensure the proxy WS is being maintained so attach frames have

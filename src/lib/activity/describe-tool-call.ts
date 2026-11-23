@@ -290,6 +290,40 @@ function emptyDescriptor(
   }
 }
 
+/** Lines of the output the server left out of a shortened body (fork,
+ *  `lib/tool-bodies.ts`): a count shown before the full text loads adds
+ *  them. */
+function shortenedLines(part: AdaptedToolCallPart): number {
+  const extra = part.bodyRefs?.output?.extra_lines
+  return typeof extra === "number" && extra > 0 ? extra : 0
+}
+
+function plusShortenedLines(
+  count: number | null,
+  part: AdaptedToolCallPart
+): number | null {
+  return count === null ? null : count + shortenedLines(part)
+}
+
+/** A search result's count with the lines a shortened output left out: one
+ *  result (a match, a file) per line. */
+function withShortenedLines(
+  outcome: SearchOutcome | null,
+  extra: number
+): SearchOutcome | null {
+  if (!outcome || extra === 0) return outcome
+  switch (outcome.kind) {
+    case "none":
+      return outcome
+    case "matches":
+      return { ...outcome, matches: outcome.matches + extra }
+    case "files":
+      return { ...outcome, files: outcome.files + extra }
+    case "lines":
+      return { ...outcome, lines: outcome.lines + extra }
+  }
+}
+
 function searchMetric(outcome: SearchOutcome | null): ToolMetric | null {
   if (!outcome) return null
   switch (outcome.kind) {
@@ -664,7 +698,7 @@ function describeUncached(part: AdaptedToolCallPart): ToolDescriptor {
         notes: readNotes(payload.parsed),
         metric:
           status === "succeeded" && part.output
-            ? lineMetric(readLineCount(part.output))
+            ? lineMetric(plusShortenedLines(readLineCount(part.output), part))
             : null,
       }
     }
@@ -695,7 +729,12 @@ function describeUncached(part: AdaptedToolCallPart): ToolDescriptor {
         detail: pattern && path ? shortPath(path) : null,
         metric:
           settled === "succeeded"
-            ? searchMetric(summarizeSearchResult(text))
+            ? searchMetric(
+                withShortenedLines(
+                  summarizeSearchResult(text),
+                  shortenedLines(part)
+                )
+              )
             : null,
       }
     }

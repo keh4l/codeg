@@ -73,6 +73,9 @@ pub struct WindowBudget {
     /// Images will be sent as references (`web::image_refs`), so their base64
     /// does not count.
     pub image_refs: bool,
+    /// Long tool bodies will be sent shortened (`web::body_caps`), so only
+    /// what is kept of them counts (fork).
+    pub tool_bodies: bool,
 }
 
 impl WindowBudget {
@@ -81,6 +84,7 @@ impl WindowBudget {
         max_bytes: Option<usize>,
         max_user_turns: Option<usize>,
         image_refs: bool,
+        tool_bodies: bool,
     ) -> Option<Self> {
         if max_bytes.is_none() && max_user_turns.is_none() {
             return None;
@@ -89,6 +93,7 @@ impl WindowBudget {
             max_bytes: max_bytes.unwrap_or(usize::MAX).max(1),
             max_user_turns: max_user_turns.unwrap_or(usize::MAX).max(1),
             image_refs,
+            tool_bodies,
         })
     }
 }
@@ -106,8 +111,13 @@ pub fn with_budget(
 }
 
 /// Serialized size of `turn` as the client will receive it.
-fn sent_turn_bytes(turn: &MessageTurn, image_refs: bool) -> usize {
+fn sent_turn_bytes(turn: &MessageTurn, image_refs: bool, tool_bodies: bool) -> usize {
     let full = serde_json::to_vec(turn).map(|v| v.len()).unwrap_or(0);
+    let full = if tool_bodies {
+        full.saturating_sub(shortened_tool_bytes(turn))
+    } else {
+        full
+    };
     if !image_refs {
         return full;
     }
@@ -136,6 +146,28 @@ fn sent_turn_bytes(turn: &MessageTurn, image_refs: bool) -> usize {
     full.saturating_sub(inline_images)
 }
 
+/// About what shortening the long tool bodies of `turn` leaves out (fork,
+/// `web::body_caps`).
+fn shortened_tool_bytes(turn: &MessageTurn) -> usize {
+    let caps = crate::web::body_caps::STANDARD;
+    // In serialized bytes: escaping makes a body longer on the wire.
+    let saved = |body: &Option<String>| match body {
+        Some(body) if body.len() > caps.max => {
+            let sent = serde_json::to_string(body).map_or(body.len(), |s| s.len());
+            sent - sent * (caps.head + caps.tail) / body.len()
+        }
+        _ => 0,
+    };
+    turn.blocks
+        .iter()
+        .map(|block| match block {
+            ContentBlock::ToolUse { input_preview, .. } => saved(input_preview),
+            ContentBlock::ToolResult { output_preview, .. } => saved(output_preview),
+            _ => 0,
+        })
+        .sum()
+}
+
 /// Start of a budgeted window ending at `end` and at most `max_turns` long.
 fn budgeted_start(
     turns: &[MessageTurn],
@@ -149,7 +181,7 @@ fn budgeted_start(
     let mut users = 0usize;
     while start > floor {
         let turn = &turns[start - 1];
-        let size = sent_turn_bytes(turn, budget.image_refs);
+        let size = sent_turn_bytes(turn, budget.image_refs, budget.tool_bodies);
         if start < end && bytes.saturating_add(size) > budget.max_bytes {
             return start;
         }
@@ -168,7 +200,7 @@ fn budgeted_start(
         let aligned = round_align_backward(turns, start);
         let extra: usize = turns[aligned..start]
             .iter()
-            .map(|t| sent_turn_bytes(t, budget.image_refs))
+            .map(|t| sent_turn_bytes(t, budget.image_refs, budget.tool_bodies))
             .sum();
         if bytes.saturating_add(extra) <= budget.max_bytes {
             return aligned;
@@ -451,6 +483,7 @@ mod tests {
             max_bytes,
             max_user_turns,
             image_refs: false,
+            tool_bodies: false,
         }
     }
 
@@ -470,7 +503,7 @@ mod tests {
             .enumerate()
             .map(|(i, r)| heavy(r.clone(), 1_700_000_000 + i as i64, 10_000))
             .collect();
-        let one = sent_turn_bytes(&turns[0], false);
+        let one = sent_turn_bytes(&turns[0], false, false);
         // Room for two turns: the window starts mid-round, as aligning back
         // to the user turn would not fit.
         let req = TurnWindowReq::TailBudget(120, budget(one * 2 + 10, 99));
@@ -497,8 +530,23 @@ mod tests {
             mime_type: "image/png".into(),
             uri: None,
         });
-        assert!(sent_turn_bytes(&t, false) > 200_000);
-        assert!(sent_turn_bytes(&t, true) < 1_000);
+        assert!(sent_turn_bytes(&t, false, false) > 200_000);
+        assert!(sent_turn_bytes(&t, true, false) < 1_000);
+    }
+
+    #[test]
+    fn a_shortened_tool_body_counts_only_what_is_kept() {
+        let mut t = turn(TurnRole::Assistant, 1);
+        t.blocks.push(ContentBlock::ToolResult {
+            tool_use_id: Some("t".into()),
+            output_preview: Some("line\n".repeat(60_000)),
+            is_error: false,
+            agent_stats: None,
+            images: Vec::new(),
+            exit_code: None,
+        });
+        assert!(sent_turn_bytes(&t, false, false) > 300_000);
+        assert!(sent_turn_bytes(&t, false, true) < 30_000);
     }
 
     #[test]

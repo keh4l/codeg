@@ -45,6 +45,7 @@ import { McpRow } from "./rows/mcp-row"
 import { ThoughtRow } from "./rows/thought-row"
 import { TimelineFoot, type ActivityFoot } from "./timeline-foot"
 import { useLiveToolStep } from "./use-live-step"
+import { ToolBodyScope } from "./tool-body-notice"
 import { useRailGrowth } from "./use-rail-growth"
 import { useRowPointing } from "./use-row-pointing"
 import {
@@ -446,11 +447,20 @@ function StepView({ step, tail }: { step: ActivityStep; tail: boolean }) {
 type ToolStep = Extract<ActivityStep, { type: "tool" }>
 
 function ToolStepView({ step: given }: { step: ToolStep }) {
-  const t = useTranslations("Folder.chat.activity")
-  const { renderPart } = useActivityRender()
   // A pending approval's call waits on the user, an answered one carries the
   // answer — whatever the transcript says.
   const step = useLiveToolStep(given)
+  // Fork: the row's notice reads the shortened bodies from here.
+  return (
+    <ToolBodyScope stepKey={step.key} refs={step.part.bodyRefs}>
+      <ToolStepRow step={step} />
+    </ToolBodyScope>
+  )
+}
+
+function ToolStepRow({ step }: { step: ToolStep }) {
+  const t = useTranslations("Folder.chat.activity")
+  const { renderPart } = useActivityRender()
   const { tool, part } = step
   switch (tool.kind) {
     case "read":

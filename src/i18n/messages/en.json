@@ -4272,6 +4272,13 @@
           "rejected": "declined",
           "viaChatChannel": "via a chat channel",
           "byPolicy": "by the run's permission policy"
+        },
+        "shortened": {
+          "note": "Shortened to its start and end ({size} in full).",
+          "load": "Load full",
+          "loading": "Loading the full text…",
+          "failed": "Couldn't load the full text.",
+          "retry": "Try again"
         }
       },
       "messageNav": {

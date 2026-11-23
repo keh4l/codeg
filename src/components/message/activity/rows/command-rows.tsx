@@ -40,6 +40,8 @@ import {
 } from "../use-live-elapsed"
 import type { ToolStep } from "./explore-rows"
 import { useAwaitedStep, useLiveToolStep } from "../use-live-step"
+import { ToolBodyScope } from "../tool-body-notice"
+import { extraLines } from "@/lib/tool-bodies"
 
 /** Tail of a running command's output kept for display. */
 const LIVE_OUTPUT_CHARS = 24_000
@@ -97,17 +99,27 @@ function useCommandOutput(step: ToolStep): CommandOutput | null {
     }
     text = text.replace(/\n+$/, "")
     if (!text.trim()) return null
-    const lines = countLines(text)
-    if (lines > MAX_OUTPUT_LINES) {
+    const shown = countLines(text)
+    // Fork: the lines a shortened output left out count too.
+    const lines = shown + extraLines(part.bodyRefs?.output)
+    if (shown > MAX_OUTPUT_LINES) {
       const all = text.split("\n")
       return {
         text: all.slice(-MAX_OUTPUT_LINES).join("\n"),
         lines,
-        truncated: lines - MAX_OUTPUT_LINES,
+        truncated: shown - MAX_OUTPUT_LINES,
       }
     }
     return { text, lines, truncated: 0 }
-  }, [part.output, part.errorText, tool.background, tool.kind, tool.status, t])
+  }, [
+    part.output,
+    part.errorText,
+    part.bodyRefs,
+    tool.background,
+    tool.kind,
+    tool.status,
+    t,
+  ])
 }
 
 /** What a command row says: a fixed "Command", then the agent's description
@@ -520,6 +532,22 @@ function LiveTail({ text }: { text: string }) {
  * itself. A running command stays folded with its last lines showing beneath.
  */
 export const CommandRow = memo(function CommandRow({
+  step: given,
+  inGroup = false,
+}: {
+  step: ToolStep
+  inGroup?: boolean
+}) {
+  // Fork: the row's notice reads the shortened bodies from here.
+  const step = useLiveToolStep(given)
+  return (
+    <ToolBodyScope stepKey={step.key} refs={step.part.bodyRefs}>
+      <CommandRowBody step={step} inGroup={inGroup} />
+    </ToolBodyScope>
+  )
+})
+
+const CommandRowBody = memo(function CommandRowBody({
   step: given,
   inGroup = false,
 }: {

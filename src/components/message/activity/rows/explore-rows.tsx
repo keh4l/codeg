@@ -30,6 +30,7 @@ import {
   useStatusText,
 } from "../step-visuals"
 import { useAwaitedStep, useLiveToolStep } from "../use-live-step"
+import { ToolBodyScope } from "../tool-body-notice"
 
 type ToolStep = Extract<ActivityStep, { type: "tool" }>
 
@@ -227,6 +228,22 @@ const STEP_VERB_KEY = {
  * ring.
  */
 export const ExploreChildRow = memo(function ExploreChildRow({
+  step: given,
+  standalone = false,
+}: {
+  step: ToolStep
+  standalone?: boolean
+}) {
+  // Fork: the row's notice reads the shortened bodies from here.
+  const step = useLiveToolStep(given)
+  return (
+    <ToolBodyScope stepKey={step.key} refs={step.part.bodyRefs}>
+      <ExploreChildRowBody step={step} standalone={standalone} />
+    </ToolBodyScope>
+  )
+})
+
+const ExploreChildRowBody = memo(function ExploreChildRowBody({
   step: given,
   standalone = false,
 }: {
