@@ -1,7 +1,8 @@
 /**
  * A runtime session a view lets go of is parked (fork): kept, the most recent
  * few, so the next view of the conversation draws it with no fetch — and told
- * apart, when it is taken back, from one something wrote to meanwhile.
+ * apart, when it is taken back, from one something wrote to meanwhile. And one
+ * read ahead of a click (sidebar) is kept apart from those.
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest"
@@ -12,9 +13,11 @@ vi.mock("@/lib/api", () => ({
 
 import { getFolderConversation } from "@/lib/api"
 import {
+  adoptPrefetchedSession,
   claimRuntimeSession,
   getRuntimeSession,
   parkRuntimeSession,
+  prefetchRuntimeSession,
   resetConversationRuntimeStore,
   useConversationRuntimeStore,
 } from "@/stores/conversation-runtime-store"
@@ -93,5 +96,60 @@ describe("parked runtime sessions", () => {
     parkRuntimeSession(20)
     resetConversationRuntimeStore()
     expect(claimRuntimeSession(20)).toBeNull()
+  })
+})
+
+describe("sessions read ahead of a click", () => {
+  it("reads the detail, and a view showing it takes it over", async () => {
+    vi.mocked(getFolderConversation).mockResolvedValueOnce({
+      summary: { id: 30, external_id: null },
+      turns: [],
+    } as unknown as DbConversationDetail)
+    prefetchRuntimeSession(30)
+    await vi.waitFor(() => expect(getRuntimeSession(30)?.detail).toBeTruthy())
+    adoptPrefetchedSession(30)
+    // Owned now: four more read-aheads do not push it out.
+    for (let id = 31; id < 36; id += 1) {
+      vi.mocked(getFolderConversation).mockResolvedValueOnce({
+        summary: { id, external_id: null },
+        turns: [],
+      } as unknown as DbConversationDetail)
+      prefetchRuntimeSession(id)
+    }
+    expect(getRuntimeSession(30)).not.toBeNull()
+  })
+
+  it("keeps the last four, and never pushes out a parked one", async () => {
+    await seed(40)
+    parkRuntimeSession(40)
+    for (let id = 41; id < 46; id += 1) {
+      vi.mocked(getFolderConversation).mockResolvedValueOnce({
+        summary: { id, external_id: null },
+        turns: [],
+      } as unknown as DbConversationDetail)
+      prefetchRuntimeSession(id)
+    }
+    expect(getRuntimeSession(41)).toBeNull()
+    for (let id = 42; id < 46; id += 1) {
+      expect(getRuntimeSession(id)).not.toBeNull()
+    }
+    expect(getRuntimeSession(40)?.detail).toBeTruthy()
+  })
+
+  it("leaves a conversation already loaded alone", async () => {
+    await seed(50)
+    vi.mocked(getFolderConversation).mockClear()
+    prefetchRuntimeSession(50)
+    expect(getFolderConversation).not.toHaveBeenCalled()
+  })
+
+  it("drops a read that failed when a view takes it, so the view reads now", async () => {
+    vi.mocked(getFolderConversation).mockRejectedValueOnce(new Error("offline"))
+    prefetchRuntimeSession(60)
+    await vi.waitFor(() =>
+      expect(getRuntimeSession(60)?.detailError).toBeTruthy()
+    )
+    adoptPrefetchedSession(60)
+    expect(getRuntimeSession(60)).toBeNull()
   })
 })

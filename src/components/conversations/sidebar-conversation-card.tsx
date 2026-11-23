@@ -4,8 +4,11 @@ import {
   memo,
   useState,
   useCallback,
+  useEffect,
+  useRef,
   type CSSProperties,
   type FocusEvent,
+  type PointerEvent as ReactPointerEvent,
 } from "react"
 import {
   AtSign,
@@ -30,6 +33,8 @@ import { emitAttachSessionToSession } from "@/lib/session-attachment-events"
 import type { DbConversationSummary, ConversationStatus } from "@/lib/types"
 import { STATUS_ORDER } from "@/lib/types"
 import { cn } from "@/lib/utils"
+import { isWorkspaceFileApiAvailable } from "@/lib/api"
+import { prefetchRuntimeSession } from "@/stores/conversation-runtime-store"
 import { formatConversationTitle } from "@/lib/conversation-title"
 import { useTranslatedTitle } from "@/hooks/use-translated-title"
 import {
@@ -87,6 +92,10 @@ import {
   DeleteConversationWorktreeOption,
   removeChosenDelegationWorktree,
 } from "./delete-conversation-worktree-option"
+
+/** How long the pointer rests on a row before its conversation is read
+ *  ahead (fork). */
+const PREFETCH_HOVER_MS = 150
 
 /**
  * Horizontal indent added per delegation-nesting level. Chosen so a child's
@@ -294,6 +303,37 @@ export const SidebarConversationCard = memo(function SidebarConversationCard({
     conversation.folder_id,
   ])
 
+  // Fork: over a network, start reading the conversation as the pointer
+  // heads for it — pressed, or resting on the row a moment — so the click
+  // finds it read or on its way. Never a touch (a scroll starts with one),
+  // never an agent.
+  const prefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const cancelPrefetch = useCallback(() => {
+    if (prefetchTimerRef.current != null) {
+      clearTimeout(prefetchTimerRef.current)
+      prefetchTimerRef.current = null
+    }
+  }, [])
+  const prefetch = useCallback(() => {
+    cancelPrefetch()
+    if (isWorkspaceFileApiAvailable()) prefetchRuntimeSession(conversation.id)
+  }, [cancelPrefetch, conversation.id])
+  const handlePointerEnter = useCallback(
+    (e: ReactPointerEvent) => {
+      if (e.pointerType === "touch") return
+      cancelPrefetch()
+      prefetchTimerRef.current = setTimeout(prefetch, PREFETCH_HOVER_MS)
+    },
+    [cancelPrefetch, prefetch]
+  )
+  const handlePointerDown = useCallback(
+    (e: ReactPointerEvent) => {
+      if (e.pointerType !== "touch") prefetch()
+    },
+    [prefetch]
+  )
+  useEffect(() => cancelPrefetch, [cancelPrefetch])
+
   const handleDblClick = useCallback(() => {
     onDoubleClick?.(
       conversation.id,
@@ -420,6 +460,9 @@ export const SidebarConversationCard = memo(function SidebarConversationCard({
                     data-conversation-id={conversation.id}
                     onClick={handleClick}
                     onDoubleClick={handleDblClick}
+                    onPointerEnter={handlePointerEnter}
+                    onPointerLeave={cancelPrefetch}
+                    onPointerDown={handlePointerDown}
                     className={cn(
                       "relative flex h-full min-w-0 flex-1 items-center gap-[0.625rem] text-left outline-none",
                       "rounded-full",

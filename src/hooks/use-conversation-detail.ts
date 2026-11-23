@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react"
 import { useShallow } from "zustand/react/shallow"
 import {
+  adoptPrefetchedSession,
   sessionHoldsActiveTurns,
   useConversationRuntimeActions,
   useConversationRuntimeStore,
@@ -115,6 +116,11 @@ export function useConversationDetail(
   const isVirtual = isVirtualConversationId(conversationId)
   const fetchPending = enabled && !isVirtual && needsFetch
   const retryPending = enabled && !isVirtual && retryDue
+
+  // Fork: a session read ahead of the click (sidebar) is this view's now.
+  useEffect(() => {
+    if (enabled && !isVirtual) adoptPrefetchedSession(conversationId)
+  }, [enabled, isVirtual, conversationId])
 
   useEffect(() => {
     if (!fetchPending) return

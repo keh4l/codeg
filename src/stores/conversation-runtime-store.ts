@@ -5463,6 +5463,7 @@ export function claimRuntimeSession(
     clearTimeout(pending)
     pendingSessionReleases.delete(conversationId)
   }
+  adoptPrefetchedSession(conversationId)
   const parked = parkedSessions.get(conversationId)
   if (!parked) return null
   parkedSessions.delete(conversationId)
@@ -5470,6 +5471,56 @@ export function claimRuntimeSession(
     parkedAt: parked.parkedAt,
     changed: getRuntimeSession(conversationId) !== parked.session,
   }
+}
+
+// Fork: sessions read ahead of a click (`prefetchRuntimeSession`), apart from
+// the parked ones so moving over the sidebar never pushes those out.
+const prefetchedSessions = new Map<number, number>()
+const MAX_PREFETCHED_SESSIONS = 4
+const PREFETCHED_SESSION_TTL_MS = 2 * 60 * 1000
+
+function dropPrefetchedSessions(): void {
+  const now = Date.now()
+  let overflow = prefetchedSessions.size - MAX_PREFETCHED_SESSIONS
+  for (const [conversationId, at] of [...prefetchedSessions]) {
+    const expired = now - at > PREFETCHED_SESSION_TTL_MS
+    if (overflow <= 0 && !expired) continue
+    overflow -= 1
+    prefetchedSessions.delete(conversationId)
+    useConversationRuntimeStore
+      .getState()
+      .actions.removeConversation(conversationId)
+  }
+}
+
+/**
+ * Fork: a view showing the conversation owns a session read ahead of the
+ * click from now on. One that only got an error is dropped, so the view reads
+ * it now instead of on its retry schedule.
+ */
+export function adoptPrefetchedSession(conversationId: number): void {
+  if (!prefetchedSessions.delete(conversationId)) return
+  const session = getRuntimeSession(conversationId)
+  if (session && !session.detail && session.detailError != null) {
+    useConversationRuntimeStore
+      .getState()
+      .actions.removeConversation(conversationId)
+  }
+}
+
+/**
+ * Fork: start reading a conversation the pointer is about to open (a sidebar
+ * row pressed, or hovered a moment), so its view finds the read under way or
+ * done. Only the detail — no agent is started. A conversation already loaded,
+ * loading, shown or parked is left alone. The last
+ * `MAX_PREFETCHED_SESSIONS` are kept for `PREFETCHED_SESSION_TTL_MS`; a view
+ * that mounts on one takes it over (`adoptPrefetchedSession`).
+ */
+export function prefetchRuntimeSession(conversationId: number): void {
+  if (conversationId <= 0 || getRuntimeSession(conversationId)) return
+  prefetchedSessions.set(conversationId, Date.now())
+  dropPrefetchedSessions()
+  useConversationRuntimeStore.getState().actions.fetchDetail(conversationId)
 }
 
 /** Resolve a runtime conversation id from an agent's external session id. */
@@ -5532,6 +5583,7 @@ export function resetConversationRuntimeStore(): void {
   for (const pending of pendingSessionReleases.values()) clearTimeout(pending)
   pendingSessionReleases.clear()
   parkedSessions.clear()
+  prefetchedSessions.clear()
   timelineCache = new WeakMap()
   timelinePrefixCache = new WeakMap()
   lastStreamingBuilds.clear()

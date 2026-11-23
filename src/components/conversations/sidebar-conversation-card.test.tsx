@@ -1,5 +1,12 @@
 import { type ReactElement } from "react"
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
+import {
+  act,
+  cleanup,
+  createEvent,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react"
 import { NextIntlClientProvider } from "next-intl"
 import { afterEach, describe, expect, it, vi, beforeEach } from "vitest"
 
@@ -35,6 +42,20 @@ vi.mock("@/components/agent-icon", () => ({
     probe.agentIconRenders++
     return null
   },
+}))
+
+// Fork: the read-ahead the row starts as the pointer heads for it.
+const prefetch = vi.hoisted(() => ({
+  run: vi.fn(),
+  overNetwork: true,
+}))
+vi.mock("@/stores/conversation-runtime-store", async (orig) => ({
+  ...(await orig<typeof import("@/stores/conversation-runtime-store")>()),
+  prefetchRuntimeSession: prefetch.run,
+}))
+vi.mock("@/lib/api", async (orig) => ({
+  ...(await orig<typeof import("@/lib/api")>()),
+  isWorkspaceFileApiAvailable: () => prefetch.overNetwork,
 }))
 
 const MINUTE = 60_000
@@ -1037,5 +1058,56 @@ describe("SidebarConversationCard — assistant sub-sessions", () => {
     expect(avatar?.querySelector("svg")).not.toBeNull()
     // Still not the agent's icon: the row ran as an assistant.
     expect(probe.agentIconRenders).toBe(before)
+  })
+})
+
+describe("SidebarConversationCard read-ahead (fork)", () => {
+  beforeEach(() => {
+    prefetch.run.mockReset()
+    prefetch.overNetwork = true
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  const row = () =>
+    document.querySelector<HTMLElement>('[data-conversation-id="7"]')!
+  /** jsdom leaves `pointerType` unset on a synthetic pointer event. */
+  const press = (pointerType: string) => {
+    const event = createEvent.pointerDown(row())
+    Object.defineProperty(event, "pointerType", { value: pointerType })
+    fireEvent(row(), event)
+  }
+
+  it("reads ahead when the row is pressed", () => {
+    renderWithIntl(<CardList conversations={[conv(7)]} now={NOW} />)
+    press("mouse")
+    expect(prefetch.run).toHaveBeenCalledExactlyOnceWith(7)
+  })
+
+  it("reads ahead after the pointer rests a moment, not when it passes", () => {
+    vi.useFakeTimers()
+    renderWithIntl(<CardList conversations={[conv(7)]} now={NOW} />)
+    fireEvent.pointerEnter(row(), { pointerType: "mouse" })
+    fireEvent.pointerLeave(row(), { pointerType: "mouse" })
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(prefetch.run).not.toHaveBeenCalled()
+
+    fireEvent.pointerEnter(row(), { pointerType: "mouse" })
+    act(() => {
+      vi.advanceTimersByTime(200)
+    })
+    expect(prefetch.run).toHaveBeenCalledExactlyOnceWith(7)
+  })
+
+  it("never for a touch, nor on the local desktop", () => {
+    renderWithIntl(<CardList conversations={[conv(7)]} now={NOW} />)
+    press("touch")
+    expect(prefetch.run).not.toHaveBeenCalled()
+    prefetch.overNetwork = false
+    press("mouse")
+    expect(prefetch.run).not.toHaveBeenCalled()
   })
 })
