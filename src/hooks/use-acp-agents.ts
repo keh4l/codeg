@@ -4,6 +4,7 @@ import { useEffect } from "react"
 import { create } from "zustand"
 import { acpListAgents } from "@/lib/api"
 import { setCustomAgentDisplay } from "@/lib/custom-agents"
+import { focusRefresh } from "@/lib/focus-refresh"
 import { onTransportReconnect, subscribe } from "@/lib/platform"
 import type { UnsubscribeFn } from "@/lib/transport/types"
 import type { AcpAgentInfo } from "@/lib/types"
@@ -117,7 +118,8 @@ function startSharedSubscription(): void {
   // and has no user-visible cost (still resolves before paint).
   queueMicrotask(reload)
 
-  const onFocus = () => reload()
+  // Fork: at most every few minutes over a network (`lib/focus-refresh`).
+  const onFocus = focusRefresh(reload)
   window.addEventListener("focus", onFocus)
   disposers.push(() => window.removeEventListener("focus", onFocus))
 

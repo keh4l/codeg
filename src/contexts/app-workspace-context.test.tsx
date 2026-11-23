@@ -1,5 +1,5 @@
 import { act, render, screen } from "@testing-library/react"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { AppWorkspaceProvider } from "@/contexts/app-workspace-context"
 import {
   resetAppWorkspaceStore,
@@ -34,6 +34,8 @@ const h = vi.hoisted(() => ({
   listFolderGroups: vi.fn(async () => [] as unknown[]),
   listAllFolders: vi.fn(async () => [] as unknown[]),
   closeTabsByFolder: vi.fn(),
+  localDesktop: true,
+  getGitHead: vi.fn(),
 }))
 
 // The folder-delete branch reaches into the tab store imperatively; stub it so
@@ -46,6 +48,8 @@ vi.mock("@/stores/tab-store", () => ({
 }))
 
 vi.mock("@/lib/platform", () => ({
+  // Fork: the local desktop's git-head poll (every 10 s, hidden or not).
+  isLocalDesktop: () => h.localDesktop,
   // The provider registers four subscriptions — `conversation://changed`,
   // `conversations://bulk-changed`, `folder://changed` and
   // `folder-group://changed` — so route by exact channel and capture each
@@ -89,12 +93,7 @@ vi.mock("@/lib/api", () => ({
   listOpenFolderDetails: h.listOpenFolders,
   listFolderGroups: h.listFolderGroups,
   getGitBranch: vi.fn(async () => null),
-  getGitHead: vi.fn(async () => ({
-    is_repo: false,
-    branch: null,
-    detached: false,
-    short_sha: null,
-  })),
+  getGitHead: h.getGitHead,
   openFolder: vi.fn(),
   openFolderById: vi.fn(),
   removeFolderFromWorkspace: vi.fn(),
@@ -230,6 +229,14 @@ beforeEach(() => {
   h.listAllFolders.mockClear()
   h.listAllFolders.mockResolvedValue([])
   h.closeTabsByFolder.mockClear()
+  h.localDesktop = true
+  h.getGitHead.mockReset()
+  h.getGitHead.mockResolvedValue({
+    is_repo: false,
+    branch: null,
+    detached: false,
+    short_sha: null,
+  })
   // The store is a module-level singleton: restore pristine state (including
   // the delete tombstones) so state can't leak between tests.
   resetAppWorkspaceStore()
@@ -466,5 +473,51 @@ describe("AppWorkspaceProvider folder://changed sync", () => {
     unmount()
     expect(h.folderDisposeSpy).toHaveBeenCalledTimes(1)
     expect(h.folderReconnectUnsubSpy).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("AppWorkspaceProvider git-head poll over a network (fork)", () => {
+  const setVisibility = (state: "visible" | "hidden") => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: state,
+    })
+    document.dispatchEvent(new Event("visibilitychange"))
+  }
+  afterEach(() => {
+    vi.useRealTimers()
+    setVisibility("visible")
+  })
+
+  it("polls a repo every 30 s while visible, pauses while hidden, polls on return", async () => {
+    h.localDesktop = false
+    h.getGitHead.mockResolvedValue({
+      is_repo: true,
+      branch: "main",
+      detached: false,
+      short_sha: "abc1234",
+    })
+    vi.useFakeTimers()
+    await mountProvider()
+    act(() => {
+      useAppWorkspaceStore.setState({
+        activeFolderId: 1,
+        allFolders: [{ id: 1, path: "/repo" }] as never,
+      })
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(h.getGitHead).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(h.getGitHead).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(h.getGitHead).toHaveBeenCalledTimes(2)
+
+    setVisibility("hidden")
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(h.getGitHead).toHaveBeenCalledTimes(2)
+
+    setVisibility("visible")
+    await vi.advanceTimersByTimeAsync(0)
+    expect(h.getGitHead).toHaveBeenCalledTimes(3)
   })
 })

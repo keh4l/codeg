@@ -6,6 +6,7 @@ import { acpListAgentRuntimeSkills } from "@/lib/api"
 import { listenSkillsChanged } from "@/lib/skills/changes"
 import type { SkillsChanged } from "@/lib/skills/types"
 import type { AgentSkillItem, AgentType } from "@/lib/types"
+import { focusRefresh } from "@/lib/focus-refresh"
 
 /**
  * The skills an agent sees from one folder, held ONCE per window and shared by
@@ -122,12 +123,14 @@ function scan(key: string, entry: SkillsEntry): void {
 // background (the settings window creates or removes them). One scan per folder
 // something on screen reads, however many components read it, and none for a
 // folder nothing reads any more.
-function onWindowFocus() {
+function rescanAll() {
   for (const key of readers.keys()) {
     const entry = entries.get(key)
     if (entry) scan(key, entry)
   }
 }
+// Fork: at most every few minutes over a network (`lib/focus-refresh`).
+const onWindowFocus = focusRefresh(rescanAll)
 
 // Codeg changed a skill or a link — from this window (the Harness page sits in
 // the same window as the composers, so no focus event follows its changes),

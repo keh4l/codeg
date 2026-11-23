@@ -10,6 +10,7 @@ import {
   scienceListAllInstallStatuses,
 } from "@/lib/api"
 import { useAcpAgents } from "@/hooks/use-acp-agents"
+import { focusRefresh } from "@/lib/focus-refresh"
 import { piUsesCustomAgentDir } from "@/lib/pi-config"
 import { skillsInventory } from "@/lib/skills/api"
 import { listenSkillsChanged } from "@/lib/skills/changes"
@@ -156,10 +157,12 @@ function acquireRefresh(): void {
   if (typeof window === "undefined") return
   consumers += 1
   if (stopFollowing) return
-  window.addEventListener("focus", refreshSnapshot)
+  // Fork: at most every few minutes over a network (`lib/focus-refresh`).
+  const onFocus = focusRefresh(refreshSnapshot)
+  window.addEventListener("focus", onFocus)
   const stopChanges = listenSkillsChanged(onSkillsChanged)
   stopFollowing = () => {
-    window.removeEventListener("focus", refreshSnapshot)
+    window.removeEventListener("focus", onFocus)
     stopChanges()
   }
 }

@@ -35,6 +35,8 @@ vi.mock("@/lib/skills/changes", () => ({
 vi.mock("@/lib/platform", () => ({
   subscribe: vi.fn(async () => () => {}),
   onTransportReconnect: vi.fn(() => () => {}),
+  // Fork: the local desktop re-reads on every focus (`lib/focus-refresh`).
+  isLocalDesktop: () => true,
 }))
 
 // The hook caches its snapshot and its listeners at module scope; a fresh

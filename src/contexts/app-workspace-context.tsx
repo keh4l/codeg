@@ -2,7 +2,7 @@
 
 import { useEffect, type ReactNode } from "react"
 import { getGitHead } from "@/lib/api"
-import { onTransportReconnect, subscribe } from "@/lib/platform"
+import { isLocalDesktop, onTransportReconnect, subscribe } from "@/lib/platform"
 import { useAcpEvent } from "@/contexts/acp-connections-context"
 import { useAppWorkspaceStore } from "@/stores/app-workspace-store"
 import { useConversationRuntimeStore } from "@/stores/conversation-runtime-store"
@@ -229,14 +229,26 @@ export function AppWorkspaceProvider({ children }: AppWorkspaceProviderProps) {
 
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | null = null
+    // Fork: over a network, a repo is polled every 30 s and only while the
+    // page is visible; coming back polls once (at most every 5 s). The local
+    // desktop keeps polling every 10 s.
+    const overNetwork = !isLocalDesktop()
+    let paused = false
+    let lastPollAt = 0
 
     const poll = async () => {
+      timer = null
+      if (overNetwork && document.visibilityState === "hidden") {
+        paused = true
+        return
+      }
+      lastPollAt = Date.now()
       try {
         const head = await getGitHead(activeFolderPath)
         if (cancelled) return
         useAppWorkspaceStore.getState().applyGitHead(folderId, head)
         // Poll a repo briskly to catch branch switches; back off otherwise.
-        const delay = head.is_repo ? 10_000 : 60_000
+        const delay = head.is_repo ? (overNetwork ? 30_000 : 10_000) : 60_000
         timer = setTimeout(poll, delay)
       } catch {
         if (!cancelled) {
@@ -244,12 +256,22 @@ export function AppWorkspaceProvider({ children }: AppWorkspaceProviderProps) {
         }
       }
     }
+    const onVisibility = () => {
+      if (!paused || document.visibilityState !== "visible") return
+      paused = false
+      const wait = Math.max(0, lastPollAt + 5_000 - Date.now())
+      timer = setTimeout(poll, wait)
+    }
+    if (overNetwork) document.addEventListener("visibilitychange", onVisibility)
 
     void poll()
 
     return () => {
       cancelled = true
       if (timer) clearTimeout(timer)
+      if (overNetwork) {
+        document.removeEventListener("visibilitychange", onVisibility)
+      }
     }
   }, [activeFolderId, activeFolderPath])
 

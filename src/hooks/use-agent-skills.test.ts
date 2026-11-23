@@ -22,6 +22,11 @@ vi.mock("@/lib/api", () => ({
 const changes = vi.hoisted(() => ({
   listeners: new Set<(change: SkillsChanged | null) => void>(),
 }))
+// Fork: the local desktop re-reads on every focus (`lib/focus-refresh`).
+vi.mock("@/lib/platform", async (orig) => ({
+  ...(await orig<typeof import("@/lib/platform")>()),
+  isLocalDesktop: () => true,
+}))
 vi.mock("@/lib/skills/changes", () => ({
   listenSkillsChanged: (listener: (change: SkillsChanged | null) => void) => {
     changes.listeners.add(listener)

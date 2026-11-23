@@ -15,11 +15,14 @@ vi.mock("@/lib/api", () => ({
 // register the handler before that promise resolves. Focus is exercised via a
 // real `window` event below.
 let mockEventHandler: (() => void) | null = null
+let mockLocalDesktop = true
 let mockDeferSubscribe = false
 let mockResolveSubscribe: ((dispose: () => void) => void) | null = null
 const mockSubscribeDispose = vi.fn()
 
 vi.mock("@/lib/platform", () => ({
+  // Fork: the local desktop re-reads on every focus (`lib/focus-refresh`).
+  isLocalDesktop: () => mockLocalDesktop,
   subscribe: vi.fn((_event: string, handler: () => void) => {
     mockEventHandler = handler
     if (mockDeferSubscribe) {
@@ -109,6 +112,26 @@ describe("useAcpAgents — shared subscription", () => {
 
     a.unmount()
     b.unmount()
+  })
+
+  it("over a network, re-reads on focus at most every few minutes (fork)", async () => {
+    mockLocalDesktop = false
+    try {
+      mockAcpListAgents.mockResolvedValue([makeAgent("claude_code", 0)])
+      const a = renderHook(() => useAcpAgents())
+      await waitFor(() => expect(a.result.current.fresh).toBe(true))
+      mockAcpListAgents.mockClear()
+      for (let i = 0; i < 10; i += 1) {
+        await act(async () => {
+          window.dispatchEvent(new Event("focus"))
+          await Promise.resolve()
+        })
+      }
+      expect(mockAcpListAgents).not.toHaveBeenCalled()
+      a.unmount()
+    } finally {
+      mockLocalDesktop = true
+    }
   })
 
   it("resets to a cold, non-authoritative state when the last consumer unmounts", async () => {

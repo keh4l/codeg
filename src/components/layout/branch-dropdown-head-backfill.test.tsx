@@ -65,6 +65,7 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 vi.mock("@/lib/platform", () => ({
   subscribe: vi.fn(async () => () => {}),
   emitEvent: vi.fn(),
+  isLocalDesktop: () => true,
 }))
 
 vi.mock("@/contexts/tab-context", () => ({
