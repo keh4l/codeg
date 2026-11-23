@@ -2206,7 +2206,11 @@ pub(crate) fn ws_request_with_subprotocol_auth(
 pub(crate) async fn connect_remote_ws(
     request: Request,
 ) -> Result<(RemoteWsSocket, Response), WsError> {
-    connect_remote_ws_via(HttpConnector::new(), request).await
+    // TCP_NODELAY: the event stream is many small frames; with Nagle on, a
+    // high-latency link delivers them in clumps (fork).
+    let mut connector = HttpConnector::new();
+    connector.set_nodelay(true);
+    connect_remote_ws_via(connector, request).await
 }
 
 /// [`connect_remote_ws`] over a given connector, so a test can choose what the

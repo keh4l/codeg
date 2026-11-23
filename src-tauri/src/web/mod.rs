@@ -9,6 +9,7 @@ pub mod proxy_auth;
 pub mod router;
 pub mod shutdown;
 pub mod socket_inherit;
+pub mod socket_tuning;
 pub mod ws;
 pub mod ws_attach;
 
@@ -691,6 +692,8 @@ pub(crate) async fn do_start_web_server_with_state(
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let handle = tokio::spawn(async move {
+        use axum::serve::ListenerExt as _;
+        let listener = listener.tap_io(socket_tuning::configure_accepted);
         let serve = axum::serve(listener, router).with_graceful_shutdown(async move {
             let _ = shutdown_rx.await;
         });
@@ -1050,6 +1053,8 @@ pub(crate) async fn do_start_web_server_tauri(
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let handle = tokio::spawn(async move {
+        use axum::serve::ListenerExt as _;
+        let listener = listener.tap_io(socket_tuning::configure_accepted);
         let serve = axum::serve(listener, router).with_graceful_shutdown(async move {
             let _ = shutdown_rx.await;
         });

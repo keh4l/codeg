@@ -881,6 +881,9 @@ async fn async_main(
     }
 
     // Start serving
+    // TCP_NODELAY / TCP_NOTSENT_LOWAT on every accepted connection (fork).
+    use axum::serve::ListenerExt as _;
+    let listener = listener.tap_io(codeg_lib::web::socket_tuning::configure_accepted);
     if let Err(e) = axum::serve(listener, router).await {
         tracing::error!("[SERVER] Server error: {}", e);
         state.cli_access.stop().await;
