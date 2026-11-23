@@ -230,10 +230,17 @@ pub async fn handle_attach(
 ///
 /// `metrics` records `Lagged` exits so operators can correlate attach
 /// re-attachment storms with per-connection broadcast pressure.
+///
+/// `initial` (the attach's snapshot or replay) is queued first, from this
+/// task, so it stays ahead of the subscription's live events without the
+/// socket's reader ever waiting on the outbound queue (fork: the reader used
+/// to queue it itself, and a full queue then held up pings and detaches).
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_forwarder(
     subscription_id: String,
     epoch: u64,
     metrics: Arc<EventBusMetrics>,
+    initial: Option<ServerMsg>,
     mut receiver: tokio::sync::broadcast::Receiver<Arc<EventEnvelope>>,
     outbound: mpsc::Sender<ServerMsg>,
     cleanup_tx: mpsc::Sender<(String, u64)>,
@@ -242,6 +249,12 @@ pub fn spawn_forwarder(
         let signal_cleanup = || {
             let _ = cleanup_tx.try_send((subscription_id.clone(), epoch));
         };
+        if let Some(initial) = initial {
+            if outbound.send(initial).await.is_err() {
+                signal_cleanup();
+                return;
+            }
+        }
         loop {
             match receiver.recv().await {
                 Ok(envelope) => {

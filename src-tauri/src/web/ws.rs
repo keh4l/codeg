@@ -1,12 +1,14 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket};
 use axum::{
     extract::{Extension, WebSocketUpgrade},
     response::IntoResponse,
 };
-use futures_util::{Sink, SinkExt};
+use futures_util::{Sink, SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
@@ -58,6 +60,65 @@ pub async fn ws_handler(
         .on_upgrade(|socket| handle_ws_connection(socket, state, shutdown_signal))
 }
 
+/// A WebSocket protocol-level ping goes out this often (fork). Browsers answer
+/// it on their own, even from a throttled background tab, so it proves the
+/// client is there without any page code running.
+const SERVER_PING_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Close a socket the client has sent nothing on — no message, no pong — for
+/// this long (fork). Frees the forwarders of a half-open socket (a laptop
+/// that slept, a phone that changed networks) instead of feeding it forever.
+const CLIENT_SILENCE_LIMIT: Duration = Duration::from_secs(90);
+
+/// Capacity of the control lane. Pongs and shutdown detaches only; a full lane
+/// means a pong is already waiting, so dropping another loses nothing.
+const CONTROL_CAPACITY: usize = 64;
+
+/// A frame for the writer's control lane, written ahead of queued data.
+enum Control {
+    Msg(ServerMsg),
+    /// Write a close frame and stop.
+    Close,
+}
+
+/// When the client last sent anything, as milliseconds since the socket
+/// opened. Shared by the reader (which records) and the writer (which closes a
+/// silent socket).
+struct LastHeard {
+    // tokio's clock, so paused-time tests can drive it.
+    opened: tokio::time::Instant,
+    ms: AtomicU64,
+}
+
+impl LastHeard {
+    fn new() -> Self {
+        Self {
+            opened: tokio::time::Instant::now(),
+            ms: AtomicU64::new(0),
+        }
+    }
+
+    fn touch(&self) {
+        self.ms
+            .store(self.opened.elapsed().as_millis() as u64, Ordering::Relaxed);
+    }
+
+    fn silent_for(&self) -> Duration {
+        self.opened
+            .elapsed()
+            .saturating_sub(Duration::from_millis(self.ms.load(Ordering::Relaxed)))
+    }
+}
+
+/// One WebSocket client: a reader (this task) and a writer task (fork).
+///
+/// They used to be one loop that both read the socket and wrote it, so a
+/// large frame being written stopped the reading — a ping waited behind a
+/// snapshot that, over a slow link, takes longer to send than the client's
+/// pong deadline, and the client tore the socket down and asked for the
+/// snapshot again. Now the reader never waits on a write: it answers pings
+/// through the writer's control lane, which is written ahead of queued data,
+/// and an attach's snapshot or replay is queued by its own forwarder.
 async fn handle_ws_connection(
     mut socket: WebSocket,
     state: Arc<AppState>,
@@ -72,16 +133,16 @@ async fn handle_ws_connection(
 
     // Legacy global firehose subscriber. Removed in Phase 4 once all
     // transports use the attach protocol.
-    let mut global_rx = state.event_broadcaster.subscribe();
+    let global_rx = state.event_broadcaster.subscribe();
 
-    // Outbound channel funnels every server-→-client frame through one
-    // sender so the WS write side has a single owner. Per-attach forwarder
-    // tasks push `Event`/`Detached` frames here; the main loop pushes
-    // `Snapshot`/`Replay`/`Pong` directly.
-    let (outbound_tx, mut outbound_rx) = mpsc::channel::<ServerMsg>(OUTBOUND_CAPACITY);
+    // Data lane: per-attach forwarders push their snapshot/replay and then
+    // `Event`/`Detached` frames here; the writer drains it.
+    let (outbound_tx, outbound_rx) = mpsc::channel::<ServerMsg>(OUTBOUND_CAPACITY);
+    // Control lane: pongs and shutdown, written before anything queued above.
+    let (control_tx, control_rx) = mpsc::channel::<Control>(CONTROL_CAPACITY);
 
     // Cleanup channel: forwarders signal `(subscription_id, epoch)` here
-    // when they self-exit (lagged / channel closed) so the main loop drops
+    // when they self-exit (lagged / channel closed) so the reader drops
     // the now-completed `JoinHandle` from `subscriptions`. Without this,
     // dead handles would sit in the map until socket close. Sized at
     // OUTBOUND_CAPACITY which comfortably covers a burst of simultaneous
@@ -126,10 +187,18 @@ async fn handle_ws_connection(
         }
     }
 
-    // Throttles the per-connection global-firehose lag WARN so a slow client
-    // reading behind a steady side-channel stream can't trickle near-duplicate
-    // lines. Task-local: one instance per WS connection.
-    let mut lag_throttle = LagLogThrottle::new(LAG_LOG_WINDOW);
+    let (sink, mut stream) = socket.split();
+    let last_heard = Arc::new(LastHeard::new());
+    let mut writer = tokio::spawn(run_writer(
+        sink,
+        control_rx,
+        outbound_rx,
+        global_rx,
+        Arc::clone(&last_heard),
+        SERVER_PING_INTERVAL,
+        CLIENT_SILENCE_LIMIT,
+    ));
+    let mut writer_done = false;
 
     loop {
         tokio::select! {
@@ -142,11 +211,15 @@ async fn handle_ws_connection(
                         subscription_id: sub_id.clone(),
                         reason: DetachReason::ServerShutdown,
                     };
-                    if let Ok(text) = serde_json::to_string(&frame) {
-                        let _ = socket.send(Message::Text(text.into())).await;
-                    }
+                    let _ = control_tx.send(Control::Msg(frame)).await;
                 }
-                let _ = socket.send(Message::Close(None)).await;
+                let _ = control_tx.send(Control::Close).await;
+                break;
+            }
+
+            // The writer stopped: the socket is gone, or it closed a silent one.
+            _ = &mut writer => {
+                writer_done = true;
                 break;
             }
 
@@ -163,79 +236,36 @@ async fn handle_ws_connection(
                 }
             }
 
-            // Outbound queue (per-attach forwarders + main-loop direct sends).
-            outgoing = outbound_rx.recv() => {
-                match outgoing {
-                    Some(msg) => {
-                        if !write_server_msg(&mut socket, &msg).await {
-                            break;
-                        }
-                    }
-                    // Channel closed only when all senders dropped — i.e. this
-                    // task itself dropped `outbound_tx` AND every spawned
-                    // forwarder exited. Won't happen while the loop runs.
-                    None => break,
-                }
-            }
-
-            // Legacy global firehose. Forwarded as-is (uses the old
-            // `WebEvent { channel, payload }` shape, not the attach
-            // protocol's `ServerMsg`).
-            result = global_rx.recv() => {
-                match result {
-                    Ok(event) => {
-                        if let Ok(msg) = serde_json::to_string(&event) {
-                            if socket.send(Message::Text(msg.into())).await.is_err() {
-                                break;
-                            }
-                        }
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        if let Some(s) = lag_throttle.record(n) {
-                            tracing::warn!(
-                                "[WS][WARN] global receiver lagged: skipped {} events across \
-                                 {} occurrence(s) in the last {}s",
-                                s.dropped,
-                                s.occurrences,
-                                LAG_LOG_WINDOW.as_secs()
-                            );
-                        }
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        break;
-                    }
-                }
-            }
-
             // Client-→-server messages. Text frames are parsed as
-            // `ClientMsg`; everything else is ignored (binary, ping/pong
-            // are handled by axum, close is handled by the None match arm).
-            msg = socket.recv() => {
+            // `ClientMsg`; every frame, pongs included, counts as the client
+            // being there.
+            msg = stream.next() => {
                 match msg {
-                    Some(Ok(Message::Text(text))) => {
-                        match serde_json::from_str::<ClientMsg>(&text) {
-                            Ok(cmsg) => {
-                                let socket_open = handle_client_msg(
-                                    cmsg,
-                                    &state,
-                                    &mut socket,
-                                    &outbound_tx,
-                                    &mut outbound_rx,
-                                    &cleanup_tx,
-                                    &mut subscriptions,
-                                    &mut next_epoch,
-                                ).await;
-                                if !socket_open {
-                                    break;
+                    Some(Ok(message)) => {
+                        last_heard.touch();
+                        match message {
+                            Message::Text(text) => match serde_json::from_str::<ClientMsg>(&text) {
+                                Ok(cmsg) => {
+                                    handle_client_msg(
+                                        cmsg,
+                                        &state,
+                                        &outbound_tx,
+                                        &control_tx,
+                                        &cleanup_tx,
+                                        &mut subscriptions,
+                                        &mut next_epoch,
+                                    )
+                                    .await;
                                 }
-                            }
-                            Err(e) => {
-                                tracing::warn!("[WS][WARN] malformed client message: {e}");
-                            }
+                                Err(e) => {
+                                    tracing::warn!("[WS][WARN] malformed client message: {e}");
+                                }
+                            },
+                            Message::Close(_) => break,
+                            // Binary / ping / pong: nothing to do beyond the
+                            // liveness stamp (axum answers pings itself).
+                            _ => {}
                         }
-                    }
-                    Some(Ok(_)) => {
-                        // Binary / ping / pong: ignore.
                     }
                     _ => break,
                 }
@@ -247,6 +277,127 @@ async fn handle_ws_connection(
     // will be dropped, freeing the per-connection broadcaster slot.
     for (_, sub) in subscriptions.drain() {
         sub.handle.abort();
+    }
+    // With every sender gone the writer drains what is queued (the shutdown
+    // detaches and close, if any) and stops; give it a moment, then stop it.
+    drop(control_tx);
+    drop(outbound_tx);
+    if !writer_done && tokio::time::timeout(Duration::from_secs(2), &mut writer).await.is_err() {
+        writer.abort();
+    }
+}
+
+/// The socket's only writer (fork). Control frames go first; then queued
+/// attach frames and the legacy firehose, fairly; a protocol ping every
+/// `ping_every`; and the socket is closed once the client has been silent for
+/// `silence_limit`. Returns when the socket is gone, on `Control::Close`, or
+/// when both lanes have no senders left.
+async fn run_writer<S>(
+    mut sink: S,
+    mut control_rx: mpsc::Receiver<Control>,
+    mut outbound_rx: mpsc::Receiver<ServerMsg>,
+    mut global_rx: tokio::sync::broadcast::Receiver<super::event_bridge::WebEvent>,
+    last_heard: Arc<LastHeard>,
+    ping_every: Duration,
+    silence_limit: Duration,
+) where
+    S: Sink<Message> + Unpin,
+{
+    // Throttles the per-connection global-firehose lag WARN so a slow client
+    // reading behind a steady side-channel stream can't trickle near-duplicate
+    // lines. Task-local: one instance per WS connection.
+    let mut lag_throttle = LagLogThrottle::new(LAG_LOG_WINDOW);
+    let mut ping = tokio::time::interval_at(tokio::time::Instant::now() + ping_every, ping_every);
+    ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut outbound_open = true;
+
+    loop {
+        // Everything on the control lane goes before anything else.
+        loop {
+            match control_rx.try_recv() {
+                Ok(control) => {
+                    if !write_control(&mut sink, control).await {
+                        return;
+                    }
+                }
+                Err(mpsc::error::TryRecvError::Empty) => break,
+                Err(mpsc::error::TryRecvError::Disconnected) => return,
+            }
+        }
+
+        tokio::select! {
+            control = control_rx.recv() => match control {
+                Some(control) => {
+                    if !write_control(&mut sink, control).await {
+                        return;
+                    }
+                }
+                None => return,
+            },
+
+            outgoing = outbound_rx.recv(), if outbound_open => match outgoing {
+                Some(msg) => {
+                    if !write_server_msg(&mut sink, &msg).await {
+                        return;
+                    }
+                }
+                None => outbound_open = false,
+            },
+
+            // Legacy global firehose. Forwarded as-is (uses the old
+            // `WebEvent { channel, payload }` shape, not the attach
+            // protocol's `ServerMsg`).
+            result = global_rx.recv() => match result {
+                Ok(event) => {
+                    if let Ok(msg) = serde_json::to_string(&event) {
+                        if sink.send(Message::Text(msg.into())).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    if let Some(s) = lag_throttle.record(n) {
+                        tracing::warn!(
+                            "[WS][WARN] global receiver lagged: skipped {} events across \
+                             {} occurrence(s) in the last {}s",
+                            s.dropped,
+                            s.occurrences,
+                            LAG_LOG_WINDOW.as_secs()
+                        );
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+            },
+
+            _ = ping.tick() => {
+                if last_heard.silent_for() >= silence_limit {
+                    tracing::info!(
+                        "[WS] closing a socket silent for {}s",
+                        last_heard.silent_for().as_secs()
+                    );
+                    let _ = sink.send(Message::Close(None)).await;
+                    return;
+                }
+                if sink.send(Message::Ping(Default::default())).await.is_err() {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/// Write one control-lane item. `false` means stop: the socket is gone or the
+/// item was a close.
+async fn write_control<S>(sink: &mut S, control: Control) -> bool
+where
+    S: Sink<Message> + Unpin,
+{
+    match control {
+        Control::Msg(msg) => write_server_msg(sink, &msg).await,
+        Control::Close => {
+            let _ = sink.send(Message::Close(None)).await;
+            false
+        }
     }
 }
 
@@ -265,70 +416,17 @@ where
     }
 }
 
-/// Queue a frame the main loop produces itself (an attach's snapshot or
-/// replay, a `detached`, a `pong`) behind what the forwarders already queued.
-///
-/// The main loop is the only reader of `outbound_rx`, so waiting on
-/// `outbound_tx.send(..)` here deadlocks as soon as the forwarders have
-/// filled the queue: the loop waits for a slot only it can free. It then
-/// never reads the socket again, so the task outlives its client, and every
-/// forwarder stays parked on `send` holding its broadcast receiver — which
-/// keeps the last few thousand events of that connection, and of the global
-/// firehose, alive for the rest of the process. Instead, write queued frames
-/// out while waiting, which is what frees the slot.
-///
-/// The reservation is made once and kept across iterations: a pending
-/// `reserve` holds its place among the waiting senders, so forwarders that
-/// refill every freed slot cannot starve it.
-///
-/// Returns `false` once the socket or the queue is gone.
-async fn enqueue_from_loop<S>(
-    socket: &mut S,
-    outbound_tx: &mpsc::Sender<ServerMsg>,
-    outbound_rx: &mut mpsc::Receiver<ServerMsg>,
-    msg: ServerMsg,
-) -> bool
-where
-    S: Sink<Message> + Unpin,
-{
-    let reserve = outbound_tx.reserve();
-    tokio::pin!(reserve);
-    loop {
-        tokio::select! {
-            biased;
-            permit = &mut reserve => {
-                return match permit {
-                    Ok(permit) => {
-                        permit.send(msg);
-                        true
-                    }
-                    Err(_) => false,
-                };
-            }
-            queued = outbound_rx.recv() => match queued {
-                Some(queued) => {
-                    if !write_server_msg(socket, &queued).await {
-                        return false;
-                    }
-                }
-                None => return false,
-            },
-        }
-    }
-}
-
-/// Returns `false` once the socket is gone, so the main loop can stop.
-#[allow(clippy::too_many_arguments)]
+/// Handle one client message. Never waits on the socket: frames go to the
+/// writer's lanes (fork).
 async fn handle_client_msg(
     msg: ClientMsg,
     state: &Arc<AppState>,
-    socket: &mut WebSocket,
     outbound_tx: &mpsc::Sender<ServerMsg>,
-    outbound_rx: &mut mpsc::Receiver<ServerMsg>,
+    control_tx: &mpsc::Sender<Control>,
     cleanup_tx: &mpsc::Sender<(String, u64)>,
     subscriptions: &mut HashMap<String, ActiveSubscription>,
     next_epoch: &mut u64,
-) -> bool {
+) {
     match msg {
         ClientMsg::Attach {
             subscription_id,
@@ -352,14 +450,6 @@ async fn handle_client_msg(
             .await
             {
                 Ok(outcome) => {
-                    // Send the initial frame (snapshot or replay) BEFORE
-                    // spawning the forwarder so the client sees state
-                    // before the first live event.
-                    if !enqueue_from_loop(socket, outbound_tx, outbound_rx, outcome.initial_msg)
-                        .await
-                    {
-                        return false;
-                    }
                     // Allocate a fresh epoch for this spawn. wrapping_add is
                     // defensive — u64 overflow per WS session is impossible
                     // in practice (would require ~10^19 attaches on one
@@ -367,23 +457,28 @@ async fn handle_client_msg(
                     // matches our epoch-equality semantics.
                     *next_epoch = next_epoch.wrapping_add(1);
                     let epoch = *next_epoch;
+                    // The forwarder queues the snapshot/replay first, so the
+                    // client sees state before the first live event.
                     let handle = ws_attach::spawn_forwarder(
                         subscription_id.clone(),
                         epoch,
                         state.acp_event_bus.metrics().clone(),
+                        Some(outcome.initial_msg),
                         outcome.receiver,
                         outbound_tx.clone(),
                         cleanup_tx.clone(),
                     );
                     subscriptions.insert(subscription_id, ActiveSubscription { handle, epoch });
-                    true
                 }
                 Err(reason) => {
                     let frame = ServerMsg::Detached {
                         subscription_id,
                         reason,
                     };
-                    enqueue_from_loop(socket, outbound_tx, outbound_rx, frame).await
+                    let tx = outbound_tx.clone();
+                    tokio::spawn(async move {
+                        let _ = tx.send(frame).await;
+                    });
                 }
             }
         }
@@ -391,10 +486,10 @@ async fn handle_client_msg(
             if let Some(sub) = subscriptions.remove(&subscription_id) {
                 sub.handle.abort();
             }
-            true
         }
         ClientMsg::Ping => {
-            enqueue_from_loop(socket, outbound_tx, outbound_rx, ServerMsg::Pong).await
+            // A full control lane already holds a pong for this client.
+            let _ = control_tx.try_send(Control::Msg(ServerMsg::Pong));
         }
     }
 }
@@ -466,78 +561,148 @@ mod tests {
         }
     }
 
-    /// The main loop is the queue's only reader, so the plain
-    /// `send().await` this replaced never returned once forwarders had
-    /// filled the queue.
+    struct Writer {
+        control: mpsc::Sender<Control>,
+        outbound: mpsc::Sender<ServerMsg>,
+        frames: futures::channel::mpsc::UnboundedReceiver<Message>,
+        task: JoinHandle<()>,
+        last_heard: Arc<LastHeard>,
+        _global: tokio::sync::broadcast::Sender<super::super::event_bridge::WebEvent>,
+    }
+
+    /// A writer over a channel sink, with `queued` data frames already waiting
+    /// when it starts.
+    fn writer(queued: Vec<ServerMsg>, control: Vec<Control>, ping: Duration, silence: Duration) -> Writer {
+        let (control_tx, control_rx) = mpsc::channel(CONTROL_CAPACITY);
+        let (outbound_tx, outbound_rx) = mpsc::channel(OUTBOUND_CAPACITY);
+        for msg in queued {
+            outbound_tx.try_send(msg).unwrap();
+        }
+        for c in control {
+            control_tx.try_send(c).unwrap_or_else(|_| panic!("control lane full"));
+        }
+        let (global_tx, global_rx) = tokio::sync::broadcast::channel(16);
+        let (sink, frames) = futures::channel::mpsc::unbounded::<Message>();
+        let last_heard = Arc::new(LastHeard::new());
+        let task = tokio::spawn(run_writer(
+            sink,
+            control_rx,
+            outbound_rx,
+            global_rx,
+            Arc::clone(&last_heard),
+            ping,
+            silence,
+        ));
+        Writer {
+            control: control_tx,
+            outbound: outbound_tx,
+            frames,
+            task,
+            last_heard,
+            _global: global_tx,
+        }
+    }
+
+    async fn next(frames: &mut futures::channel::mpsc::UnboundedReceiver<Message>) -> Message {
+        tokio::time::timeout(Duration::from_secs(5), frames.next())
+            .await
+            .expect("a frame within 5s")
+            .expect("writer still open")
+    }
+
+    /// A pong for the client's heartbeat must not wait behind a full queue of
+    /// data (on a slow link, behind a snapshot that takes longer to send than
+    /// the client waits).
     #[tokio::test]
-    async fn enqueue_on_a_full_queue_writes_the_oldest_frame_out_to_make_room() {
-        let (tx, mut rx) = mpsc::channel::<ServerMsg>(OUTBOUND_CAPACITY);
-        for i in 0..OUTBOUND_CAPACITY {
-            tx.try_send(detached(&format!("sub-{i}"))).unwrap();
-        }
-        let mut socket: Vec<Message> = Vec::new();
+    async fn a_pong_goes_out_before_frames_already_queued() {
+        let queued = (0..OUTBOUND_CAPACITY).map(|i| detached(&format!("sub-{i}"))).collect();
+        let mut w = writer(
+            queued,
+            vec![Control::Msg(ServerMsg::Pong)],
+            Duration::from_secs(3600),
+            Duration::from_secs(3600),
+        );
+        let first = next(&mut w.frames).await;
+        assert!(frame_text(&first).contains("\"pong\""), "{first:?}");
+        let second = next(&mut w.frames).await;
+        assert!(frame_text(&second).contains("\"sub-0\""));
+        w.task.abort();
+    }
 
-        let queued = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            enqueue_from_loop(&mut socket, &tx, &mut rx, ServerMsg::Pong),
-        )
-        .await
-        .expect("enqueue must not wait on a slot only its caller can free");
-
-        assert!(queued);
-        assert_eq!(socket.len(), 1, "one frame out frees the one slot needed");
-        assert!(frame_text(&socket[0]).contains("\"sub-0\""));
-        // Order is kept: the pong lands behind every frame queued before it.
-        let mut rest = Vec::new();
-        while let Ok(msg) = rx.try_recv() {
-            rest.push(msg);
+    /// Mid-stream, a pong queued after data overtakes everything not yet
+    /// written.
+    #[tokio::test]
+    async fn a_pong_overtakes_data_queued_before_it() {
+        let mut w = writer(Vec::new(), Vec::new(), Duration::from_secs(3600), Duration::from_secs(3600));
+        for i in 0..10 {
+            w.outbound.send(detached(&format!("sub-{i}"))).await.unwrap();
         }
-        assert_eq!(rest.len(), OUTBOUND_CAPACITY);
-        assert!(matches!(rest.last(), Some(ServerMsg::Pong)));
+        w.control.send(Control::Msg(ServerMsg::Pong)).await.unwrap();
+        let mut seen = Vec::new();
+        for _ in 0..11 {
+            seen.push(frame_text(&next(&mut w.frames).await).to_string());
+        }
+        let pong_at = seen.iter().position(|f| f.contains("\"pong\"")).unwrap();
+        assert!(pong_at < 10, "pong written at {pong_at} of 11: {seen:?}");
+        w.task.abort();
     }
 
     #[tokio::test]
-    async fn enqueue_is_not_starved_by_a_forwarder_refilling_every_slot() {
-        let (tx, mut rx) = mpsc::channel::<ServerMsg>(OUTBOUND_CAPACITY);
-        // A busy session's forwarder: always parked on `send`, so it is
-        // first in line for every slot the main loop frees.
-        let forwarder_tx = tx.clone();
-        let forwarder =
-            tokio::spawn(async move { while forwarder_tx.send(detached("busy")).await.is_ok() {} });
-        while tx.capacity() > 0 {
+    async fn close_on_the_control_lane_closes_and_stops() {
+        let mut w = writer(
+            vec![detached("queued")],
+            vec![Control::Close],
+            Duration::from_secs(3600),
+            Duration::from_secs(3600),
+        );
+        assert!(matches!(next(&mut w.frames).await, Message::Close(_)));
+        tokio::time::timeout(Duration::from_secs(5), &mut w.task)
+            .await
+            .expect("writer stops after a close")
+            .unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn pings_while_the_client_answers_and_closes_a_silent_socket() {
+        let mut w = writer(Vec::new(), Vec::new(), Duration::from_secs(30), Duration::from_secs(90));
+        // Let the writer start (and arm its ping timer) before time moves.
+        for _ in 0..5 {
             tokio::task::yield_now().await;
         }
-        let mut socket: Vec<Message> = Vec::new();
-
-        let queued = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            enqueue_from_loop(&mut socket, &tx, &mut rx, ServerMsg::Pong),
-        )
-        .await
-        .expect("a forwarder refilling the queue must not starve the main loop");
-
-        assert!(queued);
-        // The forwarder that was already waiting gets the first freed slot,
-        // the pong the next: two frames out, however hot the forwarder.
-        assert_eq!(socket.len(), 2);
-        forwarder.abort();
-        let mut saw_pong = false;
-        while let Ok(msg) = rx.try_recv() {
-            saw_pong |= matches!(msg, ServerMsg::Pong);
+        // The client answers each ping: the socket stays.
+        for _ in 0..4 {
+            tokio::time::advance(Duration::from_secs(30)).await;
+            assert!(matches!(next(&mut w.frames).await, Message::Ping(_)));
+            w.last_heard.touch();
         }
-        assert!(saw_pong);
+        // Then nothing: after 90 s of silence the writer closes and stops.
+        let mut closed = false;
+        for _ in 0..5 {
+            tokio::time::advance(Duration::from_secs(30)).await;
+            match next(&mut w.frames).await {
+                Message::Ping(_) => {}
+                Message::Close(_) => {
+                    closed = true;
+                    break;
+                }
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        assert!(closed, "a silent socket is closed");
+        tokio::time::timeout(Duration::from_secs(5), &mut w.task)
+            .await
+            .expect("writer stops")
+            .unwrap();
     }
 
     #[tokio::test]
-    async fn enqueue_reports_a_closed_socket() {
-        let (tx, mut rx) = mpsc::channel::<ServerMsg>(OUTBOUND_CAPACITY);
-        for _ in 0..OUTBOUND_CAPACITY {
-            tx.try_send(ServerMsg::Pong).unwrap();
-        }
-        // A sink whose peer is gone: every write fails.
-        let (mut socket, peer) = futures::channel::mpsc::unbounded::<Message>();
-        drop(peer);
-
-        assert!(!enqueue_from_loop(&mut socket, &tx, &mut rx, ServerMsg::Pong).await);
+    async fn writer_stops_when_the_socket_is_gone() {
+        let w = writer(Vec::new(), Vec::new(), Duration::from_secs(3600), Duration::from_secs(3600));
+        drop(w.frames);
+        w.outbound.send(detached("x")).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), w.task)
+            .await
+            .expect("writer notices the socket is gone")
+            .unwrap();
     }
 }
