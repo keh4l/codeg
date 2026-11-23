@@ -136,9 +136,14 @@ pub async fn handle_attach(
 
     // Decide response shape. Order of checks matters:
     //   - explicit None → snapshot (fresh attach; client has no state yet)
-    //   - cursor at or past head → snapshot anyway, defends against client
-    //     bugs where lastAppliedSeq was advanced past an event we never
-    //     actually broadcast (not currently possible, but cheap to guard)
+    //   - cursor exactly at head → empty replay: the client already applied
+    //     everything, so nothing but the cursor goes back (fork; this used to
+    //     be a snapshot — the whole live turn re-sent on every idle reconnect,
+    //     on a slow link a frame big enough to miss the heartbeat and force
+    //     the next reconnect)
+    //   - cursor past head → snapshot anyway, defends against client bugs
+    //     where lastAppliedSeq was advanced past an event we never actually
+    //     broadcast (not currently possible, but cheap to guard)
     //   - cursor in ring buffer with small gap → replay
     //   - cursor in ring buffer with large gap → snapshot (cheaper)
     //   - cursor older than ring buffer → snapshot (only choice)
@@ -154,8 +159,17 @@ pub async fn handle_attach(
             metrics.snapshot_cold_count.fetch_add(1, Ordering::Relaxed);
             snapshot_msg()
         }
-        Some(cursor) if cursor >= s.event_seq => {
-            // Cursor at-or-past head — treat as fresh attach. Doesn't bump
+        Some(cursor) if cursor == s.event_seq => {
+            metrics.replay_empty_count.fetch_add(1, Ordering::Relaxed);
+            ServerMsg::Replay {
+                subscription_id: subscription_id.clone(),
+                connection_id: connection_id.clone(),
+                events: Vec::new(),
+                high_water_seq: s.event_seq,
+            }
+        }
+        Some(cursor) if cursor > s.event_seq => {
+            // Cursor past head — treat as fresh attach. Doesn't bump
             // `snapshot_fallback_count` because there's no gap-too-large
             // semantic; this is just a defensive equivalent of cold start.
             metrics.snapshot_cold_count.fetch_add(1, Ordering::Relaxed);

@@ -441,11 +441,13 @@ async fn reattach_mid_turn_when_caught_up_and_after_short_gap() {
         "mid-turn re-attach: caught up -> {}, 40-chunk gap -> {}",
         caught_up["type"], gap["type"]
     );
+    // A client that missed nothing gets an empty replay, not the live turn.
+    assert_eq!(caught_up["type"], "replay");
     check(&[
         Measured {
             name: "re-attach mid-turn, nothing missed: bytes",
             value: caught_up_bytes,
-            budget: 906_000,
+            budget: 110,
         },
         Measured {
             name: "re-attach mid-turn, missed 40 chunks: bytes",

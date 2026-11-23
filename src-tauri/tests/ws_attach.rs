@@ -276,6 +276,92 @@ async fn ws_hot_attach_with_cursor_receives_replay() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// 6. Re-attach with a cursor already at the head (an idle reconnect) gets an
+//    empty replay, not a snapshot of the whole live turn (fork).
+// ───────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn ws_reattach_at_head_receives_empty_replay() {
+    let (server, state, _d, _s) = build_ws_server().await;
+
+    let conn_id = "test-conn-head";
+    state
+        .connection_manager
+        .insert_test_connection(conn_id, AgentType::ClaudeCode, None, state.emitter.clone())
+        .await;
+    let state_arc = state
+        .connection_manager
+        .get_state(conn_id)
+        .await
+        .expect("conn");
+    for i in 0..3 {
+        emit_with_state(
+            &state_arc,
+            &state.emitter,
+            AcpEvent::ContentDelta {
+                text: format!("delta-{i}"),
+                parent_tool_use_id: None,
+            },
+        )
+        .await;
+    }
+
+    let mut ws = server
+        .get_websocket("/ws/events")
+        .add_header(SEC_WEBSOCKET_PROTOCOL, ws_auth_protocol(TEST_TOKEN))
+        .await
+        .into_websocket()
+        .await;
+    let _ready = next_json(&mut ws).await;
+
+    ws.send_json(&json!({
+        "action": "attach",
+        "subscription_id": "sub-head",
+        "connection_id": conn_id,
+        "since_seq": 3
+    }))
+    .await;
+
+    let frame = next_json(&mut ws).await;
+    assert_eq!(frame["type"], "replay", "caught-up client gets a replay: {frame}");
+    assert_eq!(frame["events"].as_array().map(Vec::len), Some(0));
+    assert_eq!(frame["high_water_seq"], 3);
+    assert_eq!(
+        state
+            .acp_event_bus
+            .metrics()
+            .replay_empty_count
+            .load(std::sync::atomic::Ordering::Relaxed),
+        1
+    );
+
+    // Live events keep flowing after the empty replay.
+    emit_with_state(
+        &state_arc,
+        &state.emitter,
+        AcpEvent::ContentDelta {
+            text: "after".into(),
+            parent_tool_use_id: None,
+        },
+    )
+    .await;
+    let live = next_json(&mut ws).await;
+    assert_eq!(live["type"], "event");
+    assert_eq!(live["envelope"]["seq"], 4);
+
+    // A cursor PAST the head is still treated as a fresh attach.
+    ws.send_json(&json!({
+        "action": "attach",
+        "subscription_id": "sub-past",
+        "connection_id": conn_id,
+        "since_seq": 99
+    }))
+    .await;
+    let frame = next_json(&mut ws).await;
+    assert_eq!(frame["type"], "snapshot");
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // Compile-time sanity: the types we serialize against actually exist and
 // the AcpEvent variant we use serializes the way we asserted.
 // ───────────────────────────────────────────────────────────────────────────

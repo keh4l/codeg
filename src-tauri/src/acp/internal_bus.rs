@@ -108,6 +108,9 @@ pub struct EventBusMetrics {
     /// Cold-start frontends + post-disconnect re-attaches with no preserved
     /// state.
     pub snapshot_cold_count: AtomicU64,
+    /// Attach decisions: the client's cursor was already at the head, so it
+    /// got an empty replay instead of a snapshot (an idle reconnect).
+    pub replay_empty_count: AtomicU64,
     /// Per-attach forwarder tasks that exited with `Lagged`. Each one
     /// triggers a client re-attach (and therefore a snapshot or replay).
     pub forwarder_lagged_count: AtomicU64,
@@ -130,6 +133,7 @@ impl EventBusMetrics {
             replay_event_total: self.replay_event_total.load(Ordering::Relaxed),
             snapshot_fallback_count: self.snapshot_fallback_count.load(Ordering::Relaxed),
             snapshot_cold_count: self.snapshot_cold_count.load(Ordering::Relaxed),
+            replay_empty_count: self.replay_empty_count.load(Ordering::Relaxed),
             forwarder_lagged_count: self.forwarder_lagged_count.load(Ordering::Relaxed),
             worker_queue_full_count: self.worker_queue_full_count.load(Ordering::Relaxed),
         }
@@ -148,6 +152,7 @@ pub struct EventBusMetricsSnapshot {
     pub replay_event_total: u64,
     pub snapshot_fallback_count: u64,
     pub snapshot_cold_count: u64,
+    pub replay_empty_count: u64,
     pub forwarder_lagged_count: u64,
     pub worker_queue_full_count: u64,
 }
