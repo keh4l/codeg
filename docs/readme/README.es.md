@@ -62,6 +62,10 @@
     <td width="50%" valign="top">✨ <strong>Vista compacta estilo T3</strong><br/>Pliega el trabajo de cada respuesta en una sola línea «Trabajó Xs» y muestra solo el paso activo al ejecutarse; cambia las tarjetas por un árbol de archivos modificados y revela el pie al pasar el cursor. Incluye cuatro niveles de herramientas, minimapa lateral, búsqueda ⌘/Ctrl+F en todo el hilo, citas con salto al origen, ajuste de línea y «Ejecutar en terminal» en código, y tema negro puro «Carbón». Revertible en Ajustes.</td>
   </tr>
   <tr>
+    <td width="50%" valign="top">🛰️ <strong>Acceso remoto más ágil</strong><br/>Con la versión web por una IP pública: tras recargar se puede escribir en un segundo o así, el último turno de una conversación larga se ve en menos de un segundo y volver a una conversación que acabas de ver ya no se queda en «Conectando». Si la red falla un momento, lo que faltó llega solo, sin aviso de reconexión ni texto perdido.</td>
+    <td width="50%" valign="top">⚡ <strong>Los botones responden al momento y las respuestas salen a ritmo constante</strong><br/>Aprobar permisos, renombrar, eliminar, detener e intervenir surten efecto en cuanto pulsas. Una petición que no llegó se reintenta sola y nunca se ejecuta dos veces; solo un fallo real deshace el cambio, con un aviso. Con la red lenta, la respuesta ya no salta a ráfagas: el texto sale a ritmo constante.</td>
+  </tr>
+  <tr>
     <td colspan="2" valign="top">🔄 <strong>Al día con el original</strong><br/>Los cambios del proyecto original se incorporan con regularidad; lo que no aparece aquí funciona igual que en la versión oficial. Kiro CLI integrado, lo primero que añadió esta versión, forma parte de la versión oficial desde la 0.36.0. Los resúmenes del razonamiento de Claude Code usan desde la 0.41.3-1 el interruptor de la versión oficial: «Mostrar resúmenes del razonamiento de Claude» en Ajustes → Agentes → Claude Code, desactivado por defecto. Desde la 0.46.0-1, el siguiente mensaje sugerido se rellena como en la versión oficial: con Tab en el ordenador y con el botón de la bombilla junto a Enviar en el móvil.</td>
   </tr>
 </table>
@@ -275,6 +279,55 @@
 - <strong>Árbol de archivos y panel diff</strong>: directorios encadenados compactados, desplegado hasta 8 archivos y virtualizado sobre 250 filas. Clic abre el diff; nuevos HTML/Markdown/imágenes tienen vista previa integrada; las filas de edición también abren el diff en un clic.
 - <strong>Burbujas agrupadas y pie al pasar el cursor</strong>: mensajes seguidos agrupados, collage de imágenes dentro de la burbuja, plegado solo sobre 22rem y acciones al pasar el cursor (hora, copiar, editar en compositor sin revertir archivos). El pie de respuesta aparece al pasar el cursor (siempre visible en la última); tok/s oculto por defecto. Enviar fija tu mensaje a 24px del borde superior.
 - <strong>Minimapa, búsqueda total, citas y tema Carbón</strong>: minimapa en escritorio, ⌘/Ctrl+F busca en todo el historial (cargando turnos antiguos y abriendo pliegues), citas clicables que saltan y resaltan 2s el origen, ajuste de líneas y pegado en nueva terminal sin ejecutar en bloques shell, y tema negro puro «Carbón».
+
+</details>
+
+<details>
+<summary><strong>Acceso remoto más ágil</strong>: detalles</summary>
+<br/>
+
+- Por un enlace público con mucha latencia y pérdida de paquetes, la versión oficial va lenta: el texto en streaming sale en una trama de WebSocket por cada trozo pequeño, y cada trama espera la confirmación de la anterior (Nagle), así que el texto llega a golpes cada medio segundo. Un solo paquete perdido hace que el control de congestión por defecto reduzca a la mitad la velocidad de envío, y los 1,9 MB de scripts de la primera carga tardan más de veinte segundos. Una reconexión vuelve a descargar la instantánea entera de la conversación. Las capturas de pantalla van incrustadas en la conversación como base64 y se envían completas cada vez que se abre. Al abrir una conversación, el servidor analiza el mismo registro tres veces. Al salir de una conversación se desconecta su agente, así que al volver hay que reconectar y recargarlo todo.
+- Lo que consigue esta versión (enlace simulado: 368 ms de ida y vuelta, 7 % de pérdida de paquetes, agente simulado; una conversación de 150 turnos con 10 capturas):
+
+  |  | Versión oficial | Esta versión |
+  | --- | --- | --- |
+  | De la primera apertura a poder escribir | 24,8 s | 8–14 s |
+  | De recargar a poder escribir | 2,7 s | 1,1–1,2 s |
+  | De abrir una conversación larga a ver su último turno | 12,3 s | 0,8 s |
+  | Volver a una conversación que acabas de ver | 6,3 s (lo recarga todo) | 0,2 s |
+  | Intervalo entre actualizaciones del texto al responder (mediana / percentil 95) | 366 / 460–731 ms | 34–38 / 66–100 ms |
+
+- Conexión: el servidor desactiva Nagle y usa el control de congestión BBR (la pérdida de paquetes ya no se toma por congestión), y mantiene pequeña la cola de datos sin enviar del kernel, para que un latido nunca espere detrás de un bloque grande. El WebSocket incorpora el subprotocolo `codeg-events.v2`: el texto en streaming se junta en una trama cada 100 ms, y las tramas grandes se comprimen y se envían por partes. La página comprueba la conexión cada 5 segundos y solo la da por perdida tras 15 segundos sin respuesta; entonces reconecta enseguida y recibe solo los eventos que se perdió. Si se recupera en menos de 8 segundos no aparece ningún aviso, y un corte de 3 u 8 segundos no necesita reconexión. La app de escritorio conectada a un servidor remoto también usa v2.
+- Abrir una conversación: las capturas se cargan aparte y bajo demanda, primero como miniatura, y no se vuelven a descargar una vez vistas. La salida de una herramienta de más de 24 KB llega primero solo con el principio y el final, y el texto completo se pide al desplegarla. La primera pantalla trae solo los últimos turnos, según su tamaño. El servidor guarda en caché las conversaciones de Claude Code ya analizadas y solo las vuelve a analizar si el registro cambia.
+- Cambiar de conversación: al salir de una conversación, su agente queda aparcado en lugar de desconectarse, y al volver se retoma directamente. Al pulsar una conversación de la barra lateral o pasar el puntero por encima ya se empieza a traer su contenido. Los agentes aparcados ocupan memoria, así que el servidor mantiene como mucho 6 inactivos y, por encima de eso, desconecta los que llevan más tiempo sin usarse.
+- Inicio: los archivos estáticos con hash se guardan en caché de forma permanente; al recargar se entra directamente al espacio de trabajo; las 20 peticiones que necesita el inicio se juntan en una y se envían antes de que terminen de descargarse los scripts de la página.
+- Variables de entorno del servidor (rara vez hace falta cambiarlas):
+
+  | Variable | Por defecto | Qué hace |
+  | --- | --- | --- |
+  | `CODEG_WS_COALESCE_MS` | `100` | Ventana para juntar el texto en streaming en una trama (ms, máximo 1000; `0` no junta) |
+  | `CODEG_TCP_CONGESTION` | `bbr` | Control de congestión de las conexiones web; si el kernel no lo tiene, se usa el del sistema; vacío u `off` lo deja sin cambiar |
+  | `CODEG_TCP_NOTSENT_LOWAT` | `65536` | Máximo de bytes sin enviar que el kernel retiene por conexión; `0` sin límite |
+  | `CODEG_ACP_MAX_IDLE_CONNECTIONS` | `6` | Cuántos agentes aparcados inactivos se mantienen; `0` sin límite (los inactivos se siguen liberando por tiempo) |
+  | `CODEG_ACP_IDLE_HOLD_GRACE_SECS` | `90` | Segundos sin usarse tras los que un agente aparcado cuenta como inactivo |
+  | `CODEG_DETAIL_CACHE_ENTRIES` | `6` | Cuántas conversaciones de Claude Code analizadas se guardan en caché; `0` sin caché |
+
+</details>
+
+<details>
+<summary><strong>Los botones responden al momento y las respuestas salen a ritmo constante</strong>: detalles</summary>
+<br/>
+
+- En la versión oficial, cada botón espera la respuesta del servidor: con 368 ms de ida y vuelta, la tarjeta de un permiso aprobado tarda 0,4 s en desaparecer, renombrar y eliminar tardan medio segundo, y Detener no da señal de haberse pulsado. Una petición que se pierde por el camino simplemente falla. Cuando la red da tirones, las respuestas saltan a ráfagas.
+- Esta versión:
+  - Renombrar, eliminar, fijar, cambiar el estado, el color, el alias y el agente predeterminado de una carpeta, quitar una carpeta del espacio de trabajo, aprobar permisos, responder preguntas y aprobar planes: el cambio se hace en local y se ve en cuanto pulsas. Si el servidor lo rechaza y la pantalla sigue mostrando tu cambio, se deshace con un aviso; un modelo o una opción que no se aplicó también vuelve a su valor anterior.
+  - Ante un error de red, sus peticiones se reintentan hasta dos veces. Las que crean algo (enviar un mensaje, una conversación nueva, intervenir, poner en cola) llevan una clave de idempotencia: el servidor ejecuta una repetición solo una vez y responde con el primer resultado, así que no aparece ningún mensaje ni conversación duplicados.
+  - Detener gira en cuanto lo pulsas, para indicar que se está deteniendo. Solo detiene el turno en el que lo pulsaste: si ese turno ya terminó y empezó el siguiente mensaje en cola, ese sigue.
+  - Si cambias de modo y luego envías, el modo va con el mensaje y se ahorra un viaje de ida y vuelta.
+  - Intervenir y poner en cola vacían el cuadro de mensaje al momento; un mensaje que no llegó vuelve al cuadro, con imágenes y citas incluidas.
+  - Crear o bifurcar una conversación ya no vuelve a cargar toda la lista de conversaciones.
+- Medido (mismo enlace): de aprobar un permiso a que desaparezca la tarjeta, 0,42 s → 5 ms; renombrar, 0,49 s → 0,06–0,09 s; eliminar, 0,45 s → 0,07–0,2 s; reacción de Detener, 0,46 s → 0,03–0,07 s.
+- Texto a ritmo constante: con la red lenta, la respuesta se muestra al ritmo al que ha ido llegando últimamente, un poco por detrás. Cuánto por detrás se decide según la pausa más larga reciente de ese enlace (como mucho 1,5 s). Con la red fluida no se retiene nada, como antes. Antes de que aparezca una tarjeta de herramienta, una solicitud de permiso o el final del turno, se muestra primero todo el texto retenido, así que el orden no cambia. Medido en el mismo enlace: mediana del intervalo entre actualizaciones del texto 100 → 34–38 ms, percentil 95 190–214 → 66–100 ms. Se desactiva en Configuración → Apariencia → Texto en streaming suave, y solo afecta a este dispositivo.
 
 </details>
 

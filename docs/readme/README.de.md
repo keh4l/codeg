@@ -62,6 +62,10 @@
     <td width="50%" valign="top">✨ <strong>Kompakte Gesprächsansicht im T3-Stil</strong><br/>Klappt die Arbeitsschritte jeder Antwort in eine „Xs gearbeitet“-Zeile ein und zeigt im Lauf nur den aktuellen Schritt; ersetzt Dateikarten durch einen Änderungsbaum und blendet die Antwort-Fußzeile erst bei Hover ein. Mit vier Tool-Sichtbarkeitsstufen, Zeitleisten-Minimap, ⌘/Ctrl+F-Suche über den gesamten Verlauf, rückverlinkten Zitaten, Code-Umbruch &amp; „Im Terminal ausführen“ sowie dem tiefschwarzen „Karbon“-Theme. Jederzeit in den Einstellungen umstellbar.</td>
   </tr>
   <tr>
+    <td width="50%" valign="top">🛰️ <strong>Schneller Fernzugriff übers Internet</strong><br/>Die Web-App über eine öffentliche IP: nach dem Neuladen etwa eine Sekunde bis zum Tippen, die letzte Runde einer langen Konversation in unter einer Sekunde sichtbar, und beim Zurückwechseln zu einer gerade gesehenen Konversation kein „Verbinde“ mehr. Ein kurzer Netzaussetzer wird von selbst nachgeholt: kein Hinweis auf Neuverbindung, kein verlorener Text.</td>
+    <td width="50%" valign="top">⚡ <strong>Schaltflächen reagieren sofort, Antworten laufen gleichmäßig</strong><br/>Freigeben, Umbenennen, Löschen, Stopp und Einwurf wirken im Moment des Klicks. Eine Anfrage, die nicht ankam, wird wiederholt und nie doppelt ausgeführt; nur ein echter Fehler macht die Änderung rückgängig, mit Hinweis. Bei langsamer Verbindung springt eine Antwort nicht mehr schubweise, sondern erscheint in gleichmäßigem Tempo.</td>
+  </tr>
+  <tr>
     <td colspan="2" valign="top">🔄 <strong>Nah am Upstream</strong><br/>Upstream wird regelmäßig hineingemergt; was hier nicht steht, funktioniert genau wie in der offiziellen Version. Das eingebaute Kiro CLI, das diese Version als Erstes hinzugefügt hat, ist seit 0.36.0 Teil der offiziellen Version. Die Zusammenfassungen von Claudes Denken nutzen seit 0.41.3-1 den Schalter der offiziellen Version: „Zusammenfassungen von Claudes Denken anzeigen“ unter Einstellungen → Agenten → Claude Code, standardmäßig aus. Seit 0.46.0-1 wird die vorgeschlagene nächste Nachricht wie in der offiziellen Version übernommen: am Computer mit Tab, am Handy mit der Glühbirnen-Schaltfläche neben „Senden“.</td>
   </tr>
 </table>
@@ -275,6 +279,55 @@
 - <strong>Änderungsbaum &amp; Diff-Panel</strong>: Zusammengefasste Ordnerketten, bis 8 Dateien standardmäßig geöffnet, ab 250 Zeilen virtualisiert; Klick öffnet das Diff-Panel, neue HTML-/Markdown-/Bilddateien lassen sich inline voranzeigen, und Bearbeitungszeilen öffnen ebenfalls direkt den Diff.
 - <strong>Ruhigere Blasen &amp; Hover-Fußzeile</strong>: Aufeinanderfolgende Nutzernachrichten gruppieren sich dicht, Bilder sitzen als Collage in der Blase, Klappgrenze 22rem, Hover zeigt Zeit, Kopieren und Bearbeiten im Eingabefeld (ohne Datei-Rollback). Die Antwort-Fußzeile erscheint erst bei Hover (letzte Antwort dauerhaft); tok/s ist standardmäßig aus. Neue Nachrichten werden 24px unter dem oberen Rand verankert.
 - <strong>Minimap, Volltextsuche, Zitate &amp; Karbon-Theme</strong>: Desktop-Minimap am Rand mit Hover-Vorschau, ⌘/Ctrl+F durchsucht den gesamten Verlauf inkl. ungeladener Runden und klappt Treffer automatisch auf, Zitate werden als anklickbare Rücksprung-Karten gerendert (2s Highlight), Codeblöcke erhalten Umbruch-Schalter und „Im Terminal ausführen“ (fügt nur ein, führt nicht aus), plus das tiefschwarze Theme „Karbon“.
+
+</details>
+
+<details>
+<summary><strong>Schneller Fernzugriff übers Internet</strong> – Details</summary>
+<br/>
+
+- Über eine öffentliche Verbindung mit hoher Latenz und Paketverlust fühlt sich der offizielle Build träge an: Gestreamter Text geht als ein WebSocket-Frame pro kleinem Stück raus, und jeder Frame wartet auf die Bestätigung des vorigen (Nagle), sodass der Text in Klumpen im Halbsekundentakt ankommt. Ein einziges verlorenes Paket lässt die Standard-Überlastkontrolle die Senderate halbieren, sodass die 1,9 MB Skripte beim ersten Laden über zwanzig Sekunden brauchen. Ein Neuverbinden holt den ganzen Snapshot der Konversation noch einmal. Screenshots stecken als base64 in der Konversation und werden bei jedem Öffnen vollständig übertragen. Beim Öffnen einer Konversation parst der Server dasselbe Transkript dreimal. Wer eine Konversation verlässt, trennt ihren Agenten, und beim Zurückwechseln wird neu verbunden und alles neu geladen.
+- Was dieser Build erreicht (simulierte Verbindung: 368 ms Round-Trip, 7 % Paketverlust, geskripteter Agent; eine Konversation mit 150 Runden und 10 Screenshots):
+
+  |  | Offizieller Build | Dieser Build |
+  | --- | --- | --- |
+  | Erstes Öffnen bis zum Tippen | 24,8 s | 8–14 s |
+  | Neuladen bis zum Tippen | 2,7 s | 1,1–1,2 s |
+  | Lange Konversation öffnen bis zur letzten Runde | 12,3 s | 0,8 s |
+  | Zurück zu einer gerade gesehenen Konversation | 6,3 s (lädt alles neu) | 0,2 s |
+  | Abstand zwischen Textaktualisierungen beim Antworten (Median / 95. Perzentil) | 366 / 460–731 ms | 34–38 / 66–100 ms |
+
+- Verbindung: Der Server schaltet Nagle ab und nutzt die BBR-Überlastkontrolle (Paketverlust gilt nicht mehr als Überlast), und er hält die Warteschlange ungesendeter Daten im Kernel klein, damit ein Heartbeat nie hinter einem großen Datenblock wartet. Der WebSocket bekommt das Subprotokoll `codeg-events.v2`: Gestreamter Text wird alle 100 ms zu einem Frame zusammengefasst, große Frames werden komprimiert und aufgeteilt. Die Seite prüft alle 5 Sekunden und wertet erst 15 Sekunden Stille als Verbindungsabbruch; dann verbindet sie sofort neu und bekommt nur die verpassten Ereignisse. Steht die Verbindung innerhalb von 8 Sekunden wieder, erscheint kein Hinweis, und ein Ausfall von 3 oder 8 Sekunden braucht gar kein Neuverbinden. Die Desktop-App nutzt v2 ebenfalls, wenn sie mit einem entfernten Server verbunden ist.
+- Konversation öffnen: Screenshots werden getrennt und bei Bedarf geladen, zuerst als Vorschaubild, und einmal gesehen nicht erneut heruntergeladen. Tool-Ausgaben über 24 KB kommen zunächst nur mit Anfang und Ende, der volle Text wird beim Aufklappen geholt. Der erste Bildschirm holt nur die neuesten Runden, nach Größe bemessen. Der Server cacht geparste Claude-Code-Konversationen und parst nur neu, wenn sich das Transkript ändert.
+- Konversation wechseln: Beim Verlassen einer Konversation wird ihr Agent geparkt statt getrennt, und beim Zurückwechseln geht es direkt mit ihm weiter. Drücken oder Überfahren einer Konversation in der Seitenleiste startet schon das Laden. Geparkte Agenten belegen Speicher, daher behält der Server höchstens 6 untätige und trennt darüber hinaus die am längsten ungenutzten.
+- Start: Statische Dateien mit Hash im Namen werden dauerhaft gecacht; Neuladen führt direkt in den Arbeitsbereich; die 20 Anfragen, die der Start braucht, werden zu einer zusammengefasst und abgeschickt, bevor die Skripte der Seite fertig geladen sind.
+- Umgebungsvariablen des Servers (selten nötig):
+
+  | Variable | Standard | Wirkung |
+  | --- | --- | --- |
+  | `CODEG_WS_COALESCE_MS` | `100` | Zeitfenster, in dem gestreamter Text zu einem Frame zusammengefasst wird (ms, höchstens 1000; `0` fasst nicht zusammen) |
+  | `CODEG_TCP_CONGESTION` | `bbr` | Überlastkontrolle für Webverbindungen; fehlt sie im Kernel, gilt der Systemstandard; leer oder `off` ändert nichts |
+  | `CODEG_TCP_NOTSENT_LOWAT` | `65536` | Höchstzahl ungesendeter Bytes, die der Kernel pro Verbindung hält; `0` ohne Grenze |
+  | `CODEG_ACP_MAX_IDLE_CONNECTIONS` | `6` | Wie viele untätige geparkte Agenten bleiben; `0` ohne Grenze (untätige werden weiterhin nach Zeit freigegeben) |
+  | `CODEG_ACP_IDLE_HOLD_GRACE_SECS` | `90` | Sekunden ohne Zugriff, bis ein geparkter Agent als untätig gilt |
+  | `CODEG_DETAIL_CACHE_ENTRIES` | `6` | Wie viele geparste Claude-Code-Konversationen gecacht werden; `0` schaltet den Cache ab |
+
+</details>
+
+<details>
+<summary><strong>Schaltflächen reagieren sofort, Antworten laufen gleichmäßig</strong> – Details</summary>
+<br/>
+
+- Im offiziellen Build wartet jede Schaltfläche auf die Antwort des Servers: Bei 368 ms Round-Trip braucht die Karte einer freigegebenen Berechtigung 0,4 s, bis sie verschwindet, Umbenennen und Löschen eine halbe Sekunde, und Stopp zeigt nicht, ob der Klick angekommen ist. Eine Anfrage, die unterwegs verloren geht, schlägt einfach fehl. Wenn das Netz stockt, springen Antworten schubweise.
+- Dieser Build:
+  - Umbenennen, Löschen, Anheften, Status, Farbe, Alias und Standard-Agent eines Ordners, Ordner aus dem Arbeitsbereich entfernen, Berechtigungen freigeben, Fragen beantworten und Pläne genehmigen: Die Änderung geschieht lokal und ist im Moment des Klicks sichtbar. Lehnt der Server ab und zeigt der Bildschirm noch deine Änderung, wird sie mit Hinweis zurückgenommen; ein Modell oder eine Option, die nicht übernommen wurde, springt ebenfalls auf den vorigen Wert zurück.
+  - Ihre Anfragen werden bei einem Netzwerkfehler bis zu zweimal wiederholt. Anfragen, die etwas anlegen – eine Nachricht senden, eine neue Konversation, Einwurf, Einreihen –, tragen einen Idempotenzschlüssel: Der Server führt eine Wiederholung nur einmal aus und antwortet mit dem ersten Ergebnis, sodass keine Nachricht und keine Konversation doppelt entsteht.
+  - Stopp dreht sich, sobald du klickst. Es stoppt nur die Runde, für die du geklickt hast: Ist sie schon zu Ende und die nächste wartende Nachricht gestartet, läuft diese weiter.
+  - Ein gewechselter Modus geht mit der Nachricht mit, das spart einen Round-Trip.
+  - Einwerfen und Einreihen leeren das Eingabefeld sofort; eine Nachricht, die nicht ankam, kommt zurück ins Eingabefeld, samt Bildern und Zitaten.
+  - Eine Konversation anlegen oder verzweigen lädt nicht mehr die ganze Konversationsliste neu.
+- Gemessen (gleiche Verbindung): Berechtigung freigegeben bis Karte weg 0,42 s → 5 ms; Umbenennen 0,49 s → 0,06–0,09 s; Löschen 0,45 s → 0,07–0,2 s; Stopp reagiert 0,46 s → 0,03–0,07 s.
+- Gleichmäßiger Text: Bei langsamer Verbindung wird eine Antwort in dem Tempo gezeigt, in dem sie zuletzt ankam, etwas dahinter. Wie weit dahinter, richtet sich nach der längsten jüngsten Stockung dieser Verbindung (höchstens 1,5 s). Bei flüssiger Verbindung wird nichts zurückgehalten, wie bisher. Bevor eine Tool-Karte, eine Berechtigungsanfrage oder das Ende der Runde erscheint, wird alles Zurückgehaltene zuerst gezeigt, die Reihenfolge bleibt also gleich. Gemessen auf derselben Verbindung: Median des Abstands zwischen Textaktualisierungen 100 → 34–38 ms, 95. Perzentil 190–214 → 66–100 ms. Abschalten unter Einstellungen → Darstellung → Gestreamten Text gleichmäßig anzeigen; gilt nur für dieses Gerät.
 
 </details>
 

@@ -62,6 +62,10 @@
     <td width="50%" valign="top">✨ <strong>T3-style compact conversation view</strong><br/>Each reply’s work folds into a single “Worked for Xs” line, showing only the live step while running; a changed-files tree replaces artifact cards and the reply footer appears on hover. Adds four tool-visibility levels, a timeline minimap, whole-thread ⌘/Ctrl+F find, clickable backlink citations, code-block wrap &amp; “Run in terminal”, and a pure-black Carbon theme. Switch back to Timeline anytime in Settings.</td>
   </tr>
   <tr>
+    <td width="50%" valign="top">🛰️ <strong>Snappy over a remote link</strong><br/>Using the web app over a public IP: about a second from reload to typing, the last round of a long conversation visible within a second, and no more “Connecting” when you switch back to a conversation you just saw. A network hiccup is caught up on its own: no reconnect notice, no lost text.</td>
+    <td width="50%" valign="top">⚡ <strong>Buttons react at once, replies flow evenly</strong><br/>Approve, rename, delete, stop and steer take effect the moment you press them. A request that didn't get through is retried and never runs twice; only a real failure undoes the change, with a notice. On a slow link a reply no longer jumps in bursts but appears at a steady pace.</td>
+  </tr>
+  <tr>
     <td colspan="2" valign="top">🔄 <strong>Follows upstream</strong><br/>Upstream is merged in regularly; anything not listed here works exactly as in the official build. The built-in Kiro CLI, the first thing this build added, has been part of the official build since 0.36.0. Claude Code thinking summaries use the official build's switch from 0.41.3-1 on: “Show Claude's thinking summaries” in Settings → Agents → Claude Code, off by default. From 0.46.0-1 the suggested next message is filled in the official way: Tab on a computer, the lightbulb button beside Send on a phone.</td>
   </tr>
 </table>
@@ -275,6 +279,55 @@
 - <strong>Changed-files tree &amp; diff panel</strong>: replaces reply file cards with a sticky-header directory tree (single-child directory chains merged, auto-expanded up to 8 files, virtualized past 250 rows). Clicking any file opens its diff panel, previewable new files (HTML/Markdown/images) preview inline, and edit rows also offer a hover button to open the diff panel.
 - <strong>Quieter bubbles &amp; hover footer</strong>: consecutive user messages group tightly, images render as an in-bubble collage, long prompts fold only past 22rem, and hover reveals timestamp, copy, and Edit in composer (no file revert). Reply actions (copy, translate, fork, create task, model, tokens, time) appear on hover (always shown on the last reply); live tok/s speed is off by default. Sending pins your message 24px from the top so the reply grows downward.
 - <strong>Minimap, whole-thread find, citations &amp; Carbon theme</strong>: desktop shows a left-edge timeline minimap with hover preview and click-to-jump; ⌘/Ctrl+F (or header “…” menu) searches the entire conversation including unloaded history and auto-expands folded hits; quoting creates composer citation chips whose sent cards jump back and highlight for 2s; code blocks gain a line-wrap toggle and shell blocks add “Run in terminal” (pastes without executing); Appearance adds the pure-black “Carbon” theme preset.
+
+</details>
+
+<details>
+<summary><strong>Snappy over a remote link</strong>: details</summary>
+<br/>
+
+- On a high-latency, lossy public link the official build feels sluggish: streamed text goes out as one WebSocket frame per small chunk, and each frame waits for the previous one to be acknowledged (Nagle), so text arrives in clumps half a second apart. One lost packet makes the default congestion control halve the sending rate, so the 1.9 MB of scripts on first load takes over twenty seconds. A reconnect fetches the whole conversation snapshot again. Screenshots are embedded in the conversation as base64 and sent in full on every open. Opening a conversation parses the same transcript three times on the server. Leaving a conversation disconnects its agent, so switching back reconnects and reloads everything.
+- What this build gets (simulated link: 368 ms round trip, 7% packet loss, scripted agent; a conversation of 150 rounds with 10 screenshots):
+
+  |  | Official build | This build |
+  | --- | --- | --- |
+  | First open to typing | 24.8 s | 8–14 s |
+  | Reload to typing | 2.7 s | 1.1–1.2 s |
+  | Open a long conversation to its last round | 12.3 s | 0.8 s |
+  | Switch back to a conversation you just saw | 6.3 s (reloads everything) | 0.2 s |
+  | Gap between text updates while replying (median / 95th percentile) | 366 / 460–731 ms | 34–38 / 66–100 ms |
+
+- Connection: the server turns Nagle off and uses BBR congestion control (packet loss is no longer taken for congestion), and keeps the kernel's queue of unsent data small so a heartbeat never waits behind a large payload. The WebSocket gains a `codeg-events.v2` subprotocol: streamed text is merged into one frame every 100 ms, and large frames are compressed and split. The page checks every 5 seconds and only treats 15 seconds of silence as a lost connection; it then reconnects right away and receives only the events it missed. Recovering within 8 seconds shows no notice, and an outage of 3 or 8 seconds needs no reconnect at all. The desktop app connected to a remote server uses v2 too.
+- Opening a conversation: screenshots load separately, on demand, as a thumbnail first, and are not downloaded again once seen. Tool output over 24 KB is sent as its beginning and end only, with the full text fetched when you expand it. The first screen fetches only the latest rounds, by size. The server caches parsed Claude Code conversations and parses again only when the transcript changes.
+- Switching conversations: leaving a conversation parks its agent instead of disconnecting it, and switching back picks it up directly. Pressing or hovering a conversation in the sidebar starts fetching it. Parked agents take memory, so the server keeps at most 6 idle ones and disconnects the longest unused beyond that.
+- Startup: hashed static files are cached for good; reloading goes straight to the workspace; the 20 requests startup needs are combined into one and sent before the page scripts have finished downloading.
+- Server environment variables (rarely needed):
+
+  | Variable | Default | What it does |
+  | --- | --- | --- |
+  | `CODEG_WS_COALESCE_MS` | `100` | Window for merging streamed text into one frame (ms, at most 1000; `0` disables merging) |
+  | `CODEG_TCP_CONGESTION` | `bbr` | Congestion control for web connections; the system default if the kernel lacks it; empty or `off` leaves it unchanged |
+  | `CODEG_TCP_NOTSENT_LOWAT` | `65536` | Most unsent bytes the kernel holds per connection; `0` for no limit |
+  | `CODEG_ACP_MAX_IDLE_CONNECTIONS` | `6` | Idle parked agents to keep; `0` for no limit (idle agents are still reclaimed by time) |
+  | `CODEG_ACP_IDLE_HOLD_GRACE_SECS` | `90` | Seconds untouched before a parked agent counts as idle |
+  | `CODEG_DETAIL_CACHE_ENTRIES` | `6` | Parsed Claude Code conversations to cache; `0` disables the cache |
+
+</details>
+
+<details>
+<summary><strong>Buttons react at once, replies flow evenly</strong>: details</summary>
+<br/>
+
+- In the official build every button waits for the server's answer: on a 368 ms round trip, an approved permission card takes 0.4 s to go away, rename and delete take half a second, and Stop gives no sign it was pressed. A request lost on the way simply fails. When the network stutters, replies jump in bursts.
+- This build:
+  - Rename, delete, pin, status, a folder's color, alias and default agent, removing a folder from the workspace, approving permissions, answering questions and approving plans: the change is made locally and shows the moment you press. If the server refuses and the screen still shows your change, it is undone with a notice; a model or option that didn't take is also set back to its previous value.
+  - Their requests are retried up to twice on a network error. Requests that create something — sending a message, a new conversation, steering, queueing — carry an idempotency key: the server runs a repeat only once and answers with the first result, so no message or conversation is doubled.
+  - Stop spins the moment you press it. It stops only the round you pressed it for: if that round already ended and the next queued message started, that one keeps running.
+  - A mode you switch to is sent with the message, saving a round trip.
+  - Steering and queueing clear the composer at once; a message that didn't get through goes back into the composer, images and quotes included.
+  - Creating or forking a conversation no longer reloads the whole conversation list.
+- Measured (same link): permission approved to card gone 0.42 s → 5 ms; rename 0.49 s → 0.06–0.09 s; delete 0.45 s → 0.07–0.2 s; Stop reacting 0.46 s → 0.03–0.07 s.
+- Steady text: on a slow link a reply is shown at the rate it has recently been arriving, a little behind it. How far behind is set from the link's longest recent stall (at most 1.5 s). On a smooth link nothing is held, as before. Before a tool card, a permission request or the end of the round appears, everything held is shown first, so the order never changes. Measured on the same link: median gap between text updates 100 → 34–38 ms, 95th percentile 190–214 → 66–100 ms. Turn it off in Settings → Appearance → Smooth streaming text; it applies to this device only.
 
 </details>
 

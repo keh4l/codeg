@@ -1,0 +1,128 @@
+# 公网远程网页提速：改过的上游文件
+
+`SKILL.md` 冲突处理规则表「公网远程网页提速」一行的明细（`perf/remote-web` 分支，0.47.0-6 起）。每条：文件 — 改了什么 — 同步时注意什么；括号里是当时的方案步骤号（1.x 连接层、2.x 数据量、3.x 打开/切换会话、4.x 启动、5.x 按钮即时、6.x 流式显示）。
+
+- `src-tauri/src/web/mod.rs` — 加 `pub mod socket_tuning;`；两个 `axum::serve` 前 `listener.tap_io(socket_tuning::configure_accepted)` — 上游改 serve 启动代码时保留 tap_io（1.2）
+- `src-tauri/src/bin/codeg_server.rs` — `axum::serve` 前 tap_io — 同上（1.2）
+- `src-tauri/src/commands/remote_proxy.rs` — `connect_remote_ws` 的 HttpConnector `set_nodelay(true)`（1.2）
+- `src-tauri/src/web/ws.rs` — **整体重写连接处理**：读循环 + `run_writer` 写任务（控制通道 `Control`、协议 ping、静默关闭、`LastHeard`），删了 `enqueue_from_loop`，`handle_client_msg` 不再碰 socket — 上游改 ws.rs 时冲突大：以 fork 的读写拆分结构为准，把上游的新逻辑（新消息类型、新广播）移植进 `handle_client_msg`/`run_writer`（1.3）
+- `src-tauri/src/web/ws_attach.rs` — `spawn_forwarder` 多 `initial: Option<ServerMsg>` 参数，先发初始帧（1.3）
+- `src-tauri/src/web/ws_attach.rs` — `ServerMsg::Replay.events`/`Event.envelope` 改成 `WireEnvelope`；`REPLAY_BATCH_THRESHOLD` 删掉换成 `decide_resume` + `REPLAY_MAX_ITEMS/BYTES`；`spawn_forwarder` 多 `coalesce` 参数并整体改成合并循环；文件末尾加 tests 模块 — 上游改转发/replay 判断时以 fork 结构为准，把上游新逻辑移进来（1.4/1.5）
+- `src-tauri/src/acp/event_stream.rs` — `RECENT_BUFFER_MAX_BYTES` 128 KB→2 MB、`RECENT_BUFFER_MAX_COUNT` 128→4096；`estimate_envelope_size` 改 `pub(crate)` — 同步时保留 fork 的数值（1.4）
+- `src-tauri/src/acp/internal_bus.rs` — 文档注释里 `REPLAY_BATCH_THRESHOLD` 改指 `REPLAY_MAX_ITEMS/BYTES`（1.4）
+- `src-tauri/src/web/ws.rs` — `spawn_forwarder` 调用多传 `ws_attach::default_coalesce_window()`；文件整体跑过 rustfmt（只动了 fork 自己写的部分）（1.5）
+- `src-tauri/tests/ws_attach.rs` — `ws_hot_attach_with_cursor_receives_replay` 改成期望合并后 1 条（`first_seq` 2、`seq` 3、文字拼接）（1.5）
+- `src/lib/types.ts` — `EventEnvelope` 加 `first_seq?: number`（1.5）
+- `src-tauri/src/web/ws.rs` — `ws_handler` 用 `protocols([v2, v1])` 并把 `Codec` 传进 `handle_ws_connection`/`run_writer`；`write_server_msg` 换成 `write_data`（分片间放控制帧）/`serialize_server_msg`；全局 firehose 也走 `write_data`；`coalesce_ms` 传给 `coalesce_window`（1.6）
+- `src-tauri/src/web/ws_attach.rs` — `ClientMsg::Attach` 加 `coalesce_ms: Option<u64>`（serde default）；`coalesce_window()`（1.6）
+- `src-tauri/src/web/mod.rs` — 加 `pub mod ws_coalesce; pub mod ws_frame;`（1.5/1.6）
+- `src-tauri/tests/ws_attach.rs` — 末尾加第 7 节 v2/v1 用例（1.6）
+- `src/lib/transport/ws-auth.ts` — 加 `CODEG_WS_PROTOCOL_V2`，`buildCodegWebSocketProtocols(token, {v2})`（1.7）
+- `src/lib/transport/web-transport.ts` — 心跳常量 5 s/15 s；新增重连阶梯/唤醒检查/打开超时常量和字段；onmessage 只做存活戳 + `frameDecoder.push`，解析搬到 `handleFrameText`；`__ready__` 不再清 `wsFailCount`（改 30 s 稳定计时器）；`handleHeartbeatTimeout` 不再清 `wsFailCount`；`scheduleReconnect(afterReadySocket)`；`verifyConnection` 加 500 ms 后的健康检查；`teardownWs` 清新计时器和解码器 — 上游改这些时以 fork 逻辑为准（1.7）
+- `src/lib/transport/web-transport.test.ts` — 掉线后先失败一次快速重试（`dropAndFailTheQuickRetry`）再看探测；心跳/唤醒用例按新时序重写；加 v2 用例（1.7）
+- `src/components/connection/web-connection-guard.tsx`、`remote-connection-status.tsx`（+两个测试）— 宽限 4 s → 8 s（1.7）
+- `src-tauri/src/paths.rs` — 加 `codeg_blobs_root()`（2.1）
+- `src-tauri/src/web/mod.rs` — 加 `pub mod blob_store; pub mod image_refs;`（2.1/2.3）
+- `src-tauri/src/web/router.rs` — 公开路由加 `/img/{id}`；http span 的 path 过 `blob_store::redact_path`（2.1）
+- `src-tauri/src/web/handlers/conversations.rs` — `GetFolderConversationParams`/`GetFolderConversationTurnsParams` 加 `image_refs`，两个 handler 返回 `Response` 走 `image_refs::respond`（2.3）
+- `src/lib/types.ts` — `ImageBlobRef`；`ImageData`、image `ContentBlock`、`ToolCallImageWire`、`UserMessageBlock` 的 `data` 变可选并加 `blob?`（2.3）
+- `src/lib/adapters/ai-elements-adapter.ts` — `UserImageDisplay` 加 `blob`、`data?`；`addImage` 用 `imageKey`；三处取图用 `hasImage` 并带上 `blob`（2.3）
+- `src/lib/copy-image.ts`、`image-download.ts`、`export-conversation.ts`、`user-message-blocks.ts`、`api.ts`、`stores/conversation-runtime-store.ts`、`components/message/{image-actions,user-image-attachments,generated-images-block,compact/user-bubble}.tsx` — 见 2.3（2.3）
+- `src-tauri/src/commands/mod.rs` — 加 `#[cfg(feature = "tauri-runtime")] pub mod remote_images;`（2.4）
+- `src-tauri/src/lib.rs` — invoke_handler 加 `crate::commands::remote_images::remote_image_base`（2.4）
+- `src/components/message/{generated-images-block,user-image-attachments,compact/user-bubble}.tsx` — 内联图 `imageSrc(image, "thumb")`；生成图卡片宽高用 `blob.w/h`（2.5）
+- `src-tauri/src/commands/turn_window.rs` — `TurnWindowReq` 加 `TailBudget` 变体；加 `WindowBudget`/`with_budget`/`sent_turn_bytes`/`budgeted_start`/`resolve_budgeted_page_bounds` 和测试 — 上游改窗口逻辑时保留（2.6）
+- `src-tauri/src/commands/conversations.rs` — `get_folder_conversation_turns_core` 改成转调新的 `get_folder_conversation_turns_budget_core`（2.6）
+- `src-tauri/src/web/handlers/conversations.rs` — 两个 Params 加 `window_max_bytes`/`window_max_user_turns`，详情用 `with_budget`，翻页用 `_budget_core`（2.6）
+- `src/lib/api.ts` — `WINDOW_BUDGET`、`fetchesOverNetwork`；`getFolderConversationTurns` 加 `options.budget`（2.6）
+- `src/stores/conversation-runtime-store.ts` — `requestOlderPage` 加 `options.budget`，`loadOlderTurns` 传 true（2.6）
+- `src-tauri/src/acp/session_state.rs` — `ToolCallUpdate` 分支取 `raw_output_append`，追加走 `append_tool_call_output`；`upsert_tool_call` 的新建改用 `new_tool_call_state`；加 `looks_structured`/`MAX_LIVE_TOOL_OUTPUT_TAIL_CHARS` 和两个测试 — 上游改这个分支时保留追加逻辑（2.0）
+- `src-tauri/src/commands/remote_proxy.rs` — 加 `WS_V2_PING_INTERVAL/SILENCE_LIMIT`、`WS_FIRST_RETRY_*`、`WS_EVENT_PROTOCOLS_OFFERED`；`connect_with_subprotocol_auth` 返回 `(socket, Option<String>)`（两个测试跟着改）；读循环 ping/静默按 codec、二进制走 `FrameJoiner`、文本/二进制都进 `deliver_frame`；`backoff_sleep(…, quick)`；加 v2 测试 — 上游改这个读循环时保留 codec 分支和 `deliver_frame`（1.8）
+- `src/contexts/acp-connections-context.test.tsx` — 流式 describe 末尾加「合并信封只应用一次」用例（1.5）
+- `src-tauri/src/web/handlers/mod.rs` + `router.rs` — `pub mod session_flags;`、`/acp_get_session_flags` 路由（2.7a）；`/get_blob_text` 路由（2.7b）
+- `src/lib/api.ts`、`src/hooks/use-goal-actions.ts`、`use-session-feedback.ts`（+测试）— `acpGetSessionFlags` 代替两处 `acpGetSessionSnapshot`（2.7a）
+- `src-tauri/src/web/ws_attach.rs` — `ClientMsg::Attach` 加 `wire`；`ServerMsg::Raw(String)`（serde skip）；`spawn_forwarder` 多 `slim` 参数，初始帧和单条事件过 `slim_frame`（2.7b/2.9）
+- `src-tauri/src/web/ws.rs` — 把 `wire == Some(2)` 传给 `spawn_forwarder`；`serialize_server_msg` 按值取、`Raw` 原样发（2.7b）
+- `src-tauri/src/web/handlers/acp.rs` — `AcpGetSessionSnapshotParams` 加 `wire`，返回改成 `body_caps::respond_snapshot`（2.7b）
+- `src-tauri/src/web/handlers/conversations.rs` — 两个 Params 加 `tool_bodies`，传给 `WindowBudget::from_request` 和 `image_refs::respond`（2.8）
+- `src-tauri/src/commands/turn_window.rs` — `WindowBudget.tool_bodies`、`shortened_tool_bytes`，`sent_turn_bytes` 三个参数（2.8）
+- `src-tauri/src/web/mod.rs` — `pub mod body_caps;`（2.7b）
+- `src/lib/types.ts` — `ToolBodyRef`；`tool_use`/`tool_result` 块、`ToolCallState`、`tool_call(_update)` 事件加 `body_refs?`（2.7b–2.9）
+- `src/contexts/acp-connections-context.tsx` — `ToolCallInfo.body_refs`；`TOOL_CALL`/`TOOL_CALL_UPDATE`/批量动作和待刷队列带 `body_refs`；reducer 用 `mergeToolCallBodyRefs`/`setBodyRefs`/`bodyRefsField`（2.7b/2.9）
+- `src/lib/snapshot-denormalize.ts` — `toolStateToInfo` 带上 `body_refs`（2.7b）
+- `src/stores/conversation-runtime-store.ts` — 实时工具块带 `body_refs`（input → `tool_use`，output/content → `tool_result`，agent 不带）（2.7b）
+- `src/lib/adapters/ai-elements-adapter.ts` — `AdaptedToolCallPart.bodyRefs`、`ToolPartBodyRefs`、`toolPartBodyRefs`，四处工具 part 带上（2.7b）
+- `src/lib/activity/describe-tool-call.ts` — read/search 指标加 `shortenedLines`（2.7b）
+- `src/components/message/activity/{use-live-step.ts,activity-row.tsx,activity-timeline.tsx,rows/command-rows.tsx,rows/explore-rows.tsx}` — 完整内容替换、`ToolBodyNotice`、`ToolStepView` 拆出 `ToolStepRow`、两个行组件外包 `ToolBodyScope`、命令行数加 `extraLines`（2.7b）
+- `src/lib/export-conversation.ts` — 导出前 `exportData`（图片内联 + 完整工具内容）（2.7b）
+- `src/lib/transport/{web-event-stream,web-transport,remote-desktop-transport}.ts` — host 的 `attachOptions` → attach 帧带 `wire: 2`（2.7b）
+- `src/i18n/messages/*.json` — `Folder.chat.activity.shortened`（2.7b）
+- `src-tauri/src/commands/mod.rs` — `pub mod detail_cache;`（2.10）
+- `src/components/message/compact/timeline-minimap.tsx`（fork 文件）、`message-list-view.tsx` — 小地图 prop 改 `turnsOffset`/`prefixHash`，删 `minimapRefreshKey`（3.1）
+- `src/contexts/acp-connections-context.tsx` — `connect()` 预检前的快路径 + `getFreshAcpAgent`；`src/hooks/use-acp-agents.ts` 加 `getFreshAcpAgent`（3.2）
+- `src/contexts/acp-connections-context.tsx` — `MAX_PARKED_CONNECTIONS`/`PARKED_VIEWER_TTL_MS`、`parkedAtRef`/`parkedSinkCleanupsRef`、`unparkConnection`/`enforceParkedBudget`/`parkConnection` + 定时器，`connect()` 开头取回，`AcpActionsValue.parkConnection`，`disconnectIfIdle` 注释（3.4）
+- `src/hooks/use-connection-lifecycle.ts` — 删 `shouldDisconnectOnUnmount`；新选项 `runtimeConversationId`；卸载改成 `releaseActiveKey` + `parkConnection`（3.4）— 上游改卸载逻辑时以停放为准
+- `src/components/conversations/conversation-detail-panel.tsx` — 认领时按 `claimRuntimeSession` 结果后台重取；卸载改 `parkRuntimeSession`（不再取消 metadata sync、不再 pendingCleanup）；删预览替换断开；`PARKED_SESSION_STALE_MS`（3.3/3.4）
+- `src/stores/conversation-runtime-store.ts` — `parkRuntimeSession`/`ReclaimedSession`/停放 map，`claimRuntimeSession` 返回值，reset 清停放（3.3）
+- 测试：`use-connection-lifecycle.test.ts` → `src/lib/connection-teardown.test.ts`；6 个生命周期测试 mock 加 `parkConnection`；`group-shell-reconciliation.test.tsx` 源码断言改成 `parkRuntimeSession`；注释：`use-connection.ts`、`notification-session.ts`、`connection-teardown.ts`、`canvas-view.tsx`（3.4）
+- `src-tauri/src/commands/conversations.rs` — `get_folder_conversation_core` 里 `parser.get_conversation(&eid)` 换成 `detail_cache::get_conversation(at, &agent_env, &*parser, &eid)`（2.10）
+- `src-tauri/src/acp/manager.rs` — `ConnectionManager` 加字段 `ui_connections`（结构体 + `new`/`clone_ref`/`with_spawn_handshake_timeout` 三处初始化）；`teardown_blocker` 改 `pub(crate)`（3.5）— 上游加字段/改构造时把这一行带上
+- `src-tauri/src/acp/mod.rs` — `pub mod idle_cap;`（3.5）
+- `src-tauri/src/acp/idle_sweep.rs` — `idle_sweep_task` 循环里 `sweep_idle` 之后调 `manager.enforce_configured_idle_cap()`（3.5）
+- `src-tauri/src/web/handlers/acp.rs` — `acp_connect` 成功后 `manager.mark_ui_session(&connection_id)`（3.5）
+- `src-tauri/src/commands/acp.rs` — Tauri `acp_connect` 改成先拿 id、`mark_ui_session`、再返回（3.5）
+- `src-tauri/src/web/handlers/mod.rs` + `router.rs` — `pub mod open_session;`、`/acp_open_session` 路由（3.6）
+- `src/lib/api.ts` — `OpenSessionResult`、`openSessionAvailable`、`acpOpenSession`（501 记住退回）、`__resetOpenSessionSupportForTests`（3.7）
+- `src/contexts/acp-connections-context.tsx` — `connect()` 在旧发现块前先试 `acpOpenSession`（found 走原发现逻辑、spawned/reused 当 acpConnect 结果）；旧发现块只在 `!opened` 时跑；`acpConnect` 包进 `connectionId == null` 分支（3.7）— 上游改 connect 的发现/spawn 段时两条路径都要跟着改
+- 测试：`acp-connections-context.test.tsx` mock 加 `openSessionAvailable`/`acpOpenSession`（默认关）+ 5 个用例；`workspace-context.test.tsx` mock 加同名两项（3.7）
+- `src-tauri/src/acp/manager.rs` — 新 `spawn_agent_returning_early`；`spawn_agent_seeded` 末尾加参数 `early_return: bool`（两个原调用方传 false）；等 SessionStarted 那段前面加 early 分支（后台任务持锁等待）（3.9）— 上游改 `spawn_agent_seeded` 签名/等待段时保留
+- `src-tauri/src/bin/codeg_fake_acp.rs`（fork 文件）`FAKE_ACP_LOAD_MS`；`tests/fake_agent_turn.rs`（fork 文件）第 4 节（3.9）
+- `src-tauri/src/web/handlers/conversations.rs` — `GetFolderConversationParams.minimap`；`get_folder_conversation` 的详情 future 交给 `transcript_view::with_minimap`（3.10）
+- `src/hooks/use-follow-up-queue.ts`、`use-follow-up-panel.tsx` — 初次加载先看 `lib/follow-up/cache`，取用 `loadFollowUpQueue/Steers`（3.10）
+- `src/lib/api.ts` — `getFolderConversation` 带 `minimap` 并把返回的列表存进 `minimap-cache`（3.10）
+- `src/components/conversations/sidebar-conversation-card.tsx` — 行按钮加 pointerenter/leave/down 预取（3.11）
+- `src/stores/conversation-runtime-store.ts` — `prefetchedSessions`/`prefetchRuntimeSession`/`adoptPrefetchedSession`，`claimRuntimeSession` 先 adopt，reset 清（3.11）
+- `src/hooks/use-conversation-detail.ts` — 挂载时 `adoptPrefetchedSession`（3.11）
+- 测试：`sidebar-conversation-card.test.tsx` 加 store/api 部分 mock + 3 个用例；`runtime-session-parking.test.ts` 加 4 个（3.11）
+- `src/app/layout.tsx` — `<head>` 第一个子元素 `BOOT_INIT_SCRIPT`；外层 `NextIntlClientProvider messages={null}`，删 `getMessagesForLocale`/`initialMessages`（4.2/4.4）— 上游改根布局时保留：别把 messages 再传回去
+- `src/components/i18n-provider.tsx` — `readCachedLanguageSettings` + 模块加载预取文案；初始设置用缓存/默认；`cacheKnown`、`booted` 锁存（4.3）
+- `src-tauri/src/web/router.rs` — 静态文件路由多包一层 `static_cache::serve`（4.1）；`src-tauri/src/web/mod.rs` 加 `pub mod static_cache;`
+- `src-tauri/tests/api_integration.rs` — `static_files_revalidate_except_fingerprinted_assets`：块期望 immutable、缺失块期望 404 no-store，末尾加 ETag/304/改了内容重发（4.1）— 上游改这个测试时以 fork 期望为准
+- `src-tauri/src/web/router.rs` — `build_router_with_srn` 开头建 `batch_target`，api 里加 `/batch` 路由（带 Extension），末尾 `let app = …; batch_target.set(app.clone()); app`（4.5）— 上游改路由末尾的链时保留这个包装；`web/handlers/mod.rs` 加 `pub mod batch;`
+- `src/lib/transport/web-transport.ts` — `call()` 先看 `batcher.accepts`，原逻辑挪到 `callDirect`；新 `sendBatch`（4.5）— 上游改 call 时改 `callDirect`
+- `src/lib/transport/web-transport.ts` — `call()` 开头先 `takePrimedCall`（无 options 时）；`__ready__` 分支第一行 `dropPrimedCalls()`（4.7）— 上游改 `call`/就绪处理时保留这两处
+- `src/lib/transport/types.ts` — `CallOptions` 加 `idempotencyKey`、`retry`（5.1）
+- `src/lib/transport/web-transport.ts` — `callDirect` 改成重试循环、原请求逻辑挪到 `callOnce`（带幂等键头）；`RETRY_DELAYS_MS`、`IDEMPOTENCY_KEY_HEADER`、`isRetryableFailure`（5.1）— 上游改请求逻辑时改 `callOnce`
+- `src/lib/api.ts` — `acpRespondPermission`、`updateConversationStatus/Title/Pinned`、`deleteConversation` 末尾加 `options?: CallOptions`；`import type { CallOptions }`（5.x）
+- `src/stores/app-workspace-store.ts` — `refreshConversations`/`applyConversationUpsert` 套 `overlayConversation(s)`；新 `restoreConversation`；`removeFolderFromWorkspace` 先移走、失败放回（5.2/5.7/5.8）
+- `src/components/conversations/sidebar-conversation-list.tsx` — 改名/删除/状态/置顶走 `conversation-actions`，颜色/别名/默认智能体走 `folder-actions`；删掉 `refreshConversations`/`updateConversationLocal`/`refreshFolder` 选择器和对应 api 导入（5.7/5.8）— 上游改这些 handler 时以 fork 为准，别把整表重拉加回来
+- `src/components/conversations/sidebar-conversation-card.tsx` — `handleDeleteConfirm` 点击时 `takeChosenDelegationWorktree`、先关对话框、删除成功后再删 worktree（5.7）
+- `src/components/conversations/conversation-detail-header.tsx` — 改名/状态/置顶/删除走 `conversation-actions`，`tSidebar`；删 `refreshConversations`/`updateConversationLocal`（5.7）；测试 `conversation-detail-header.test.tsx` 断言加 `expect.anything()`、store mock 加 `applyConversationRemove`/`restoreConversation`
+- `src/components/conversations/conversation-detail-panel.tsx` — 新建/分叉后不再 `refreshConversations()`（删 4 处 + 选择器 + 依赖）（5.6）
+- `src/components/canvas/canvas-conversation-surface.tsx` — 新建后不再 `refreshConversations()`（5.6）
+- `src/contexts/acp-connections-context.tsx` — 导入 `toast`/`toErrorMessage`；新动作 `BLOCKING_PROMPT_RESTORED` + reducer；`failedAnswer`；三个回答先清卡片；`setConfigOption` 失败回滚 + `latestConfigPickRef`（5.3/5.9）；测试文件末尾追加两个 `(fork)` describe
+- `src/components/chat/message-input.tsx` — `onCancel` 可返回 `Promise<boolean>`；`stopRequested`/`requestStop`；停止按钮转圈（5.4）；测试文件末尾追加 `(fork)` describe
+- `src/hooks/use-connection-lifecycle.ts` — `handleCancel` 返回 `Promise<boolean>`（5.4）
+- i18n 10 个文件 — `Folder.sidebar.toasts.{renameConversationFailed,deleteConversationFailed,pinConversationFailed,conversationStatusFailed}`、`Folder.chat.acpConnections.answerSendFailed`、`Folder.chat.messageInput.stopping`（5.x）
+- `src-tauri/src/web/router.rs` — 受保护 api 路由 `.fallback(api_not_found)` 之后、`require_auth` 之前加 `from_fn_with_state(IdempotencyCache::new_shared(), idempotency::middleware)`（5.1）— 上游改这串 layer 时保持「在 auth 里面一层」
+- `src-tauri/src/web/mod.rs` — `pub mod idempotency;`（5.1）
+- `src-tauri/src/acp/manager.rs` — 新 `cancel_turn`（在 `cancel` 前面）（5.4）
+- `src-tauri/src/web/handlers/acp.rs` — `acp_cancel` 改用新 `AcpCancelParams`（加 `turn_message_id`）、调 `cancel_turn`；`AcpPromptParams` 加 `mode_id`，`acp_prompt` 开头先 `set_mode`（5.4/5.5）
+- `src-tauri/src/commands/acp.rs` — Tauri `acp_cancel` 加 `turn_message_id`、调 `cancel_turn`（5.4）
+- `src/lib/api.ts` — `onceOnly` 辅助；`acpPrompt` 加 `modeId` 参数和键/重试；`createConversation`/`createChatConversation` 带键/重试；`acpCancel` 加 `turnMessageId`（5.1/5.4/5.5）
+- `src/contexts/acp-connections-context.tsx` — `rememberModePick`（从 `setMode` 抽出）；`sendPrompt` opts 加 `modeId`；`runningTurnRef` + 事件 switch `case "user_message"`；`cancel` 传回合 id（5.4/5.5）
+- `src/hooks/use-connection.ts` — 两处 `sendPrompt` opts 类型加 `modeId`（5.5）
+- `src/hooks/use-connection-lifecycle.ts` — `handleSend` 浏览器里模式随提示一起发；`import { isDesktop }`（5.5）
+- `src/components/chat/message-input.tsx` — `handleSteerClick` 点击即 `resetComposer()`，失败 `restoreDraft`（`hydrateFromBlocks`）（5.10）
+- `src/contexts/acp-connections-context.tsx` — 匀速吐字（6.1）：`STREAM_QUEUE_CAP` 后加 `appendStreamingAction`（替换 flush 里内联的合并循环）和 `RevealHold`；refs 加 `revealHoldsRef`/`revealTimerRef`/`streamingRevealRef`；`discardStreamingKey`/`discardStreamingQueues` 清 hold 和定时器；**原 `flushStreamingQueue` 声明改名 `dispatchStreamingQueue`**，新 `flushStreamingQueue` = 倒空 hold + dispatch；原 `enqueueStreamingAction` 改名 `queueStreamingAction`（上限和窗口定时器调 dispatch），新 `releaseHeldText`/`tickStreamingReveal`/`enqueueStreamingAction`（缓冲包装）— 上游改 flush/enqueue 时：屏障一律调 `flushStreamingQueue`（含 hold），窗口定时器和上限只调 `dispatchStreamingQueue`，不然缓冲会被每个窗口倒空（测试会抓到）；测试文件末尾 `steady reveal over a bursty link (fork)`
+- `src/components/settings/appearance-settings.tsx` — 导入 + 聊天动画后 `<StreamingRevealSettingsSection />`（6.1）
+- `src/test-setup.ts` — 第二个 `beforeEach` 调 `__resetRevealPacerForTests()`（6.1）
+- `src/i18n/messages/*.json` — `AppearanceSettings.streamingReveal.{sectionTitle,sectionDescription}`（6.1）
+- `src-tauri/src/bin/codeg_server.rs` — skills 启动任务后 `codeg_lib::web::warm_up::spawn(state.clone())`（4.6）；`web/mod.rs` 加 `pub mod warm_up;`
+- `src/components/conversations/conversation-detail-panel.tsx` — `canAutoConnect` 加「草稿 + agentTypeProvisional + draftAgentCorrectionPending()」不连（4.6）；`src/stores/tab-store.ts` 加 `draftAgentCorrectionPending`；`tab-first-show-auto-connect.test.tsx` 加源码断言
+
+- `src-tauri/src/web/ws_attach.rs` — `handle_attach`：cursor == head 回空 Replay（原来回 Snapshot），cursor > head 仍回 Snapshot — 上游改这段判断时保留「== head → 空 replay」（1.1）
+- `src-tauri/src/acp/internal_bus.rs` — `EventBusMetrics`/`EventBusMetricsSnapshot` 加 `replay_empty_count` — 上游加/改指标字段时一起合（1.1）
+- `src-tauri/tests/ws_attach.rs` — 加 `ws_reattach_at_head_receives_empty_replay`（1.1）
+
+- `src-tauri/Cargo.toml` — 加 feature `fake-agent-bin`（并入 `test-utils`）和 `[[bin]] codeg-fake-acp` — 上游改 features/test-utils 列表或 bin 列表时保留这两处（0.2）
