@@ -63,6 +63,9 @@ pub fn build_router_with_srn(
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
+    // Fork: what `/api/batch` dispatches its calls through — this router,
+    // set once it is built below.
+    let batch_target: handlers::batch::BatchTarget = Default::default();
 
     let web_auth = auth::WebAuth {
         token: token.clone(),
@@ -1312,6 +1315,11 @@ pub fn build_router_with_srn(
             "/acp_open_session",
             post(handlers::open_session::acp_open_session),
         )
+        // Fork: several quick calls in one request.
+        .route(
+            "/batch",
+            post(handlers::batch::batch).layer(Extension(batch_target.clone())),
+        )
         .route(
             "/acp_clear_binary_cache",
             post(handlers::acp::acp_clear_binary_cache),
@@ -2474,7 +2482,7 @@ pub fn build_router_with_srn(
     // it, and matched ahead of the static pages and the API's catch-all.
     let srn_routes = crate::srn::web::routes::router(srn_web, web_auth_for_srn);
 
-    Router::new()
+    let app = Router::new()
         .nest("/api", api)
         .merge(ws_route)
         .fallback_service(static_files)
@@ -2496,7 +2504,9 @@ pub fn build_router_with_srn(
         // straight through. See `web::browser_bridge`.
         .layer(middleware::from_fn(
             crate::web::browser_bridge::route_by_host,
-        ))
+        ));
+    let _ = batch_target.set(app.clone());
+    app
 }
 
 /// Only `/_next/static/` is fingerprinted: a new build puts its scripts and

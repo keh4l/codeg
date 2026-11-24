@@ -10,6 +10,7 @@ import type {
 import { buildCodegWebSocketProtocols, CODEG_WS_PROTOCOL_V2 } from "./ws-auth"
 import { supportsCompressedFrames, WsFrameDecoder } from "./ws-frame-decoder"
 import { parseJsonOrThrow } from "../json-parse-error"
+import { CallBatcher } from "./call-batcher"
 import {
   codegAuthHeaders,
   getCodegToken,
@@ -168,6 +169,17 @@ export class WebTransport implements Transport {
     (error) => this.handleDecodeError(error)
   )
 
+  // Fork: quick reads made together go out as one request
+  // (`call-batcher.ts`, `POST /api/batch`).
+  private readonly batcher = new CallBatcher({
+    sendBatch: (calls) => this.sendBatch(calls),
+    callDirect: (command, args) => this.callDirect(command, args),
+    onUnauthorized: (challenge) =>
+      this.markUnauthorized(unauthorizedSource(challenge)),
+    isHidden: () =>
+      typeof document !== "undefined" && document.visibilityState === "hidden",
+  })
+
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl
     this.resetReady()
@@ -208,6 +220,47 @@ export class WebTransport implements Transport {
   }
 
   async call<T>(
+    command: string,
+    args?: Record<string, unknown>,
+    options?: CallOptions
+  ): Promise<T> {
+    // Fork: a quick read with no options of its own may share a request.
+    if (!options && this.batcher.accepts(command)) {
+      return (await this.batcher.call(command, args)) as T
+    }
+    return this.callDirect<T>(command, args, options)
+  }
+
+  /** Fork: `POST /api/batch`, with a call's headers and time limit. */
+  private async sendBatch(
+    calls: { cmd: string; args: Record<string, unknown> }[]
+  ): Promise<Response> {
+    const controller = new AbortController()
+    const timeout = window.setTimeout(
+      () => controller.abort(),
+      WEB_CALL_TIMEOUT_MS
+    )
+    try {
+      return await fetch(`${this.baseUrl}/api/batch`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...codegAuthHeaders(getToken()),
+        },
+        body: JSON.stringify({ calls }),
+        signal: controller.signal,
+      })
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        throw new Error("Request timed out")
+      }
+      throw err
+    } finally {
+      window.clearTimeout(timeout)
+    }
+  }
+
+  private async callDirect<T>(
     command: string,
     args?: Record<string, unknown>,
     options?: CallOptions
