@@ -24,8 +24,12 @@
 
 /** How often held text is released. */
 export const PACER_TICK_MS = 33
-/** Arrivals this close together are one network delivery. */
-const GROUP_MS = 12
+/** Arrivals this close together are one network delivery: what a stalled
+ *  link lets through at once comes as several WebSocket messages, a render
+ *  or two apart. Under the server's 100 ms merge window. */
+const GROUP_MS = 50
+/** …as long as the delivery has not gone on longer than this. */
+const MAX_GROUP_SPAN_MS = 150
 /** The arrival rate is measured over this long. */
 const RATE_WINDOW_MS = 4_000
 /** A learned stall fades with this half-life. */
@@ -64,6 +68,9 @@ export class RevealPacer {
   private lastDelivery: number | null = null
   private recent: Array<[number, number]> = []
   private carry = 0
+  /** The gap before the delivery now arriving, and what should have arrived
+   *  during it — until the delivery has brought enough to call it a stall. */
+  private pendingGap: { gap: number; expected: number } | null = null
 
   private rate(now: number): number {
     while (this.recent.length && this.recent[0]![0] < now - RATE_WINDOW_MS) {
@@ -81,20 +88,28 @@ export class RevealPacer {
     const last = this.lastDelivery
     this.lastDelivery = now
     const recentLast = this.recent[this.recent.length - 1]
-    if (last !== null && now - last <= GROUP_MS && recentLast) {
+    if (
+      last !== null &&
+      recentLast &&
+      now - last <= GROUP_MS &&
+      now - recentLast[0] <= MAX_GROUP_SPAN_MS
+    ) {
       recentLast[1] += chars
-      return
+    } else {
+      // What should have arrived during the gap at the rate so far: a
+      // delivery that brings about that much was held up on the way.
+      const gap = last === null ? 0 : now - last
+      this.pendingGap =
+        last !== null && gap < MAX_STALL_GAP_MS
+          ? { gap, expected: this.rate(now) * gap }
+          : null
+      this.recent.push([now, chars])
     }
-    if (last !== null) {
-      const gap = now - last
-      // What should have arrived meanwhile at the rate so far: a delivery
-      // that brings about that much was held up on the way.
-      const expected = this.rate(now) * gap
-      if (gap < MAX_STALL_GAP_MS && chars >= expected * 0.5) {
-        linkStall = Math.max(decayedStall(now), gap)
-      }
+    const delivered = this.recent[this.recent.length - 1]![1]
+    if (this.pendingGap && delivered >= this.pendingGap.expected * 0.5) {
+      linkStall = Math.max(decayedStall(now), this.pendingGap.gap)
+      this.pendingGap = null
     }
-    this.recent.push([now, chars])
   }
 
   /** How many of the `backlog` held characters to show now, `dt` ms after

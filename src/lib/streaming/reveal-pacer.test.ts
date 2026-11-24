@@ -87,6 +87,16 @@ describe("RevealPacer", () => {
     expect(revealLagMs(7_800)).toBeGreaterThan(0)
   })
 
+  it("counts a stall whose text comes as several messages at once", () => {
+    const pacer = new RevealPacer()
+    // 250 chars/s in a message every 100 ms (the server's merge window).
+    for (let t = 0; t <= 4_000; t += 100) pacer.arrived(t, 25)
+    // A lost packet: nothing for 0.7 s, then the seven messages it held up,
+    // a few ms apart.
+    for (let i = 0; i < 7; i++) pacer.arrived(4_700 + i * 3, 25)
+    expect(revealLagMs(4_720)).toBeGreaterThan(700)
+  })
+
   it("forgets a stall as the link stays smooth", () => {
     const pacer = new RevealPacer()
     for (let t = 0; t < 4_000; t += 50) pacer.arrived(t, 3)
