@@ -11059,3 +11059,33 @@ describe("AcpConnectionsProvider picking a config option (fork)", () => {
     expect(h.toastError).not.toHaveBeenCalled()
   })
 })
+
+describe("AcpConnectionsProvider Stop names its turn (fork)", () => {
+  it("sends the running turn's message id with the stop", async () => {
+    h.acpFindConnectionForConversation.mockResolvedValue(null)
+    await mountProvider()
+    await act(async () => {
+      await h.actions!.connect(TAB, "claude_code", "/tmp/x", "sess-1", 42)
+    })
+    const handlers = latestAttachHandlers()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "status_changed",
+      status: "prompting",
+    })
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "user_message",
+      message_id: "msg-7",
+      blocks: [{ type: "text", text: "hi" }],
+    } as unknown as EventEnvelope)
+
+    await act(async () => {
+      await h.actions!.cancel(TAB)
+    })
+
+    expect(h.acpCancel).toHaveBeenCalledWith("spawned-conn", "msg-7")
+  })
+})

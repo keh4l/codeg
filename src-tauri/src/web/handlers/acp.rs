@@ -160,12 +160,24 @@ pub struct AcpPromptParams {
     pub conversation_id: Option<i32>,
     #[serde(default)]
     pub client_message_id: Option<String>,
+    /// keh4l build: switch to this mode first. Queued ahead of the prompt on
+    /// the connection's command channel — what `acp_set_mode` and then
+    /// `acp_prompt` did, one round trip sooner.
+    #[serde(default)]
+    pub mode_id: Option<String>,
 }
 
 pub async fn acp_prompt(
     Extension(state): Extension<Arc<AppState>>,
     Json(params): Json<AcpPromptParams>,
 ) -> Result<Json<()>, AppCommandError> {
+    if let Some(mode_id) = params.mode_id {
+        state
+            .connection_manager
+            .set_mode(&params.connection_id, mode_id)
+            .await
+            .map_err(|e| AppCommandError::task_execution_failed(e.to_string()))?;
+    }
     state
         .connection_manager
         .send_prompt_linked_with_message_id(
@@ -489,13 +501,27 @@ pub async fn acp_describe_agent_options(
     Ok(Json(snapshot))
 }
 
+/// keh4l build: `turnMessageId` (optional) names the turn the Stop was for
+/// (`ConnectionManager::cancel_turn`).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcpCancelParams {
+    pub connection_id: String,
+    #[serde(default)]
+    pub turn_message_id: Option<String>,
+}
+
 pub async fn acp_cancel(
     Extension(state): Extension<Arc<AppState>>,
-    Json(params): Json<AcpConnectionIdParams>,
+    Json(params): Json<AcpCancelParams>,
 ) -> Result<Json<()>, AppCommandError> {
     let manager = &state.connection_manager;
     manager
-        .cancel(&state.db.conn, &params.connection_id)
+        .cancel_turn(
+            &state.db.conn,
+            &params.connection_id,
+            params.turn_message_id.as_deref(),
+        )
         .await
         .map_err(|e| AppCommandError::task_execution_failed(e.to_string()))?;
     Ok(Json(()))

@@ -1679,6 +1679,18 @@ function sameCommands(
  * strict about the two values a toggle emits: guessing "off" for anything else
  * would be a silent lie about whether the agent may run tools unasked.
  */
+/** Persist the user's mode selection to localStorage (`setMode`, and a mode
+ *  sent with a prompt — keh4l build). */
+function rememberModePick(conn: ConnectionState, modeId: string): void {
+  const modes = conn.modes ?? selectorsCache.get(conn.agentType)?.modes ?? null
+  if (modes) {
+    saveModePreference(conn.agentType, {
+      ...modes,
+      current_mode_id: modeId,
+    })
+  }
+}
+
 function nextConfigOptionKind(
   kind: SessionConfigKindInfo,
   valueId: string
@@ -3720,6 +3732,8 @@ export interface AcpActionsValue {
       folderId?: number | null
       conversationId?: number | null
       clientMessageId?: string | null
+      /** keh4l build: switch to this mode first, in the same request. */
+      modeId?: string | null
     }
   ): Promise<void>
   setMode(contextKey: string, modeId: string): Promise<void>
@@ -4368,6 +4382,9 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
   // keh4l build: the latest pick of each config option per connection
   // (`setConfigOption`), so a failed older pick does not undo a newer one.
   const latestConfigPickRef = useRef(new Map<string, symbol>())
+  // keh4l build: the user message id of the latest turn each connection
+  // started (`user_message`), so a Stop names the turn it was pressed for.
+  const runningTurnRef = useRef(new Map<string, string>())
   // Streaming coalescing queue + its window, PER CONNECTION (see
   // `flushStreamingQueue`). Entries are created on the first delta after a
   // flush and removed by the flush that drains them, so both maps hold only
@@ -5517,6 +5534,10 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       // cheap no-op on the hot path.
       if (!quiet) playEventSound(e)
       switch (e.type) {
+        case "user_message":
+          // keh4l build: the turn a Stop pressed now is for (`cancel`).
+          runningTurnRef.current.set(e.connection_id, e.message_id)
+          break
         case "status_changed":
           flushStreamingQueue(contextKey)
           if (e.status === "prompting") {
@@ -8841,18 +8862,22 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
         folderId?: number | null
         conversationId?: number | null
         clientMessageId?: string | null
+        modeId?: string | null
       }
     ) => {
       const conn = storeRef.current.connections.get(contextKey)
       if (!conn) return
       lastActivityRef.current.set(contextKey, Date.now())
+      const modeId = opts?.modeId ?? null
+      if (modeId) rememberModePick(conn, modeId)
       try {
         await acpPrompt(
           conn.connectionId,
           blocks,
           opts?.folderId ?? null,
           opts?.conversationId ?? null,
-          opts?.clientMessageId ?? null
+          opts?.clientMessageId ?? null,
+          modeId
         )
       } catch (e) {
         // Same reasoning as `cancel`: the backend disowning this id proves the
@@ -8871,15 +8896,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
   const setMode = useCallback(async (contextKey: string, modeId: string) => {
     const conn = storeRef.current.connections.get(contextKey)
     if (!conn) return
-    // Persist user's mode selection to localStorage
-    const modes =
-      conn.modes ?? selectorsCache.get(conn.agentType)?.modes ?? null
-    if (modes) {
-      saveModePreference(conn.agentType, {
-        ...modes,
-        current_mode_id: modeId,
-      })
-    }
+    rememberModePick(conn, modeId)
     lastActivityRef.current.set(contextKey, Date.now())
     await acpSetMode(conn.connectionId, modeId)
   }, [])
@@ -8954,7 +8971,14 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       const conn = storeRef.current.connections.get(contextKey)
       if (!conn) return
       try {
-        await acpCancel(conn.connectionId)
+        // keh4l build: for the turn on screen — not one the queue starts
+        // while this Stop is on its way.
+        await acpCancel(
+          conn.connectionId,
+          runningTurnRef.current.get(conn.connectionId) ??
+            conn.pendingUserMessage?.messageId ??
+            null
+        )
       } catch (e) {
         // Pressing Stop on a connection the backend no longer has is the
         // clearest evidence that this entry's terminal event went missing —

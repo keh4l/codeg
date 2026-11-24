@@ -2420,6 +2420,44 @@ impl ConnectionManager {
             .map_err(|_| AcpError::protocol("Async task stop reply channel closed".to_string()))?
     }
 
+    /// keh4l build: stop the turn `turn` names (its user message id), and
+    /// nothing when that turn has already ended and another has started on
+    /// this connection since — a Stop pressed as a turn finished, arriving a
+    /// round trip later, must not stop the next one (the follow-up queue
+    /// starts it at once). `None`, or a running turn whose message id is not
+    /// known, stops whatever runs. `Ok(false)`: nothing was stopped.
+    pub async fn cancel_turn(
+        &self,
+        db: &DatabaseConnection,
+        conn_id: &str,
+        turn: Option<&str>,
+    ) -> Result<bool, AcpError> {
+        if let Some(turn) = turn {
+            let state_arc = {
+                let connections = self.connections.lock().await;
+                connections
+                    .get(conn_id)
+                    .ok_or_else(|| AcpError::ConnectionNotFound(conn_id.into()))?
+                    .state
+                    .clone()
+            };
+            let running = state_arc
+                .read()
+                .await
+                .pending_user_message
+                .as_ref()
+                .map(|pending| pending.message_id.clone());
+            if running.is_some_and(|running| running != turn) {
+                tracing::debug!(
+                    connection_id = %conn_id,
+                    "[ACP] stop ignored: the turn it was for has ended"
+                );
+                return Ok(false);
+            }
+        }
+        self.cancel(db, conn_id).await.map(|()| true)
+    }
+
     pub async fn cancel(&self, db: &DatabaseConnection, conn_id: &str) -> Result<(), AcpError> {
         // keh4l build: a steer still waiting to restart this turn is not sent
         // (the user is told), and the queue learns about the stop.

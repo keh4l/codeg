@@ -12,6 +12,7 @@ import { ConversationMovedError } from "@/lib/conversation-moved"
 import { useAppWorkspaceStore } from "@/stores/app-workspace-store"
 import { type AgentType, type PromptDraft } from "@/lib/types"
 import { getAgentLabel } from "@/lib/custom-agents"
+import { isDesktop } from "@/lib/transport"
 
 interface UseConnectionLifecycleOptions {
   contextKey: string
@@ -550,6 +551,15 @@ export function useConnectionLifecycle({
       const onSendFailed = opts?.onSendFailed
       void (async () => {
         const currentModeId = modeIdRef.current
+        if (modeId && modeId !== currentModeId && !isDesktop()) {
+          // keh4l build: in the browser the mode change goes with the
+          // message, one request instead of two in a row (the server serving
+          // this page knows `modeId`; a desktop window may be on an older
+          // remote server, so it keeps the two calls).
+          modeIdRef.current = modeId
+          await sendPrompt(draft.blocks, { ...opts, modeId })
+          return
+        }
         if (modeId && modeId !== currentModeId) {
           await connSetMode(modeId)
           // Optimistically track selected mode to avoid duplicate set_mode

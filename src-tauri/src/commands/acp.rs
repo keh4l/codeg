@@ -12470,10 +12470,15 @@ pub async fn acp_describe_agent_options(
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
 pub async fn acp_cancel(
     connection_id: String,
+    // keh4l build: the turn the Stop was for (`cancel_turn`).
+    turn_message_id: Option<String>,
     db: State<'_, AppDatabase>,
     manager: State<'_, ConnectionManager>,
 ) -> Result<(), AcpError> {
-    manager.cancel(&db.conn, &connection_id).await
+    manager
+        .cancel_turn(&db.conn, &connection_id, turn_message_id.as_deref())
+        .await
+        .map(|_| ())
 }
 
 #[cfg(feature = "tauri-runtime")]
