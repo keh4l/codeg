@@ -92,7 +92,8 @@ export interface UseConnectionLifecycleReturn {
     }
   ) => void
   handleSetConfigOption: (configId: string, valueId: string) => void
-  handleCancel: () => void
+  /** keh4l build: resolves `false` when the stop could not be sent. */
+  handleCancel: () => Promise<boolean>
   handleRespondPermission: (requestId: string, optionId: string) => void
 }
 
@@ -611,11 +612,17 @@ export function useConnectionLifecycle({
     [connSetMode, sendPrompt, contextKey, touchActivity, t]
   )
 
-  const handleCancel = useCallback(() => {
-    connCancel().catch((e: unknown) =>
-      console.error("[ConnLifecycle] cancel:", e)
-    )
-  }, [connCancel])
+  const handleCancel = useCallback(
+    () =>
+      connCancel().then(
+        () => true,
+        (e: unknown) => {
+          console.error("[ConnLifecycle] cancel:", e)
+          return false
+        }
+      ),
+    [connCancel]
+  )
 
   const handleSetConfigOption = useCallback(
     (configId: string, valueId: string) => {

@@ -211,7 +211,9 @@ interface MessageInputProps {
    *  while a connection or session-init handshake is still completing so the
    *  user can type and hit Enter without waiting. */
   queueOnSubmit?: boolean
-  onCancel?: () => void
+  /** Stop the turn. keh4l build: may resolve `false` when the stop could
+   *  not be sent, which takes the button out of its "stopping" state. */
+  onCancel?: () => void | Promise<boolean>
   modes?: SessionModeInfo[]
   configOptions?: SessionConfigOptionInfo[]
   modeLoading?: boolean
@@ -412,6 +414,22 @@ export function MessageInput({
   // upload / attachment toasts — read as a single coherent group when
   // scanning the file. Same namespace, no extra runtime cost.
   const tAttach = useTranslations("Folder.chat.messageInput")
+  // keh4l build: Stop shows it was pressed at once — the turn only ends when
+  // the agent has stopped, a round trip or more later. Back to Stop when the
+  // turn ends, or when the stop could not be sent.
+  const [stopRequested, setStopRequested] = useState(false)
+  const [stopTurnSeen, setStopTurnSeen] = useState(isPrompting)
+  if (stopTurnSeen !== isPrompting) {
+    setStopTurnSeen(isPrompting)
+    if (!isPrompting) setStopRequested(false)
+  }
+  const requestStop = useCallback(() => {
+    if (!onCancel) return
+    setStopRequested(true)
+    void Promise.resolve(onCancel()).then((sent) => {
+      if (sent === false) setStopRequested(false)
+    })
+  }, [onCancel])
   // Skills read from disk feed the menu only for an agent that does not
   // advertise them itself: Codex under `$` (its native command set is very
   // small), Antigravity and OpenCode under `/` beside their commands (their
@@ -2193,13 +2211,19 @@ export function MessageInput({
       />
     ) : (
       <Button
-        onClick={onCancel}
+        onClick={requestStop}
+        disabled={stopRequested}
+        aria-busy={stopRequested || undefined}
         variant="destructive"
         size="icon"
         className="h-8 w-8"
-        title={t("cancel")}
+        title={stopRequested ? t("stopping") : t("cancel")}
       >
-        <Square className="size-4" />
+        {stopRequested ? (
+          <Loader2 className="size-4 animate-spin" />
+        ) : (
+          <Square className="size-4" />
+        )}
       </Button>
     )
   ) : (

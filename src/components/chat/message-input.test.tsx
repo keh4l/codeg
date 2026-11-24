@@ -3732,3 +3732,74 @@ describe("MessageInput live content for draft tidying", () => {
     await waitFor(() => expect(hasLiveComposerContent(draftKey)).toBe(false))
   })
 })
+
+describe("MessageInput stop button (fork)", () => {
+  afterEach(() => cleanup())
+  const cancelLabel = enMessages.Folder.chat.messageInput.cancel
+  const stoppingLabel = enMessages.Folder.chat.messageInput.stopping
+
+  it("shows the stop was pressed at once, until the turn ends", async () => {
+    const onCancel = vi.fn(() => new Promise<boolean>(() => {}))
+    const { container, rerender } = renderInput({
+      isPrompting: true,
+      onCancel,
+    })
+    const stop = await waitFor(() => {
+      const button = container.querySelector(
+        `button[title="${cancelLabel}"]`
+      ) as HTMLButtonElement | null
+      expect(button).not.toBeNull()
+      return button!
+    })
+    fireEvent.click(stop)
+    expect(onCancel).toHaveBeenCalledTimes(1)
+    const pending = container.querySelector(
+      `button[title="${stoppingLabel}"]`
+    ) as HTMLButtonElement | null
+    expect(pending?.disabled).toBe(true)
+    expect(pending?.getAttribute("aria-busy")).toBe("true")
+
+    // The turn ended, then a new one started: Stop is back.
+    rerender(
+      <NextIntlClientProvider locale="en" messages={enMessages}>
+        <MessageInput
+          onSend={vi.fn()}
+          promptCapabilities={CAPS}
+          isPrompting={false}
+          onCancel={onCancel}
+        />
+      </NextIntlClientProvider>
+    )
+    rerender(
+      <NextIntlClientProvider locale="en" messages={enMessages}>
+        <MessageInput
+          onSend={vi.fn()}
+          promptCapabilities={CAPS}
+          isPrompting
+          onCancel={onCancel}
+        />
+      </NextIntlClientProvider>
+    )
+    expect(
+      container.querySelector(`button[title="${cancelLabel}"]`)
+    ).not.toBeNull()
+  })
+
+  it("goes back to Stop when the stop could not be sent", async () => {
+    const onCancel = vi.fn(async () => false)
+    const { container } = renderInput({ isPrompting: true, onCancel })
+    const stop = await waitFor(() => {
+      const button = container.querySelector(
+        `button[title="${cancelLabel}"]`
+      ) as HTMLButtonElement | null
+      expect(button).not.toBeNull()
+      return button!
+    })
+    fireEvent.click(stop)
+    await waitFor(() =>
+      expect(
+        container.querySelector(`button[title="${cancelLabel}"]`)
+      ).not.toBeNull()
+    )
+  })
+})
