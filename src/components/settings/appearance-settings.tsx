@@ -56,6 +56,7 @@ import { WorkspaceBackgroundSection } from "./workspace-background-section"
 import { CustomStyleSection } from "./custom-style-section"
 import { ChatHtmlSettingsSection } from "./chat-html-settings"
 import { ChatViewSettingsSection } from "./chat-view-settings-section"
+import { StreamingRevealSettingsSection } from "./streaming-reveal-settings"
 
 /**
  * 屏幕可用宽度（CSS px），用作聊天宽度滑块上限的依据——主窗口铺满屏幕时聊天列
@@ -284,6 +285,9 @@ export function AppearanceSettings() {
               />
             }
           />
+
+          {/* ===== Smooth streaming text (keh4l) ===== */}
+          <StreamingRevealSettingsSection />
 
           <ChatHtmlSettingsSection />
 

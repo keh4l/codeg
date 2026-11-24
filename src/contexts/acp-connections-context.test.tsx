@@ -30,6 +30,7 @@ import { parsePermissionToolCall } from "@/lib/permission-request"
 import { subscribe } from "@/lib/platform"
 import { saveConfigPreference } from "@/lib/selector-prefs-storage"
 import { inferLiveToolName } from "@/lib/tool-call-normalization"
+import { PACER_TICK_MS } from "@/lib/streaming/reveal-pacer"
 import type { AttachHandlers } from "@/lib/transport/types"
 import {
   resetAppWorkspaceStore,
@@ -11087,5 +11088,127 @@ describe("AcpConnectionsProvider Stop names its turn (fork)", () => {
     })
 
     expect(h.acpCancel).toHaveBeenCalledWith("spawned-conn", "msg-7")
+  })
+})
+
+describe("steady reveal over a bursty link (fork)", () => {
+  async function mountStreamingOwner() {
+    h.acpFindConnectionForConversation.mockResolvedValue(null)
+    await mountProvider()
+    await act(async () => {
+      await h.actions!.connect(TAB, "claude_code", "/tmp/x", "sess-1", 42)
+    })
+    const handlers = latestAttachHandlers()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "status_changed",
+      status: "prompting",
+    })
+    return handlers
+  }
+
+  function liveText(): string {
+    const content = h.store!.getConnection(TAB)?.liveMessage?.content ?? []
+    return content
+      .map((block) => (block.type === "text" ? block.text : ""))
+      .join("")
+  }
+
+  /** 48 characters every 800 ms (a 60 char/s reply behind a link that
+   *  stalls), until the stall is learned. Returns what was sent. */
+  function burstsUntilLearned(handlers: AttachHandlers, seq: { n: number }) {
+    let sent = ""
+    for (let i = 0; i < 6; i++) {
+      const text = `${"word ".repeat(9)}${String(i).padStart(3, "0")}`
+      sent += text
+      act(() => {
+        vi.advanceTimersByTime(800)
+      })
+      emitAcpEvent(handlers, {
+        seq: seq.n++,
+        connection_id: "spawned-conn",
+        type: "content_delta",
+        text,
+      })
+    }
+    return sent
+  }
+
+  afterEach(() => {
+    localStorage.removeItem("codeg-streaming-reveal")
+  })
+
+  it("shows a burst a slice at a time, then all of it", async () => {
+    const handlers = await mountStreamingOwner()
+    vi.useFakeTimers()
+    try {
+      const seq = { n: 2 }
+      const sent = burstsUntilLearned(handlers, seq)
+      act(() => {
+        vi.advanceTimersByTime(100)
+      })
+      const early = liveText()
+      expect(sent.startsWith(early)).toBe(true)
+      expect(early.length).toBeLessThan(sent.length)
+      act(() => {
+        vi.advanceTimersByTime(300)
+      })
+      const later = liveText()
+      expect(later.startsWith(early)).toBe(true)
+      expect(later.length).toBeGreaterThan(early.length)
+      act(() => {
+        vi.advanceTimersByTime(3_000)
+      })
+      expect(liveText()).toBe(sent)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("lands everything held before a tool card", async () => {
+    const handlers = await mountStreamingOwner()
+    vi.useFakeTimers()
+    try {
+      const seq = { n: 2 }
+      const sent = burstsUntilLearned(handlers, seq)
+      act(() => {
+        vi.advanceTimersByTime(PACER_TICK_MS)
+      })
+      expect(liveText()).not.toBe(sent)
+      emitAcpEvent(handlers, {
+        seq: seq.n++,
+        connection_id: "spawned-conn",
+        type: "tool_call",
+        tool_call_id: "call_1",
+        title: "Read",
+        kind: "read",
+        status: "pending",
+        content: null,
+        raw_input: null,
+        raw_output: null,
+      })
+      expect(liveText()).toBe(sent)
+      const content = h.store!.getConnection(TAB)?.liveMessage?.content ?? []
+      expect(content[content.length - 1]?.type).toBe("tool_call")
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("shows text as it arrives when set to instant", async () => {
+    localStorage.setItem("codeg-streaming-reveal", "instant")
+    const handlers = await mountStreamingOwner()
+    vi.useFakeTimers()
+    try {
+      const seq = { n: 2 }
+      const sent = burstsUntilLearned(handlers, seq)
+      act(() => {
+        vi.advanceTimersByTime(STREAM_FLUSH_FRAME_MS)
+      })
+      expect(liveText()).toBe(sent)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

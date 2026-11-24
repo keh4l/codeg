@@ -281,6 +281,10 @@
       "liveSpeedDescription": "Affiche la vitesse de sortie (tok/s) sur la ligne de travail pendant la réponse.",
       "minimapTitle": "Minicarte chronologique",
       "minimapDescription": "Affiche une barre compacte d’aperçu et de navigation rapide sur le bord sur ordinateur."
+    },
+    "streamingReveal": {
+      "sectionTitle": "Texte en streaming fluide",
+      "sectionDescription": "Sur une connexion lente ou instable, les réponses arrivent par à-coups. Les afficher à un rythme régulier, avec un léger retard. Sans effet quand la connexion est fluide."
     }
   },
   "SystemSettings": {

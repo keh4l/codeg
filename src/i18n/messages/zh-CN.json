@@ -281,6 +281,10 @@
       "liveSpeedDescription": "智能体回复时在「正在工作」行显示实时速度（tok/s）。",
       "minimapTitle": "时间轴缩略图",
       "minimapDescription": "桌面端在对话边缘显示刻度缩略图，支持悬停预览和点击跳转。"
+    },
+    "streamingReveal": {
+      "sectionTitle": "平滑显示流式文字",
+      "sectionDescription": "网络慢或不稳时，回复会一阵一阵地到。开启后按匀速显示，比实际到达稍晚一点。网络顺畅时不起作用。"
     }
   },
   "SystemSettings": {

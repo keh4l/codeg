@@ -281,6 +281,10 @@
       "liveSpeedDescription": "Show live token speed (tok/s) on the working line while the agent replies.",
       "minimapTitle": "Timeline minimap",
       "minimapDescription": "Show a compact jump-and-preview rail along the edge of the conversation on desktop."
+    },
+    "streamingReveal": {
+      "sectionTitle": "Smooth streaming text",
+      "sectionDescription": "Over a slow or unsteady connection a reply arrives in bursts. Show it at a steady pace instead, a moment behind. No effect while the connection is smooth."
     }
   },
   "SystemSettings": {

@@ -281,6 +281,10 @@
       "liveSpeedDescription": "Mostra a velocidade de tokens (tok/s) na linha de trabalho durante a resposta.",
       "minimapTitle": "Minimapa da linha do tempo",
       "minimapDescription": "Exibe uma barra lateral compacta para pré-visualizar e navegar entre mensagens no desktop."
+    },
+    "streamingReveal": {
+      "sectionTitle": "Texto em streaming suave",
+      "sectionDescription": "Em uma conexão lenta ou instável, as respostas chegam aos trancos. Exibe-as em ritmo constante, com um pequeno atraso. Não tem efeito quando a conexão está estável."
     }
   },
   "SystemSettings": {

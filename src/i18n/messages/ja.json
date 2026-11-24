@@ -281,6 +281,10 @@
       "liveSpeedDescription": "応答中の作業行にトークン出力速度（tok/s）を表示します。",
       "minimapTitle": "タイムラインミニマップ",
       "minimapDescription": "デスクトップの会話端にホバープレビューとジャンプ用のミニマップを表示します。"
+    },
+    "streamingReveal": {
+      "sectionTitle": "ストリーミング文字をなめらかに表示",
+      "sectionDescription": "接続が遅い・不安定なときは、返信がまとまって届きます。オンにすると一定の速さで表示します（実際の到着より少し遅れます）。接続が安定しているときは影響しません。"
     }
   },
   "SystemSettings": {

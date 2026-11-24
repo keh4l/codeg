@@ -29,6 +29,13 @@ import type {
 } from "@/lib/transport/types"
 import { randomUUID } from "@/lib/utils"
 import {
+  PACER_TICK_MS,
+  RevealPacer,
+  cutAt,
+  revealLagMs,
+} from "@/lib/streaming/reveal-pacer"
+import { useStreamingReveal } from "@/lib/streaming/reveal-setting"
+import {
   extractClaudeCodeToolName,
   inferLiveToolName,
 } from "@/lib/tool-call-normalization"
@@ -1032,6 +1039,40 @@ const STREAM_FLUSH_BLOCK_CHARS = 16
  * window it pre-empts.
  */
 const STREAM_QUEUE_CAP = 256
+
+/**
+ * Append `action` to `list`, merged into its last entry when it continues it:
+ * same type AND same subagent attribution — main-thread and parented deltas
+ * (or two different subagents') must not concatenate. Copies `action`, never
+ * mutates it.
+ */
+function appendStreamingAction(
+  list: StreamingAction[],
+  action: StreamingAction
+): void {
+  const last = list[list.length - 1]
+  if (
+    last &&
+    last.type === action.type &&
+    last.parentToolUseId === action.parentToolUseId
+  ) {
+    last.text += action.text
+  } else {
+    list.push({ ...action })
+  }
+}
+
+/**
+ * keh4l build: one connection's streamed text held back by the steady reveal
+ * (`lib/streaming/reveal-pacer.ts`) — in front of its coalescing queue.
+ */
+interface RevealHold {
+  pacer: RevealPacer
+  /** Compacted (`appendStreamingAction`), oldest first. */
+  held: StreamingAction[]
+  heldChars: number
+  lastRelease: number
+}
 
 /**
  * What the next batch will re-render, in prose-equivalent characters, read off
@@ -4393,6 +4434,18 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
   const flushTimersRef = useRef(
     new Map<string, ReturnType<typeof setTimeout>>()
   )
+  // keh4l build: steady reveal. Over a bursty link a connection's text is
+  // held here and released at the rate it has been arriving (`RevealPacer`),
+  // a slice per `PACER_TICK_MS`, into the queue above. `flushStreamingQueue`
+  // drains it first, so every barrier — a tool card, a permission prompt,
+  // the end of the turn — still lands after all text before it.
+  const revealHoldsRef = useRef(new Map<string, RevealHold>())
+  const revealTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const streamingReveal = useStreamingReveal()
+  const streamingRevealRef = useRef(streamingReveal)
+  useEffect(() => {
+    streamingRevealRef.current = streamingReveal
+  }, [streamingReveal])
   const pendingUnmappedEventsRef = useRef(new Map<string, EventEnvelope[]>())
   const listenerReadyRef = useRef(false)
   const listenerReadyWaitersRef = useRef<Array<() => void>>([])
@@ -4526,6 +4579,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       flushTimersRef.current.delete(contextKey)
     }
     streamingQueuesRef.current.delete(contextKey)
+    revealHoldsRef.current.delete(contextKey)
   }, [])
 
   /** The same, for every connection at once. */
@@ -4533,6 +4587,11 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
     for (const timer of flushTimersRef.current.values()) clearTimeout(timer)
     flushTimersRef.current.clear()
     streamingQueuesRef.current.clear()
+    revealHoldsRef.current.clear()
+    if (revealTimerRef.current !== null) {
+      clearInterval(revealTimerRef.current)
+      revealTimerRef.current = null
+    }
   }, [])
 
   const dispatch = useCallback(
@@ -4820,7 +4879,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
    * (`discardStreamingQueues`), because a batch dispatched into a key that is
    * being removed is at best wasted and at worst lands on its successor.
    */
-  const flushStreamingQueue = useCallback(
+  const dispatchStreamingQueue = useCallback(
     (contextKey: string) => {
       // CANCEL the pending window, don't just forget it. Most callers are
       // event handlers flushing out of turn (a tool card, a permission prompt,
@@ -4847,25 +4906,36 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       // this pre-coalescing runs BEFORE the reducer's attribution-aware merge
       // and would otherwise defeat it.
       const compacted: StreamingAction[] = []
-      for (const action of queued) {
-        const last = compacted[compacted.length - 1]
-        if (
-          last &&
-          last.type === action.type &&
-          last.parentToolUseId === action.parentToolUseId
-        ) {
-          last.text += action.text
-        } else {
-          compacted.push({ ...action })
-        }
-      }
+      for (const action of queued) appendStreamingAction(compacted, action)
 
       dispatch({ type: "STREAM_BATCH", actions: compacted })
     },
     [dispatch]
   )
 
-  const enqueueStreamingAction = useCallback(
+  /**
+   * keh4l build: what every out-of-turn event calls before it touches the
+   * live message — `dispatchStreamingQueue`, with the text the steady reveal
+   * still holds (older than anything queued after it) going out first. The
+   * window's own timer only dispatches what was released.
+   */
+  const flushStreamingQueue = useCallback(
+    (contextKey: string) => {
+      const hold = revealHoldsRef.current.get(contextKey)
+      if (hold !== undefined && hold.heldChars > 0) {
+        const queue = streamingQueuesRef.current.get(contextKey) ?? []
+        queue.push(...hold.held)
+        streamingQueuesRef.current.set(contextKey, queue)
+        hold.held = []
+        hold.heldChars = 0
+        hold.pacer.drained()
+      }
+      dispatchStreamingQueue(contextKey)
+    },
+    [dispatchStreamingQueue]
+  )
+
+  const queueStreamingAction = useCallback(
     (action: StreamingAction) => {
       const { contextKey } = action
       let queue = streamingQueuesRef.current.get(contextKey)
@@ -4875,8 +4945,9 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       }
       queue.push(action)
       if (queue.length >= STREAM_QUEUE_CAP) {
-        // Cap reached — `flushStreamingQueue` clears the pending window itself.
-        flushStreamingQueue(contextKey)
+        // Cap reached — `dispatchStreamingQueue` clears the pending window
+        // itself.
+        dispatchStreamingQueue(contextKey)
         return
       }
       if (!flushTimersRef.current.has(contextKey)) {
@@ -4891,11 +4962,101 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
         )
         flushTimersRef.current.set(
           contextKey,
-          setTimeout(() => flushStreamingQueue(contextKey), delay)
+          setTimeout(() => dispatchStreamingQueue(contextKey), delay)
         )
       }
     },
-    [flushStreamingQueue]
+    [dispatchStreamingQueue]
+  )
+
+  /**
+   * keh4l build: move about `chars` of one connection's held text into its
+   * queue, oldest first — cut at a word boundary (`cutAt`).
+   */
+  const releaseHeldText = useCallback(
+    (hold: RevealHold, chars: number) => {
+      let left = chars
+      while (left > 0 && hold.held.length > 0) {
+        const head = hold.held[0]!
+        if (head.text.length <= left) {
+          hold.held.shift()
+          left -= head.text.length
+          hold.heldChars -= head.text.length
+          queueStreamingAction(head)
+          continue
+        }
+        const cut = cutAt(head.text, left)
+        queueStreamingAction({ ...head, text: head.text.slice(0, cut) })
+        head.text = head.text.slice(cut)
+        hold.heldChars -= cut
+        left = 0
+      }
+    },
+    [queueStreamingAction]
+  )
+
+  const tickStreamingReveal = useCallback(() => {
+    const now = performance.now()
+    const instant =
+      streamingRevealRef.current !== "auto" ||
+      document.visibilityState === "hidden"
+    let holding = false
+    for (const hold of revealHoldsRef.current.values()) {
+      if (hold.heldChars === 0) continue
+      const n = instant
+        ? hold.heldChars
+        : hold.pacer.release(now, hold.heldChars, now - hold.lastRelease)
+      hold.lastRelease = now
+      if (n > 0) releaseHeldText(hold, n)
+      if (hold.heldChars > 0) holding = true
+    }
+    if (!holding && revealTimerRef.current !== null) {
+      clearInterval(revealTimerRef.current)
+      revealTimerRef.current = null
+    }
+  }, [releaseHeldText])
+
+  /**
+   * A streamed delta arrived. Usually straight into the coalescing queue; over
+   * a bursty link (`revealLagMs`) held back and released at a steady pace by
+   * `tickStreamingReveal` (keh4l build).
+   */
+  const enqueueStreamingAction = useCallback(
+    (action: StreamingAction) => {
+      const { contextKey } = action
+      const now = performance.now()
+      let hold = revealHoldsRef.current.get(contextKey)
+      if (hold === undefined) {
+        hold = {
+          pacer: new RevealPacer(),
+          held: [],
+          heldChars: 0,
+          lastRelease: now,
+        }
+        revealHoldsRef.current.set(contextKey, hold)
+      }
+      // Replayed history (a reconnect catching up) is not the link's pace,
+      // and is shown at once.
+      const replay = envelopeEffectsMutedRef.current > 0
+      if (!replay) hold.pacer.arrived(now, action.text.length)
+      const pace =
+        !replay &&
+        streamingRevealRef.current === "auto" &&
+        document.visibilityState !== "hidden" &&
+        revealLagMs(now) > 0
+      if (!pace) {
+        if (hold.heldChars > 0) releaseHeldText(hold, hold.heldChars)
+        queueStreamingAction(action)
+        return
+      }
+      if (hold.heldChars === 0) hold.lastRelease = now
+      appendStreamingAction(hold.held, action)
+      hold.heldChars += action.text.length
+      if (revealTimerRef.current === null) {
+        revealTimerRef.current = setInterval(tickStreamingReveal, PACER_TICK_MS)
+      }
+    },
+    [queueStreamingAction, releaseHeldText, tickStreamingReveal]
   )
 
   /**

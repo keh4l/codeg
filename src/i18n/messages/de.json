@@ -281,6 +281,10 @@
       "liveSpeedDescription": "Zeigt während der Antwort die aktuelle Token-Geschwindigkeit (tok/s) in der Statuszeile.",
       "minimapTitle": "Zeitleisten-Minimap",
       "minimapDescription": "Zeigt auf dem Desktop eine schmale Sprung- und Vorschauleiste am Rand des Gesprächs."
+    },
+    "streamingReveal": {
+      "sectionTitle": "Gestreamten Text gleichmäßig anzeigen",
+      "sectionDescription": "Bei einer langsamen oder instabilen Verbindung kommen Antworten schubweise an. Zeigt sie stattdessen in gleichmäßigem Tempo, mit kurzer Verzögerung. Ohne Wirkung, solange die Verbindung flüssig ist."
     }
   },
   "SystemSettings": {

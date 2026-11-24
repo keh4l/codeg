@@ -281,6 +281,10 @@
       "liveSpeedDescription": "代理回覆時在「正在工作」列顯示即時速度（tok/s）。",
       "minimapTitle": "時間軸縮略圖",
       "minimapDescription": "桌面端在對話邊緣顯示刻度縮略圖，支援懸停預覽與點擊跳轉。"
+    },
+    "streamingReveal": {
+      "sectionTitle": "平滑顯示串流文字",
+      "sectionDescription": "網路慢或不穩時，回覆會一陣一陣地到。開啟後以均勻速度顯示，比實際到達稍晚一點。網路順暢時不起作用。"
     }
   },
   "SystemSettings": {

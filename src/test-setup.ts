@@ -2,6 +2,7 @@ import "@testing-library/jest-dom/vitest"
 import { beforeEach } from "vitest"
 
 import { resetDisclosureStore } from "@/components/message/activity/disclosure-store"
+import { __resetRevealPacerForTests } from "@/lib/streaming/reveal-pacer"
 
 // The activity timeline remembers which rows were opened in a module-level
 // store keyed by step (tool call) id, so it outlives a test's render: without
@@ -9,6 +10,13 @@ import { resetDisclosureStore } from "@/components/message/activity/disclosure-s
 // reuses the id, and that test's click closes it instead.
 beforeEach(() => {
   resetDisclosureStore()
+})
+
+// keh4l build: the steady reveal learns how bursty the link is, per window
+// (module-level, like the link it measures) — a stall one test streamed must
+// not pace the next test's text.
+beforeEach(() => {
+  __resetRevealPacerForTests()
 })
 
 // jsdom doesn't implement a few layout APIs that ProseMirror's EditorView

@@ -281,6 +281,10 @@
       "liveSpeedDescription": "에이전트가 응답하는 동안 작업 줄에 실시간 속도(tok/s)를 표시합니다.",
       "minimapTitle": "타임라인 미니맵",
       "minimapDescription": "데스크톱 대화 가장자리에 미리보기 및 빠른 이동용 미니맵을 표시합니다."
+    },
+    "streamingReveal": {
+      "sectionTitle": "스트리밍 텍스트 부드럽게 표시",
+      "sectionDescription": "연결이 느리거나 불안정하면 응답이 한꺼번에 몰려서 도착합니다. 켜면 일정한 속도로 표시합니다(실제 도착보다 조금 늦게). 연결이 원활할 때는 영향이 없습니다."
     }
   },
   "SystemSettings": {
