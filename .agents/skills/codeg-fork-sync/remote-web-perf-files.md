@@ -1,6 +1,6 @@
 # 公网远程网页提速：改过的上游文件
 
-`SKILL.md` 冲突处理规则表「公网远程网页提速」一行的明细（`perf/remote-web` 分支，0.47.0-6 起）。每条：文件 — 改了什么 — 同步时注意什么；括号里是当时的方案步骤号（1.x 连接层、2.x 数据量、3.x 打开/切换会话、4.x 启动、5.x 按钮即时、6.x 流式显示）。
+`SKILL.md` 冲突处理规则表「公网远程网页提速」一行的明细（`perf/remote-web` 分支，0.48.0-1 起）。每条：文件 — 改了什么 — 同步时注意什么；括号里是当时的方案步骤号（1.x 连接层、2.x 数据量、3.x 打开/切换会话、4.x 启动、5.x 按钮即时、6.x 流式显示）。
 
 - `src-tauri/src/web/mod.rs` — 加 `pub mod socket_tuning;`；两个 `axum::serve` 前 `listener.tap_io(socket_tuning::configure_accepted)` — 上游改 serve 启动代码时保留 tap_io（1.2）
 - `src-tauri/src/bin/codeg_server.rs` — `axum::serve` 前 tap_io — 同上（1.2）
@@ -110,7 +110,7 @@
 - `src-tauri/src/web/handlers/acp.rs` — `acp_cancel` 改用新 `AcpCancelParams`（加 `turn_message_id`）、调 `cancel_turn`；`AcpPromptParams` 加 `mode_id`，`acp_prompt` 开头先 `set_mode`（5.4/5.5）
 - `src-tauri/src/commands/acp.rs` — Tauri `acp_cancel` 加 `turn_message_id`、调 `cancel_turn`（5.4）
 - `src/lib/api.ts` — `onceOnly` 辅助；`acpPrompt` 加 `modeId` 参数和键/重试；`createConversation`/`createChatConversation` 带键/重试；`acpCancel` 加 `turnMessageId`（5.1/5.4/5.5）
-- `src/contexts/acp-connections-context.tsx` — `rememberModePick`（从 `setMode` 抽出）；`sendPrompt` opts 加 `modeId`；`runningTurnRef` + 事件 switch `case "user_message"`；`cancel` 传回合 id（5.4/5.5）
+- `src/contexts/acp-connections-context.tsx` — `sendPrompt` opts 加 `modeId`（不写新会话默认值；原来的 `rememberModePick` 在 0.48.0 合并时按上游 #1179 删了）；`runningTurnRef` + 事件 switch `case "user_message"`；`cancel` 传回合 id（5.4/5.5）
 - `src/hooks/use-connection.ts` — 两处 `sendPrompt` opts 类型加 `modeId`（5.5）
 - `src/hooks/use-connection-lifecycle.ts` — `handleSend` 浏览器里模式随提示一起发；`import { isDesktop }`（5.5）
 - `src/components/chat/message-input.tsx` — `handleSteerClick` 点击即 `resetComposer()`，失败 `restoreDraft`（`hydrateFromBlocks`）（5.10）
@@ -126,3 +126,5 @@
 - `src-tauri/tests/ws_attach.rs` — 加 `ws_reattach_at_head_receives_empty_replay`（1.1）
 
 - `src-tauri/Cargo.toml` — 加 feature `fake-agent-bin`（并入 `test-utils`）和 `[[bin]] codeg-fake-acp` — 上游改 features/test-utils 列表或 bin 列表时保留这两处（0.2）
+- `src-tauri/src/web/handlers/open_session.rs`（fork 文件）— 0.48.0 合并时接上游 #1179：spawn 前 `acp_commands::resolve_connect_selection`，spawn 后有行就 `bind_selection_conversation`；`commands/acp.rs` 和 `web/handlers/acp.rs` 的 `acp_connect` 改走上游的 `spawn_with_conversation_selection`，后面照旧 `mark_ui_session`
+- `src/contexts/acp-connections-context.tsx` — 0.48.0 合并：`connect()` 的 `acpConnect` 仍包在 `connectionId == null` 里（先试 `acpOpenSession`），带上游新加的 `conversationId` 参数；`setConfigOption` 的回滚包住上游的 `trackSetter`，偏好只在 `saveAsDefault` 时改回
