@@ -37,6 +37,7 @@ pub const DEFAULT_NOTSENT_LOWAT: u32 = 64 * 1024;
 pub const DEFAULT_CONGESTION: &str = "bbr";
 
 /// The congestion control to ask for, read once; `None` leaves the default.
+#[cfg(target_os = "linux")]
 fn congestion() -> Option<&'static str> {
     static NAME: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     NAME.get_or_init(|| {
@@ -48,6 +49,7 @@ fn congestion() -> Option<&'static str> {
     .as_deref()
 }
 
+#[cfg(target_os = "linux")]
 fn notsent_lowat() -> u32 {
     std::env::var("CODEG_TCP_NOTSENT_LOWAT")
         .ok()
