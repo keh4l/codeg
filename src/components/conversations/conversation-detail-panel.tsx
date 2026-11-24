@@ -35,6 +35,7 @@ import { useAppWorkspaceStore } from "@/stores/app-workspace-store"
 import { FolderTabsEmptyState } from "@/components/conversations/folder-tabs-empty-state"
 import { useTabActions, useTabStore } from "@/contexts/tab-context"
 import {
+  draftAgentCorrectionPending,
   groupOfTab,
   useVisibleConversationTabs,
   useVisibleConversationLayout,
@@ -679,6 +680,17 @@ const ConversationTabView = memo(function ConversationTabView({
     // persisted conversation keeps its existing connect-and-surface-the-error
     // behavior (its agent can't be swapped from the picker anyway).
     !(selectedAgentNotInstalled && !hasPersistedConversation) &&
+    // Fork: a draft whose agent is still the first guess waits for the
+    // correction that runs once the agent list is in (`correctDraftAgents`).
+    // Connecting the guess meant starting an agent just to stop it and start
+    // the corrected one, two round trips and a spawn, on every load. Only
+    // while that one-shot correction is still to run: nothing would clear
+    // the flag afterwards.
+    !(
+      !hasPersistedConversation &&
+      ownTab?.agentTypeProvisional === true &&
+      draftAgentCorrectionPending()
+    ) &&
     !(hasPersistedConversation && detailError) &&
     !(hasPersistedConversation && acpLoadError)
   // Draft composer text is keyed PER TAB while unbound: each split group has its

@@ -3432,6 +3432,12 @@ export function runCorrectionOnce() {
   useTabStore.getState().correctDraftAgents()
 }
 
+/** Fork: whether the one-shot draft agent correction is still to run — a
+ *  draft whose agent is a first guess waits for it before connecting. */
+export function draftAgentCorrectionPending(): boolean {
+  return !correctionRan
+}
+
 export function runRecoveryOnce() {
   if (recoveryRan || useFolderTabsStore.getState().enabled) return
   recoveryRan = true

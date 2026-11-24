@@ -310,4 +310,13 @@ describe("TabViewGate mirrors ConversationTabView", () => {
     expect(panel).toContain("!awaitingHistoricalSessionId &&")
     expect(panel).toContain("isActive: isActive && canAutoConnect,")
   })
+
+  it("holds a draft's auto-connect while its agent is still the first guess (fork)", () => {
+    // The correction that runs once the agent list is in clears the flag, or
+    // swaps the agent and clears it: connecting the guess first started an
+    // agent only to stop it again.
+    expect(panel).toMatch(
+      /!\(\s+!hasPersistedConversation &&\s+ownTab\?\.agentTypeProvisional === true &&\s+draftAgentCorrectionPending\(\)\s+\) &&/
+    )
+  })
 })
