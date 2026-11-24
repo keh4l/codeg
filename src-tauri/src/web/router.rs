@@ -2329,6 +2329,13 @@ pub fn build_router_with_srn(
         .merge(crate::cli_run::http::routes(state.cli_runs.clone()))
         // Catch-all
         .fallback(api_not_found)
+        // Fork: a call sent again with the same idempotency key gets the first
+        // call's answer (`web/idempotency.rs`). Inside auth: only callers that
+        // got in reach it.
+        .layer(middleware::from_fn_with_state(
+            crate::web::idempotency::IdempotencyCache::new_shared(),
+            crate::web::idempotency::middleware,
+        ))
         .layer(middleware::from_fn(move |req, next| {
             auth::require_auth(req, next, web_auth.clone())
         }));

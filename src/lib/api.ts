@@ -335,26 +335,43 @@ export function stripUploadedImagePayloads(
   })
 }
 
+/** keh4l build: options for a call that must not run twice, sent again on a
+ *  network failure under `key` (`CallOptions`, `web/idempotency.rs`). */
+function onceOnly(key: string): CallOptions {
+  return { idempotencyKey: key, retry: { attempts: 2 } }
+}
+
 export async function acpPrompt(
   connectionId: string,
   blocks: PromptInputBlock[],
   folderId: number | null = null,
   conversationId: number | null = null,
-  clientMessageId: string | null = null
+  clientMessageId: string | null = null,
+  // keh4l build: switch to this mode first, in the same request (the server
+  // queues the mode change ahead of the prompt).
+  modeId: string | null = null
 ): Promise<void> {
   try {
-    await getTransport().call("acp_prompt", {
-      connectionId,
-      // Strip in every mode where the prompt leaves through an HTTP body:
-      // pure web (`!isDesktop`) and desktop-attached-to-remote-workspace.
-      blocks: stripUploadedImagePayloads(
-        blocks,
-        !isDesktop() || getActiveRemoteConnectionId() !== null
-      ),
-      folderId,
-      conversationId,
-      clientMessageId,
-    })
+    await getTransport().call(
+      "acp_prompt",
+      {
+        connectionId,
+        // Strip in every mode where the prompt leaves through an HTTP body:
+        // pure web (`!isDesktop`) and desktop-attached-to-remote-workspace.
+        blocks: stripUploadedImagePayloads(
+          blocks,
+          !isDesktop() || getActiveRemoteConnectionId() !== null
+        ),
+        folderId,
+        conversationId,
+        clientMessageId,
+        ...(modeId ? { modeId } : {}),
+      },
+      // keh4l build: sent again on a network failure, under a key the server
+      // answers a repeat of with the first send's answer — never a second
+      // turn (`web/idempotency.rs`).
+      clientMessageId ? onceOnly(`acp_prompt:${clientMessageId}`) : undefined
+    )
   } catch (e) {
     if (isTurnInProgressRejection(e)) throw new TurnBusyError()
     throw asConversationMovedError(e) ?? e
@@ -390,8 +407,14 @@ export async function acpGoalControl(
   return getTransport().call("acp_goal_control", { connectionId, action })
 }
 
-export async function acpCancel(connectionId: string): Promise<void> {
-  return getTransport().call("acp_cancel", { connectionId })
+/** Stop the turn. keh4l build: `turnMessageId` names the turn the Stop was
+ *  for (its user message id); the server leaves alone a turn started since
+ *  (`ConnectionManager::cancel_turn`). */
+export async function acpCancel(
+  connectionId: string,
+  turnMessageId: string | null = null
+): Promise<void> {
+  return getTransport().call("acp_cancel", { connectionId, turnMessageId })
 }
 
 export interface ForkResult {
@@ -3966,11 +3989,11 @@ export async function createConversation(
   agentType: AgentType,
   title?: string
 ): Promise<number> {
-  return getTransport().call("create_conversation", {
-    folderId,
-    agentType,
-    title: title ?? null,
-  })
+  return getTransport().call(
+    "create_conversation",
+    { folderId, agentType, title: title ?? null },
+    onceOnly(`create_conversation:${randomUUID()}`)
+  )
 }
 
 /**
@@ -3986,11 +4009,11 @@ export async function createChatConversation(
   // ACP cwd never moves across the first send; omit to let the backend mint one.
   existingDir?: string
 ): Promise<CreateChatConversationResult> {
-  return getTransport().call("create_chat_conversation", {
-    agentType,
-    title: title ?? null,
-    existingDir: existingDir ?? null,
-  })
+  return getTransport().call(
+    "create_chat_conversation",
+    { agentType, title: title ?? null, existingDir: existingDir ?? null },
+    onceOnly(`create_chat_conversation:${randomUUID()}`)
+  )
 }
 
 /**

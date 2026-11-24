@@ -9,6 +9,7 @@ pub mod compression;
 pub mod event_bridge;
 pub mod image_refs;
 pub mod handlers;
+pub mod idempotency;
 pub mod port_probe;
 pub mod proxy_auth;
 pub mod router;
