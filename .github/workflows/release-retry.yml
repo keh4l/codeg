@@ -9,7 +9,7 @@
 # When a Release run ends in failure, this re-runs its failed jobs as long as
 # EVERY failed or cancelled job carries that annotation, and keeps doing so
 # (waiting for each attempt to finish) until the run succeeds, a job fails
-# for any other reason, or the run reaches MAX_ATTEMPTS. A real failure is
+# for any other reason, or the run reaches MAX_ATTEMPTS (30). A real failure is
 # left alone for a human. It loops inside one job instead of relying on the
 # next `workflow_run` event: a run re-run with GITHUB_TOKEN may not raise one.
 # A second instance (if one is raised) waits on the concurrency group and
@@ -38,7 +38,12 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
       RUN_ID: ${{ github.event.workflow_run.id }}
-      MAX_ATTEMPTS: "10"
+      # One attempt that finds no runner takes about 15 minutes; a shortage
+      # has lasted over six hours (0.48.1-1: 13:40–20:10 UTC). 30 attempts
+      # cover about seven and a half. The job's own 6 h limit does not stop
+      # it: each failed attempt raises another `workflow_run`, whose instance
+      # waits on the concurrency group and carries on from the run's state.
+      MAX_ATTEMPTS: "30"
     steps:
       - name: Re-run jobs that never got a runner
         shell: bash
