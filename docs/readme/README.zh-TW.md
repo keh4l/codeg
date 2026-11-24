@@ -141,7 +141,7 @@
 <summary><strong>短逾時的智慧體也能等到結果</strong> 的細節</summary>
 <br/>
 
-- 智慧體對一次 MCP 工具呼叫能等多久各不相同：ZCode 30 秒；Cursor、Kimi、DeepSeek 60 秒；Codex 5 分鐘；Claude Code、OpenCode、Qoder、CodeBuddy、Grok 基本不限。官方版裡，`get_delegation_status`（等委託任務的結果）可以一次等很久，`ask_user_question`（向你提問）一直等到你回答，超過時限後智慧體就當作呼叫失敗接著往下做，提問也就當成沒回答。
+- 智慧體對一次 MCP 工具呼叫能等多久各不相同：ZCode 30 秒；Cursor、Kimi 60 秒；Codex 5 分鐘；Claude Code、OpenCode、Qoder、CodeBuddy、Grok、DeepSeek 0.12 起基本不限。官方版裡，`get_delegation_status`（等委託任務的結果）可以一次等很久，`ask_user_question`（向你提問）一直等到你回答，超過時限後智慧體就當作呼叫失敗接著往下做，提問也就當成沒回答。
 - 客製版按智慧體給這些工具設一個比時限短的上限，例如 ZCode 20 秒、Cursor 45 秒、Codex 4 分鐘；不限時的智慧體不設上限，和官方版一樣。到了上限還沒有結果就先返回，告訴智慧體下一次怎麼接著等。
 - 提問：到時你還沒回答，問題卡片照樣留著，智慧體用新工具 `get_question_answer` 接著等；你回答後，答案顯示在原來的提問卡片裡。
 - 「N 個執行中」裡每個子智慧體後面有「停止」，兩個以上時標題列有「全部停止」：你在這裡停掉的子智慧體，結果不會再送回主智慧體。

@@ -10,12 +10,13 @@
 //! "still waiting" with an id the agent passes to the matching collect tool.
 //!
 //! The values are each agent's deadline minus a margin, read from the source
-//! (or binary) of the version codeg pins, as of 2026-10:
+//! (or binary) of the version codeg pins, as of 2026-10 (DeepSeek: 0.12.0,
+//! 2026-11):
 //!
 //! | Agent | Deadline | Cap |
 //! |---|---|---|
 //! | ZCode (bridge 0.72) | 30 s wall clock, progress does not extend it | 20 s |
-//! | Cursor, Kimi Code, DeepSeek | 60 s (MCP SDK default) | 45 s |
+//! | Cursor, Kimi Code | 60 s (MCP SDK default) | 45 s |
 //! | CommandCode 1.84 | 80 s idle, restarted by progress | 60 s |
 //! | MiniMax Code 0.7 | 120 s wall clock, progress does not extend it | 90 s |
 //! | Kiro, Trae | not established (Kiro documents 120 s) | 90 s |
@@ -24,6 +25,7 @@
 //! | Gemini CLI 0.60 | 600 s | 480 s |
 //! | OpenCode 2.x | 12 h wall clock (1.x: 60 s, restarted by progress) | none |
 //! | Claude Code, Qoder, CodeBuddy, Grok | an hour or more | none |
+//! | DeepSeek 0.12 | timer maximum, about 24.8 days (0.11: 60 s) | none |
 //! | Custom agents | unknown | 20 s |
 //!
 //! `None` keeps the old behavior of blocking until the result is in.
@@ -37,7 +39,7 @@ use crate::models::agent::AgentType;
 pub fn codeg_mcp_wait_cap(agent_type: AgentType) -> Option<Duration> {
     let secs = match agent_type {
         AgentType::ZCode => 20,
-        AgentType::Cursor | AgentType::KimiCode | AgentType::DeepSeek => 45,
+        AgentType::Cursor | AgentType::KimiCode => 45,
         AgentType::CommandCode => 60,
         AgentType::MiniMaxCode | AgentType::Kiro | AgentType::Trae => 90,
         AgentType::Antigravity => 150,
@@ -47,7 +49,8 @@ pub fn codeg_mcp_wait_cap(agent_type: AgentType) -> Option<Duration> {
         | AgentType::Qoder
         | AgentType::CodeBuddy
         | AgentType::Grok
-        | AgentType::OpenCode => return None,
+        | AgentType::OpenCode
+        | AgentType::DeepSeek => return None,
         // These never receive codeg-mcp (no MCP over the wire), but give them
         // the safe value rather than none should that ever change.
         AgentType::OpenClaw | AgentType::Cline | AgentType::Pi => 20,
@@ -67,7 +70,6 @@ mod tests {
             (AgentType::ZCode, 30),
             (AgentType::Cursor, 60),
             (AgentType::KimiCode, 60),
-            (AgentType::DeepSeek, 60),
             (AgentType::CommandCode, 80),
             (AgentType::MiniMaxCode, 120),
             (AgentType::Antigravity, 180),
@@ -92,6 +94,7 @@ mod tests {
             AgentType::CodeBuddy,
             AgentType::Grok,
             AgentType::OpenCode,
+            AgentType::DeepSeek,
         ] {
             assert_eq!(codeg_mcp_wait_cap(agent), None, "{agent:?}");
         }
