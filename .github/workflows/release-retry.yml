@@ -1,0 +1,90 @@
+# keh4l build: re-run the Release jobs that never got a runner.
+#
+# GitHub's hosted macOS arm64 runners run short of capacity, mostly during
+# US daytime. A job that waits about 15 minutes without being picked up is
+# cancelled with "The job was not acquired by Runner of type hosted even
+# after multiple attempts" — no step ran — and the release stays a draft
+# until someone re-runs it, sometimes four or five times.
+#
+# When a Release run ends in failure, this re-runs its failed jobs as long as
+# EVERY failed or cancelled job carries that annotation, and keeps doing so
+# (waiting for each attempt to finish) until the run succeeds, a job fails
+# for any other reason, or the run reaches MAX_ATTEMPTS. A real failure is
+# left alone for a human. It loops inside one job instead of relying on the
+# next `workflow_run` event: a run re-run with GITHUB_TOKEN may not raise one.
+# A second instance (if one is raised) waits on the concurrency group and
+# then finds the run already settled.
+name: Release retry
+
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+
+permissions:
+  actions: write
+  checks: read
+
+concurrency:
+  group: release-retry-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  retry:
+    if: github.repository == 'keh4l/codeg' && github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      MAX_ATTEMPTS: "10"
+    steps:
+      - name: Re-run jobs that never got a runner
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # True when attempt $1 has failed or cancelled jobs and every one of
+          # them was never picked up by a runner.
+          starved_only() {
+            local attempt=$1 found=0 id name
+            while IFS=$'\t' read -r id name; do
+              [ -n "$id" ] || continue
+              found=1
+              if ! gh api "repos/$REPO/check-runs/$id/annotations" --jq '.[].message' \
+                  | grep -q 'was not acquired by Runner'; then
+                echo "::notice::\"$name\" failed on its own in attempt $attempt; not re-running"
+                return 1
+              fi
+            done < <(gh api "repos/$REPO/actions/runs/$RUN_ID/attempts/$attempt/jobs" --paginate \
+                       --jq '.jobs[] | select(.conclusion == "failure" or .conclusion == "cancelled") | [.id, .name] | @tsv')
+            [ "$found" = 1 ]
+          }
+
+          while :; do
+            # `|`, not a tab: bash merges adjacent tabs, which would shift the
+            # fields while the conclusion is still empty.
+            IFS='|' read -r status conclusion attempt < <(
+              gh api "repos/$REPO/actions/runs/$RUN_ID" --jq '"\(.status)|\(.conclusion // "-")|\(.run_attempt)"')
+            if [ "$status" != completed ]; then
+              sleep 60
+              continue
+            fi
+            if [ "$conclusion" = success ]; then
+              echo "Release run $RUN_ID succeeded on attempt $attempt."
+              exit 0
+            fi
+            if ! starved_only "$attempt"; then
+              echo "Attempt $attempt has a real failure (or nothing to re-run); leaving it."
+              exit 0
+            fi
+            if [ "$attempt" -ge "$MAX_ATTEMPTS" ]; then
+              echo "::warning::Still no runner after $attempt attempts; giving up. Re-run it later by hand."
+              exit 1
+            fi
+            echo "Attempt $attempt: jobs never got a runner; re-running them."
+            gh run rerun "$RUN_ID" -R "$REPO" --failed
+            # Let the new attempt register before reading the status again.
+            sleep 90
+          done

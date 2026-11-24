@@ -84,7 +84,7 @@ description: 为 keh4l/codeg 定制版发一个新版本（改版本号、写双
    git tag "v${VER}" "$REL" && git push origin "v${VER}"
    gh run list -R keh4l/codeg -w release.yml -L 1
    ```
-   整个流程约 40–60 分钟（桌面 6 个平台 + 服务端 5 个）。等待时用 `gh run view <id> -R keh4l/codeg --json status,conclusion,jobs` 轮询，中间不要逐条播报。
+   整个流程约 40–60 分钟（桌面 6 个平台 + 服务端 5 个；macOS 任务常要 1.5 小时以上，排不上 runner 时由 `release-retry.yml` 自动重跑，见「出错时」）。等待时用 `gh run view <id> -R keh4l/codeg --json status,conclusion,jobs` 轮询，中间不要逐条播报。
 7. **验证**
    ```bash
    gh release view "v${VER}" -R keh4l/codeg --json isDraft,isPrerelease,assets --jq '"draft=\(.isDraft) prerelease=\(.isPrerelease) assets=\(.assets|length)"'
@@ -96,6 +96,7 @@ description: 为 keh4l/codeg 定制版发一个新版本（改版本号、写双
 ## 出错时
 
 - 推送 `keh4l` 或 tag 后一个运行都没出现（`gh run list` 里没有新的；手动 `gh workflow run` 报 `HTTP 422: Actions has been disabled for this repository`，而 `gh api repos/keh4l/codeg/actions/permissions` 仍是 `enabled: true`、工作流也都是 `active`）：GitHub 停用了 fork 上的工作流，登录后的 Actions 页显示「Workflows on this fork have been disabled」（2026-11 遇到过：从 11-06 起一周没跑，发 0.43.0-1 时才发现）。没有 API 能恢复，请用户打开 https://github.com/keh4l/codeg/actions 点「I understand my workflows, go ahead and re-enable them」。停用期间推的 tag 不会补跑：先确认 `gh release view v<VER>` 是 not found（没有任何 Release 挂在上面），再删远端 tag、推同名 tag 重新触发（`git push origin :refs/tags/v<VER> && git push origin v<VER>`）；删 tag 是破坏性操作，自动模式会拦下，交给用户执行或请用户放行。推送前先看一眼最近的运行时间，能早点发现。
+- macOS 任务排队约 15 分钟拿不到 runner 被取消（标注 `The job was not acquired by Runner of type hosted even after multiple attempts`，一步没跑；GitHub 的 macOS arm64 容量不够，美国白天常见）：**不用管**，fork 独有的 `release-retry.yml`（2026-11-24 起）在 Release 以失败结束时自动重跑这些任务，直到成功、出现真正的失败或到第 10 次；进度看 `gh run list -R keh4l/codeg -w release-retry.yml -L 1`。它放弃了（第 10 次还没排上）再手动 `gh run rerun <id> -R keh4l/codeg --failed`。北京时间白天（美国夜里）打 tag 很少碰上。
 - 某几个构建失败、原因是偶发（网络、runner）：`gh run rerun <id> -R keh4l/codeg --failed`，草稿 release 会被复用。
 - 需要改代码才能修好：在 `keh4l` 上修复并推送，然后**问用户**选哪种：(a) 删掉草稿 release 和 tag 后在新提交上重打同名 tag（删 tag 属于破坏性操作），或 (b) 直接发下一个版本号 `-N+1`。
 - 发版后 CI 在 macOS 或 Windows 上报测试失败：先看是真问题还是测试本身（时序、环境）。真问题告诉用户，修好后发下一个版本 `-N+1`；已经发出去的版本不撤。只有"GitHub runner 换了新 Rust、clippy 在上游原有代码上报新 lint、上游 main 也一样红"这种，不在 fork 里修，汇报里说明。
