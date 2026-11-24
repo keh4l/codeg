@@ -41,6 +41,7 @@ pub mod manager;
 pub mod minimax_code;
 /// "My agents" (keh4l build): which agents start enabled.
 pub mod my_agents;
+pub(crate) mod npm_package;
 pub mod one_shot;
 pub mod opencode_catalog;
 pub(crate) mod opencode_config;
@@ -60,6 +61,7 @@ pub mod remote_registry;
 pub(crate) mod reported_usage;
 pub mod result_tool;
 pub mod scratch_dir;
+pub mod selection;
 pub mod service_error;
 pub mod session_info;
 pub mod session_title;

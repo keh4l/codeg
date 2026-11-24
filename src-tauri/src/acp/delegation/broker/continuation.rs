@@ -858,6 +858,7 @@ mod tests {
                         value: (*v).into(),
                         name: (*v).into(),
                         description: None,
+                        reasoning_efforts: None,
                     })
                     .collect(),
                 groups: vec![],

@@ -91,8 +91,14 @@ export interface UseConnectionLifecycleReturn {
        */
       onSendFailed?: (error: unknown) => void
     }
+  ) => Promise<void>
+  /** `saveAsDefault`: the pick also becomes the new-conversation default —
+   *  only for an explicit pick in a draft (codeg#1179). */
+  handleSetConfigOption: (
+    configId: string,
+    valueId: string,
+    opts?: { saveAsDefault?: boolean }
   ) => void
-  handleSetConfigOption: (configId: string, valueId: string) => void
   /** keh4l build: resolves `false` when the stop could not be sent. */
   handleCancel: () => Promise<boolean>
   handleRespondPermission: (requestId: string, optionId: string) => void
@@ -549,7 +555,9 @@ export function useConnectionLifecycle({
       touchActivity(contextKey)
       const onTurnInProgress = opts?.onTurnInProgress
       const onSendFailed = opts?.onSendFailed
-      void (async () => {
+      // Returned (handled: it never rejects) so a draft's first send can hold
+      // its selector lock until the prompt was acknowledged or failed.
+      return (async () => {
         const currentModeId = modeIdRef.current
         if (modeId && modeId !== currentModeId && !isDesktop()) {
           // keh4l build: in the browser the mode change goes with the
@@ -635,7 +643,7 @@ export function useConnectionLifecycle({
   )
 
   const handleSetConfigOption = useCallback(
-    (configId: string, valueId: string) => {
+    (configId: string, valueId: string, opts?: { saveAsDefault?: boolean }) => {
       // The connection here still belongs to another agent (a draft mid-switch,
       // or one whose new pick could not connect), so the options on screen are
       // the selected agent's cached ones. Applying the edit would hand the
@@ -644,7 +652,7 @@ export function useConnectionLifecycle({
       // no connection here at all.
       if (connAgentType != null && connAgentType !== agentType) return
       touchActivity(contextKey)
-      connSetConfigOption(configId, valueId).catch((e: unknown) =>
+      connSetConfigOption(configId, valueId, opts).catch((e: unknown) =>
         console.error("[ConnLifecycle] setConfigOption:", e)
       )
     },

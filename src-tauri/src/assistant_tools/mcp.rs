@@ -677,6 +677,7 @@ mod tests {
                         value: (*v).into(),
                         name: v.to_uppercase(),
                         description: None,
+                        reasoning_efforts: None,
                     })
                     .collect(),
                 groups: Vec::new(),

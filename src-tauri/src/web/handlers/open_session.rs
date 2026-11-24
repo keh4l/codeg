@@ -117,6 +117,18 @@ pub(crate) async fn acp_open_session_core(
     )
     .await?;
     acp_commands::verify_agent_installed(params.agent_type).await?;
+    // The conversation's own stored selection, as `acp_connect` resolves it
+    // (`spawn_with_conversation_selection`, codeg#1179).
+    let selection = acp_commands::resolve_connect_selection(
+        &db.conn,
+        manager,
+        params.agent_type,
+        params.conversation_id,
+        params.session_id.as_deref(),
+        params.preferred_mode_id,
+        params.preferred_config_values.unwrap_or_default(),
+    )
+    .await;
     // A resumed session comes back while its agent is still loading it, so
     // the client's attach overlaps the load.
     let outcome = manager
@@ -127,10 +139,21 @@ pub(crate) async fn acp_open_session_core(
             runtime_env,
             owner_window_label.to_string(),
             emitter,
-            params.preferred_mode_id,
-            params.preferred_config_values.unwrap_or_default(),
+            selection.mode_id.clone(),
+            selection.config_values.clone(),
         )
         .await?;
+    if let Some(row_id) = selection.row_id {
+        // Before returning, so a setter right after the open finds the
+        // binding (as `spawn_with_conversation_selection`).
+        manager
+            .bind_selection_conversation(
+                &outcome.connection_id,
+                row_id,
+                selection.composer_mode_id,
+            )
+            .await?;
+    }
     manager.mark_ui_session(&outcome.connection_id);
     Ok(OpenSessionResult {
         connection_id: outcome.connection_id,

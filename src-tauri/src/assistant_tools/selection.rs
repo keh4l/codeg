@@ -550,6 +550,7 @@ mod tests {
                         value: (*v).into(),
                         name: (*n).into(),
                         description: None,
+                        reasoning_efforts: None,
                     })
                     .collect(),
                 groups: Vec::new(),
@@ -803,11 +804,13 @@ mod tests {
                         value: "anthropic/sonnet".into(),
                         name: "Sonnet".into(),
                         description: None,
+                        reasoning_efforts: None,
                     },
                     SessionConfigSelectOptionInfo {
                         value: "anthropic/opus".into(),
                         name: "Opus".into(),
                         description: None,
+                        reasoning_efforts: None,
                     },
                 ],
             }];
