@@ -12,6 +12,11 @@ import { supportsCompressedFrames, WsFrameDecoder } from "./ws-frame-decoder"
 import { parseJsonOrThrow } from "../json-parse-error"
 import { CallBatcher } from "./call-batcher"
 import {
+  dropPrimedCalls,
+  primedValue,
+  takePrimedCall,
+} from "../boot/boot-prefetch"
+import {
   codegAuthHeaders,
   getCodegToken,
   hasCodegCredentials,
@@ -224,6 +229,15 @@ export class WebTransport implements Transport {
     args?: Record<string, unknown>,
     options?: CallOptions
   ): Promise<T> {
+    // Fork: the workspace's first reads may already be on their way, asked
+    // for by the page's head script (`boot-prefetch.ts`).
+    if (!options) {
+      const primed = takePrimedCall(command, args)
+      if (primed) {
+        const answer = primedValue(await primed)
+        if (answer) return answer.value as T
+      }
+    }
     // Fork: a quick read with no options of its own may share a request.
     if (!options && this.batcher.accepts(command)) {
       return (await this.batcher.call(command, args)) as T
@@ -755,6 +769,9 @@ export class WebTransport implements Transport {
       }
       const event = parsed as WebEvent
       if (event.channel === WS_READY_CHANNEL) {
+        // Fork: a read from here on may be the one that closes the gap
+        // between a snapshot and a subscription, so it goes to the server.
+        dropPrimedCalls()
         this.readyResolve()
         // Application-level ready: the link is fully usable again; clear
         // the reconnect dialog. Fork: the backoff ladder starts over only

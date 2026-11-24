@@ -9,6 +9,10 @@ import {
 } from "vitest"
 import { deflateSync } from "node:zlib"
 import { WebTransport } from "./web-transport"
+import {
+  BOOT_PREFETCH_CALLS,
+  __resetPrimedCallsForTests,
+} from "../boot/boot-prefetch"
 
 // Minimal controllable WebSocket stand-in: records instances and lets the test
 // drive the lifecycle (open / __ready__ frame / drop) deterministically. The
@@ -468,6 +472,66 @@ describe("WebTransport.call", () => {
     fetchMock.mockResolvedValueOnce(proxy401())
     await expect(proxied.call("x")).rejects.toThrow("Unauthorized")
     expect(proxied.getConnectionSnapshot()).toBe("proxyUnauthorized")
+  })
+})
+
+describe("WebTransport answering from the head script's batch", () => {
+  type BootWindow = { __CODEG_BOOT__?: unknown }
+  function prime(answer: (cmd: string) => unknown) {
+    ;(window as unknown as BootWindow).__CODEG_BOOT__ = {
+      at: Date.now(),
+      calls: BOOT_PREFETCH_CALLS,
+      batch: Promise.resolve(BOOT_PREFETCH_CALLS.map(({ cmd }) => answer(cmd))),
+    }
+  }
+  beforeEach(() => __resetPrimedCallsForTests())
+  afterEach(() => {
+    delete (window as unknown as BootWindow).__CODEG_BOOT__
+    __resetPrimedCallsForTests()
+  })
+  const text = (body: unknown) => ({
+    status: 200,
+    ok: true,
+    text: async () => JSON.stringify(body),
+  })
+
+  it("answers a primed call without a request, once", async () => {
+    prime((cmd) => ({ s: 200, b: { from: "boot", cmd } }))
+    const t = new WebTransport("http://localhost")
+    fetchMock.mockResolvedValue(text({ from: "server" }))
+
+    expect(await t.call("list_folder_groups", {})).toEqual({
+      from: "boot",
+      cmd: "list_folder_groups",
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    const again = t.call("list_folder_groups", {})
+    await vi.advanceTimersByTimeAsync(10)
+    expect(await again).toEqual({ from: "server" })
+  })
+
+  it("asks the server when the primed answer is not a success", async () => {
+    prime(() => ({ s: 500, b: { code: "io_error", message: "disk" } }))
+    const t = new WebTransport("http://localhost")
+    fetchMock.mockResolvedValue(text([1]))
+
+    const read = t.call("list_folder_groups", {})
+    await vi.advanceTimersByTimeAsync(10)
+    expect(await read).toEqual([1])
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "http://localhost/api/list_folder_groups"
+    )
+  })
+
+  it("asks the server once the event socket is ready", async () => {
+    prime((cmd) => ({ s: 200, b: cmd }))
+    const { t } = connectReady()
+    fetchMock.mockResolvedValue(text("server"))
+
+    const read = t.call("list_opened_tabs")
+    await vi.advanceTimersByTimeAsync(10)
+    expect(await read).toBe("server")
   })
 })
 

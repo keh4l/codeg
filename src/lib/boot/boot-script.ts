@@ -7,5 +7,12 @@
 // longer accepts is found by the workspace's first request, which offers the
 // way back to sign-in. Desktop windows and "/" with a query or a hash (links
 // that the root page reads) are left to the root page as before.
+//
+// On "/workspace" it asks for the workspace's first reads at once, as one
+// batch, while the page's scripts load (`boot-prefetch.ts`).
 
-export const BOOT_INIT_SCRIPT = `(function(){try{if("__TAURI_INTERNALS__"in window)return;if(location.search||location.hash)return;var p=location.pathname.replace(/\\/+$/,"")||"/";if(p!=="/")return;if(!localStorage.getItem("codeg_token")&&localStorage.getItem("codeg_proxy_auth")!=="1")return;location.replace("/workspace")}catch(e){}})()`
+import { BOOT_PREFETCH_CALLS } from "./boot-prefetch"
+
+const CALLS = JSON.stringify(BOOT_PREFETCH_CALLS)
+
+export const BOOT_INIT_SCRIPT = `(function(){try{if("__TAURI_INTERNALS__"in window)return;var t=localStorage.getItem("codeg_token");if(!t&&localStorage.getItem("codeg_proxy_auth")!=="1")return;var p=location.pathname.replace(/\\/+$/,"")||"/";if(p==="/"){if(location.search||location.hash)return;location.replace("/workspace");return}if(p!=="/workspace"&&p!=="/workspace.html")return;var c=${CALLS};var h={"Content-Type":"application/json","X-Requested-With":"XMLHttpRequest"};if(t)h.Authorization="Bearer "+t;window.__CODEG_BOOT__={at:Date.now(),calls:c,batch:fetch("/api/batch",{method:"POST",headers:h,body:JSON.stringify({calls:c})}).then(function(r){return r.ok?r.json():null}).then(function(j){return j&&Array.isArray(j.results)&&j.results.length===c.length?j.results:null},function(){return null})}}catch(e){}})()`
