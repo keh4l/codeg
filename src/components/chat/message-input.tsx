@@ -1920,23 +1920,45 @@ export function MessageInput({
         resetComposer()
       }
     }
+    // keh4l build: the draft comes back into the composer when the steer
+    // cannot be delivered — if the composer is still this one and empty.
+    const restoreDraft = () => {
+      const editor = editorRef.current?.getEditor()
+      if (
+        !editor ||
+        editor !== sentEditor ||
+        currentComposerRef.current.draftStorageKey !==
+          effectiveDraftStorageKey ||
+        !editor.isEmpty
+      ) {
+        return
+      }
+      hydrateFromBlocks(editor, draft.blocks, knownInvocationsRef.current)
+      syncComposerEmpty()
+    }
     const enqueueInstead = () => {
-      if (!onEnqueue) return
+      if (!onEnqueue) {
+        restoreDraft()
+        return
+      }
       onEnqueue(draft, showModeSelector ? effectiveModeId : null)
       clearSentDraft()
       toast.info(t("steerQueuedInstead"))
     }
     const payload = buildSteerPayload(draft)
     if (!payload) return
+    // keh4l build: the composer clears at the click rather than a round trip
+    // later, when the server confirms the steer.
+    resetComposer()
     setSteering(true)
     try {
       await onSteer(payload.text, payload.blocks)
-      clearSentDraft()
     } catch (err) {
       if (isNoActiveTurnRejection(err)) {
         // The turn ended in the race window — reroute through the queue.
         enqueueInstead()
       } else {
+        restoreDraft()
         toast.error(
           t(steerChannel === "pull" ? "steerNoteFailed" : "steerFailed"),
           { description: toErrorMessage(err) }
@@ -1958,6 +1980,8 @@ export function MessageInput({
     resetComposer,
     steerChannel,
     t,
+    hydrateFromBlocks,
+    syncComposerEmpty,
   ])
 
   // keh4l build: what a send does while the agent is replying — the

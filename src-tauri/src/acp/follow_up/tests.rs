@@ -199,3 +199,86 @@ fn views_serialize_for_the_frontend() {
         serde_json::json!({"how": "not_running", "steerId": null, "itemId": "i"})
     );
 }
+
+// keh4l build: an item under the id the client chose, and a steer that comes
+// too late for its turn queued as the next message.
+
+#[tokio::test]
+async fn a_client_chosen_id_names_one_item() {
+    let (engine, conv) = engine_with_conversation().await;
+    let client_id = uuid::Uuid::new_v4().to_string();
+    let first = engine
+        .enqueue_inner_as(
+            conv,
+            None,
+            "a".into(),
+            text("a"),
+            ItemOptions::default(),
+            Some(client_id.clone()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first, client_id);
+    let again = engine
+        .enqueue_inner_as(
+            conv,
+            None,
+            "a".into(),
+            text("a"),
+            ItemOptions::default(),
+            Some(client_id.clone()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(again, client_id, "the same id is the same item");
+    assert_eq!(engine.view(conv).await.unwrap().items.len(), 1);
+
+    let named_badly = engine
+        .enqueue_inner_as(
+            conv,
+            None,
+            "b".into(),
+            text("b"),
+            ItemOptions::default(),
+            Some("not-a-uuid".into()),
+        )
+        .await
+        .unwrap();
+    assert_ne!(named_badly, "not-a-uuid");
+    assert_eq!(engine.view(conv).await.unwrap().items.len(), 2);
+}
+
+#[tokio::test]
+async fn a_steer_after_its_turn_goes_out_as_the_next_message() {
+    let (engine, conv) = engine_with_conversation().await;
+    let mut rx = engine
+        .rt
+        .manager
+        .insert_test_connection_live("c1", AgentType::ClaudeCode, None, EventEmitter::Noop)
+        .await;
+    let result = engine
+        .steer_or_queue_inner(
+            "c1",
+            Some(conv),
+            "next".into(),
+            text("next"),
+            NextMessage {
+                mode_id: Some("plan".into()),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.how, SteerHow::NextMessage);
+    assert!(result.item_id.is_some());
+    // Idle: the queue sends it at once.
+    let mut saw_prompt = false;
+    while let Ok(command) = rx.try_recv() {
+        if matches!(
+            command,
+            crate::acp::connection::ConnectionCommand::Prompt { .. }
+        ) {
+            saw_prompt = true;
+        }
+    }
+    assert!(saw_prompt, "the message went out");
+}

@@ -202,32 +202,52 @@ export function useFollowUpQueue({
     })()
   }, [conversationId, localQueue, localRemove, fail])
 
+  // keh4l build: a queued message carries the id it will have on the server
+  // (`clientId`), so it can be removed, edited, reordered or sent before the
+  // broadcast that confirms it; each of those waits for its enqueue to land
+  // first, and is dropped if the enqueue failed (the item is gone then).
+  const pendingEnqueuesRef = useRef(new Map<string, Promise<boolean>>())
+  const afterEnqueued = useCallback(
+    (ids: string[]) =>
+      Promise.all(
+        ids.map((id) => pendingEnqueuesRef.current.get(id) ?? true)
+      ).then((landed) => landed.every(Boolean)),
+    []
+  )
+
   const enqueue = useCallback<UseMessageQueueReturn["enqueue"]>(
     (draft, modeId, opts) => {
       if (conversationId == null) {
         localEnqueue(draft, modeId, opts)
         return
       }
-      const pendingId = `pending-${randomUUID()}`
+      const id = randomUUID()
       commit({
         ...current(),
         held: false,
-        items: [...current().items, { id: pendingId, draft, modeId }],
+        items: [...current().items, { id, draft, modeId }],
       })
-      followUpEnqueue({
+      const landed = followUpEnqueue({
         conversationId,
         connectionId: connectionRef.current,
         text: draft.displayText,
         blocks: draft.blocks,
         modeId,
         adoptSendTimeMode: opts?.adoptSendTimeMode === true,
-      }).catch((err) => {
-        commit({
-          ...current(),
-          items: current().items.filter((i) => i.id !== pendingId),
-        })
-        fail(err)
-      })
+        clientId: id,
+      }).then(
+        () => true,
+        (err) => {
+          commit({
+            ...current(),
+            items: current().items.filter((i) => i.id !== id),
+          })
+          fail(err)
+          return false
+        }
+      )
+      pendingEnqueuesRef.current.set(id, landed)
+      void landed.finally(() => pendingEnqueuesRef.current.delete(id))
     },
     [conversationId, localEnqueue, commit, fail, current]
   )
@@ -256,9 +276,19 @@ export function useFollowUpQueue({
         ...current(),
         items: current().items.filter((i) => i.id !== id),
       })
-      followUpRemove(id).catch(fail)
+      afterEnqueued([id])
+        .then((landed) => (landed ? followUpRemove(id) : undefined))
+        .catch(fail)
     },
-    [conversationId, localRemove, editingId, commit, fail, current]
+    [
+      conversationId,
+      localRemove,
+      editingId,
+      commit,
+      fail,
+      current,
+      afterEnqueued,
+    ]
   )
 
   const reorder = useCallback(
@@ -277,12 +307,14 @@ export function useFollowUpQueue({
         next.push(found)
       }
       commit({ ...current(), items: next })
-      followUpReorder(
-        conversationId,
-        next.map((i) => i.id)
-      ).catch(fail)
+      const ids = next.map((i) => i.id)
+      afterEnqueued(ids)
+        .then((landed) =>
+          landed ? followUpReorder(conversationId, ids) : undefined
+        )
+        .catch(fail)
     },
-    [conversationId, localReorder, commit, fail, current]
+    [conversationId, localReorder, commit, fail, current, afterEnqueued]
   )
 
   const moveToFront = useCallback(
@@ -310,9 +342,15 @@ export function useFollowUpQueue({
         items: current().items.map((i) => (i.id === id ? { ...i, draft } : i)),
       })
       setEditingId(null)
-      followUpUpdate(id, draft.displayText, draft.blocks).catch(fail)
+      afterEnqueued([id])
+        .then((landed) =>
+          landed
+            ? followUpUpdate(id, draft.displayText, draft.blocks)
+            : undefined
+        )
+        .catch(fail)
     },
-    [conversationId, localUpdateItem, commit, fail, current]
+    [conversationId, localUpdateItem, commit, fail, current, afterEnqueued]
   )
 
   const getQueueLength = useCallback(
@@ -332,13 +370,14 @@ export function useFollowUpQueue({
       const connection = connectionRef.current
       if (conversationId == null || !connection) return null
       try {
+        if (!(await afterEnqueued([id]))) return null
         return await followUpSendNow(id, connection)
       } catch (err) {
         fail(err)
         return null
       }
     },
-    [conversationId, fail]
+    [conversationId, fail, afterEnqueued]
   )
 
   const startEditing = useCallback(

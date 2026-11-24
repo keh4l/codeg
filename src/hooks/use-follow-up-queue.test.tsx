@@ -114,7 +114,13 @@ describe("useFollowUpQueue — server mode", () => {
       blocks: [{ type: "text", text: "b" }],
       modeId: "plan",
       adoptSendTimeMode: false,
+      clientId: expect.any(String),
     })
+    // keh4l build: shown under the id the server will give it.
+    const [{ clientId }] = api.followUpEnqueue.mock.calls[0] as [
+      { clientId: string },
+    ]
+    expect(result.current.queue[1]?.id).toBe(clientId)
     // The server sends it, never the browser.
     expect(result.current.dequeue()).toBeUndefined()
   })
@@ -127,7 +133,9 @@ describe("useFollowUpQueue — server mode", () => {
     )
     await waitFor(() => expect(result.current.queue).toHaveLength(2))
     act(() => result.current.moveToFront("id-b"))
-    expect(api.followUpReorder).toHaveBeenCalledWith(7, ["id-b", "id-a"])
+    await waitFor(() =>
+      expect(api.followUpReorder).toHaveBeenCalledWith(7, ["id-b", "id-a"])
+    )
     act(() => result.current.startEditing("id-a"))
     expect(result.current.editingItemId).toBe("id-a")
     act(() =>
@@ -136,16 +144,67 @@ describe("useFollowUpQueue — server mode", () => {
         displayText: "a2",
       })
     )
-    expect(api.followUpUpdate).toHaveBeenCalledWith("id-a", "a2", [
-      { type: "text", text: "a2" },
-    ])
+    await waitFor(() =>
+      expect(api.followUpUpdate).toHaveBeenCalledWith("id-a", "a2", [
+        { type: "text", text: "a2" },
+      ])
+    )
     expect(result.current.editingItemId).toBeNull()
     act(() => result.current.remove("id-b"))
-    expect(api.followUpRemove).toHaveBeenCalledWith("id-b")
+    await waitFor(() => expect(api.followUpRemove).toHaveBeenCalledWith("id-b"))
     expect(result.current.queue.map((q) => q.id)).toEqual(["id-a"])
     act(() => result.current.resume())
     expect(api.followUpResume).toHaveBeenCalledWith(7, "c1")
     expect(result.current.held).toBe(false)
+  })
+})
+
+describe("useFollowUpQueue — before the server confirms (fork)", () => {
+  it("removes a just-queued message once its enqueue has landed", async () => {
+    let land: (id: string) => void = () => {}
+    api.followUpEnqueue.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          land = resolve
+        })
+    )
+    const { result } = renderHook(
+      () => useFollowUpQueue({ conversationId: 7, connectionId: "c1" }),
+      { wrapper }
+    )
+    await waitFor(() => expect(result.current.queue).toHaveLength(1))
+    act(() =>
+      result.current.enqueue(
+        { blocks: [{ type: "text", text: "b" }], displayText: "b" },
+        null
+      )
+    )
+    const id = result.current.queue[1]!.id
+    act(() => result.current.remove(id))
+    expect(result.current.queue.map((q) => q.id)).not.toContain(id)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(api.followUpRemove).not.toHaveBeenCalled()
+    await act(async () => land(id))
+    await waitFor(() => expect(api.followUpRemove).toHaveBeenCalledWith(id))
+  })
+
+  it("does not remove on the server what never got there", async () => {
+    api.followUpEnqueue.mockRejectedValueOnce(new Error("offline"))
+    const { result } = renderHook(
+      () => useFollowUpQueue({ conversationId: 7, connectionId: "c1" }),
+      { wrapper }
+    )
+    await waitFor(() => expect(result.current.queue).toHaveLength(1))
+    act(() =>
+      result.current.enqueue(
+        { blocks: [{ type: "text", text: "b" }], displayText: "b" },
+        null
+      )
+    )
+    const id = result.current.queue[1]!.id
+    act(() => result.current.remove(id))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(api.followUpRemove).not.toHaveBeenCalled()
   })
 })
 

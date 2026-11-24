@@ -111,6 +111,18 @@ pub enum SteerHow {
     Queued,
     /// The turn had already ended: the caller sends it as a normal prompt.
     NotRunning,
+    /// keh4l build: the turn had already ended, and the message was queued
+    /// as the next one (`steer_or_queue`).
+    NextMessage,
+}
+
+/// keh4l build: how to queue a steer whose turn has already ended
+/// (`steer_or_queue`).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NextMessage {
+    #[serde(default)]
+    pub mode_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -460,7 +472,21 @@ impl Engine {
         options: ItemOptions,
         index: Option<usize>,
     ) -> Result<String, AppCommandError> {
-        let id = uuid::Uuid::new_v4().to_string();
+        self.insert_with_id(conversation_id, text, blocks, options, index, None)
+            .await
+    }
+
+    /// `insert` under `id` when given (keh4l build: an id the client chose).
+    async fn insert_with_id(
+        &self,
+        conversation_id: i32,
+        text: String,
+        blocks: Vec<PromptInputBlock>,
+        options: ItemOptions,
+        index: Option<usize>,
+        id: Option<String>,
+    ) -> Result<String, AppCommandError> {
+        let id = id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let options = (options.mode_id.is_some() || options.adopt_send_time_mode)
             .then(|| serde_json::to_string(&options).unwrap_or_default());
         follow_up_service::insert(
@@ -752,6 +778,46 @@ impl Engine {
         }
     }
 
+    async fn steer_or_queue_inner(
+        self: &Arc<Self>,
+        connection_id: &str,
+        conversation_id: Option<i32>,
+        text: String,
+        blocks: Vec<PromptInputBlock>,
+        next: NextMessage,
+    ) -> Result<SteerResult, AppCommandError> {
+        let result = self
+            .steer_inner(connection_id, conversation_id, text.clone(), blocks.clone())
+            .await?;
+        if result.how != SteerHow::NotRunning {
+            return Ok(result);
+        }
+        let bound = match self.rt.manager.get_state(connection_id).await {
+            Some(state) => state.read().await.conversation_id,
+            None => None,
+        };
+        let Some(conversation_id) = conversation_id.or(bound) else {
+            return Ok(result);
+        };
+        let item_id = self
+            .enqueue_inner(
+                conversation_id,
+                Some(connection_id),
+                text,
+                blocks,
+                ItemOptions {
+                    mode_id: next.mode_id,
+                    adopt_send_time_mode: false,
+                },
+            )
+            .await?;
+        Ok(SteerResult {
+            how: SteerHow::NextMessage,
+            steer_id: None,
+            item_id: Some(item_id),
+        })
+    }
+
     async fn queue_steer(
         &self,
         conversation_id: Option<i32>,
@@ -788,8 +854,30 @@ impl Engine {
         blocks: Vec<PromptInputBlock>,
         options: ItemOptions,
     ) -> Result<String, AppCommandError> {
+        self.enqueue_inner_as(conversation_id, connection_id, text, blocks, options, None)
+            .await
+    }
+
+    /// `enqueue_inner`, keh4l build: under the id the client chose (a UUID),
+    /// so it can remove or edit the item before the broadcast that confirms
+    /// it; the same id again is the same item, not a second one.
+    async fn enqueue_inner_as(
+        &self,
+        conversation_id: i32,
+        connection_id: Option<&str>,
+        text: String,
+        blocks: Vec<PromptInputBlock>,
+        options: ItemOptions,
+        client_id: Option<String>,
+    ) -> Result<String, AppCommandError> {
+        let client_id = client_id.filter(|id| uuid::Uuid::parse_str(id).is_ok());
+        if let Some(id) = &client_id {
+            if follow_up_service::get(self.db(), id).await?.is_some() {
+                return Ok(id.clone());
+            }
+        }
         let id = self
-            .insert(conversation_id, text, blocks, options, None)
+            .insert_with_id(conversation_id, text, blocks, options, None, client_id)
             .await?;
         lock(&self.queued_at).insert(conversation_id, Instant::now());
         // A new message lets a held queue go.
@@ -818,6 +906,21 @@ pub async fn steer(
         .await
 }
 
+/// keh4l build: [`steer`], and when the turn has already ended, queue the
+/// message as the next one — what the caller would otherwise do next, one
+/// round trip later.
+pub async fn steer_or_queue(
+    connection_id: &str,
+    conversation_id: Option<i32>,
+    text: String,
+    blocks: Vec<PromptInputBlock>,
+    next: NextMessage,
+) -> Result<SteerResult, AppCommandError> {
+    engine()?
+        .steer_or_queue_inner(connection_id, conversation_id, text, blocks, next)
+        .await
+}
+
 /// Queue a message for the conversation. With a connection, it goes out at
 /// once when that connection is idle. Returns the item id.
 pub async fn enqueue(
@@ -838,6 +941,32 @@ pub async fn enqueue(
                 mode_id,
                 adopt_send_time_mode,
             },
+        )
+        .await
+}
+
+/// [`enqueue`] under the id the client chose (keh4l build; see
+/// `enqueue_inner_as`).
+pub async fn enqueue_as(
+    conversation_id: i32,
+    connection_id: Option<&str>,
+    text: String,
+    blocks: Vec<PromptInputBlock>,
+    mode_id: Option<String>,
+    adopt_send_time_mode: bool,
+    client_id: Option<String>,
+) -> Result<String, AppCommandError> {
+    engine()?
+        .enqueue_inner_as(
+            conversation_id,
+            connection_id,
+            text,
+            blocks,
+            ItemOptions {
+                mode_id,
+                adopt_send_time_mode,
+            },
+            client_id,
         )
         .await
 }
@@ -940,7 +1069,8 @@ pub async fn send_now(item_id: &str, connection_id: &str) -> Result<SteerResult,
                     item_id: Some(item_id.to_string()),
                 });
             }
-            SteerHow::NotRunning => {}
+            // `steer_inner` never queues on its own (`steer_or_queue` does).
+            SteerHow::NotRunning | SteerHow::NextMessage => {}
         }
     }
     let guard = engine.conversation_lock(conversation_id);

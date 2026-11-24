@@ -3,7 +3,7 @@
 use axum::Json;
 use serde::Deserialize;
 
-use crate::acp::follow_up::{self, QueueView, SteerRecord, SteerResult};
+use crate::acp::follow_up::{self, NextMessage, QueueView, SteerRecord, SteerResult};
 use crate::acp::types::PromptInputBlock;
 use crate::app_error::AppCommandError;
 
@@ -15,14 +15,21 @@ pub struct SteerParams {
     pub conversation_id: Option<i32>,
     pub text: String,
     pub blocks: Vec<PromptInputBlock>,
+    /// keh4l build: queue it as the next message if the turn has ended.
+    #[serde(default)]
+    pub next_message: Option<NextMessage>,
 }
 
 pub async fn follow_up_steer(
     Json(p): Json<SteerParams>,
 ) -> Result<Json<SteerResult>, AppCommandError> {
-    Ok(Json(
-        follow_up::steer(&p.connection_id, p.conversation_id, p.text, p.blocks).await?,
-    ))
+    Ok(Json(match p.next_message {
+        Some(next) => {
+            follow_up::steer_or_queue(&p.connection_id, p.conversation_id, p.text, p.blocks, next)
+                .await?
+        }
+        None => follow_up::steer(&p.connection_id, p.conversation_id, p.text, p.blocks).await?,
+    }))
 }
 
 #[derive(Deserialize)]
@@ -37,19 +44,23 @@ pub struct EnqueueParams {
     pub mode_id: Option<String>,
     #[serde(default)]
     pub adopt_send_time_mode: Option<bool>,
+    /// keh4l build: the item id the client chose (a UUID).
+    #[serde(default)]
+    pub client_id: Option<String>,
 }
 
 pub async fn follow_up_enqueue(
     Json(p): Json<EnqueueParams>,
 ) -> Result<Json<String>, AppCommandError> {
     Ok(Json(
-        follow_up::enqueue(
+        follow_up::enqueue_as(
             p.conversation_id,
             p.connection_id.as_deref(),
             p.text,
             p.blocks,
             p.mode_id,
             p.adopt_send_time_mode.unwrap_or(false),
+            p.client_id,
         )
         .await?,
     ))

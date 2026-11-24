@@ -152,11 +152,15 @@ export function useFollowUpPanel({
         conversationId,
         text,
         blocks: promptBlocks,
+        // keh4l build: if the turn has ended, the server queues it as the next
+        // message itself — one request instead of two.
+        nextMessage: { modeId },
       })
       if (result.how === "queued") {
         toast.info(t("steerQueued"))
       } else if (result.how === "not_running") {
-        // The turn ended first: this is simply the next message.
+        // The turn ended first: this is simply the next message. (A server
+        // without `nextMessage` still answers this way.)
         if (conversationId == null) throw new Error(NO_ACTIVE_TURN)
         await followUpEnqueue({
           conversationId,

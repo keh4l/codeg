@@ -2,7 +2,7 @@
 //! as Tauri commands. The web handlers in `web::handlers::follow_up` call the
 //! same functions; the engine is process-global, so neither needs app state.
 
-use crate::acp::follow_up::{self, QueueView, SteerRecord, SteerResult};
+use crate::acp::follow_up::{self, NextMessage, QueueView, SteerRecord, SteerResult};
 use crate::acp::types::PromptInputBlock;
 use crate::app_error::AppCommandError;
 
@@ -12,8 +12,15 @@ pub async fn follow_up_steer(
     conversation_id: Option<i32>,
     text: String,
     blocks: Vec<PromptInputBlock>,
+    // keh4l build: queue it as the next message if the turn has ended.
+    next_message: Option<NextMessage>,
 ) -> Result<SteerResult, AppCommandError> {
-    follow_up::steer(&connection_id, conversation_id, text, blocks).await
+    match next_message {
+        Some(next) => {
+            follow_up::steer_or_queue(&connection_id, conversation_id, text, blocks, next).await
+        }
+        None => follow_up::steer(&connection_id, conversation_id, text, blocks).await,
+    }
 }
 
 #[cfg_attr(feature = "tauri-runtime", tauri::command)]
@@ -24,14 +31,17 @@ pub async fn follow_up_enqueue(
     blocks: Vec<PromptInputBlock>,
     mode_id: Option<String>,
     adopt_send_time_mode: Option<bool>,
+    // keh4l build: the item id the client chose (a UUID).
+    client_id: Option<String>,
 ) -> Result<String, AppCommandError> {
-    follow_up::enqueue(
+    follow_up::enqueue_as(
         conversation_id,
         connection_id.as_deref(),
         text,
         blocks,
         mode_id,
         adopt_send_time_mode.unwrap_or(false),
+        client_id,
     )
     .await
 }

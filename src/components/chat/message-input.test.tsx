@@ -2520,7 +2520,7 @@ describe("MessageInput mid-turn send (steer or queue)", () => {
     )
   })
 
-  it("steers the draft on click and clears the composer once delivered", async () => {
+  it("steers the draft on click and clears the composer at once", async () => {
     let resolveSteer: () => void = () => {}
     const onSteer = vi.fn(
       () =>
@@ -2537,14 +2537,35 @@ describe("MessageInput mid-turn send (steer or queue)", () => {
       expect(onSteer).toHaveBeenCalledWith("go left", undefined)
     )
     expect(onEnqueue).not.toHaveBeenCalled()
-    // Unsettled: the draft must survive until the backend confirms.
-    expect(serializeDocToText(editor.state.doc)).toContain("go left")
+    // keh4l build: cleared at the click, before the backend confirms.
+    expect(serializeDocToText(editor.state.doc)).not.toContain("go left")
     await act(async () => {
       resolveSteer()
     })
-    await waitFor(() =>
-      expect(serializeDocToText(editor.state.doc)).not.toContain("go left")
+    expect(serializeDocToText(editor.state.doc)).not.toContain("go left")
+  })
+
+  it("brings the draft back when the steer cannot be delivered", async () => {
+    let failSteer: (reason: unknown) => void = () => {}
+    const onSteer = vi.fn(
+      () =>
+        new Promise<void>((_, reject) => {
+          failSteer = reject
+        })
     )
+    const editor = await mountPrompting({ onSteer, onEnqueue: vi.fn() })
+    typeDraft(editor, "go left")
+    await waitFor(() => expect(sendButton()).toBeInTheDocument())
+    fireEvent.click(sendButton())
+    await waitFor(() => expect(onSteer).toHaveBeenCalled())
+    expect(serializeDocToText(editor.state.doc)).not.toContain("go left")
+    await act(async () => {
+      failSteer(new TypeError("Failed to fetch"))
+    })
+    await waitFor(() =>
+      expect(serializeDocToText(editor.state.doc)).toContain("go left")
+    )
+    expect(toast.error).toHaveBeenCalled()
   })
 
   it("queues on a ⌘/Ctrl-click", async () => {
@@ -2714,12 +2735,17 @@ describe("MessageInput mid-turn send (steer or queue)", () => {
       await waitFor(() =>
         expect(onSteer).toHaveBeenCalledWith("original instruction", undefined)
       )
-      expect(sendButton()).toBeDisabled()
+      // keh4l build: the sent draft left the composer at the click; what is
+      // typed while it is on its way is kept, and not sent with it.
       typeDraft(editor, " additional instruction")
+      await waitFor(() => expect(sendButton()).toBeDisabled())
       await act(async () => finish())
       await waitFor(() => expect(sendButton()).toBeEnabled())
       expect(serializeDocToText(editor.state.doc)).toContain(
         "additional instruction"
+      )
+      expect(serializeDocToText(editor.state.doc)).not.toContain(
+        "original instruction"
       )
       if (turnEnded) {
         expect(onEnqueue).toHaveBeenCalledWith(

@@ -3,7 +3,16 @@
 // window and device of one server sees the same one.
 
 import { getTransport } from "@/lib/transport"
+import type { CallOptions } from "@/lib/transport/types"
 import type { PromptInputBlock } from "@/lib/types"
+import { randomUUID } from "@/lib/utils"
+
+/** keh4l build: a call that must not run twice, sent again on a network
+ *  failure under one key (`web/idempotency.rs`). */
+const onceOnly = (key: string): CallOptions => ({
+  idempotencyKey: key,
+  retry: { attempts: 2 },
+})
 
 /** Broadcast with a {@link FollowUpQueueView} whenever a queue changes. */
 export const FOLLOW_UP_QUEUE_CHANGED_EVENT = "follow-up://queue-changed"
@@ -47,7 +56,14 @@ export interface FollowUpSteerUndelivered {
   blocks: PromptInputBlock[]
 }
 
-export type FollowUpSteerHow = "native" | "restart" | "queued" | "not_running"
+export type FollowUpSteerHow =
+  | "native"
+  | "restart"
+  | "queued"
+  | "not_running"
+  /** keh4l build: the turn had ended; queued as the next message
+   *  (`nextMessage`). */
+  | "next_message"
 
 export interface FollowUpSteerResult {
   how: FollowUpSteerHow
@@ -60,8 +76,15 @@ export function followUpSteer(args: {
   conversationId: number | null
   text: string
   blocks: PromptInputBlock[]
+  /** keh4l build: if the turn has ended, queue it as the next message in
+   *  the same request (answered `next_message`). */
+  nextMessage?: { modeId: string | null }
 }): Promise<FollowUpSteerResult> {
-  return getTransport().call("follow_up_steer", args)
+  return getTransport().call(
+    "follow_up_steer",
+    args,
+    onceOnly(`follow_up_steer:${randomUUID()}`)
+  )
 }
 
 export function followUpEnqueue(args: {
@@ -71,8 +94,14 @@ export function followUpEnqueue(args: {
   blocks: PromptInputBlock[]
   modeId: string | null
   adoptSendTimeMode: boolean
+  /** keh4l build: the item's id (a UUID), known before the server answers. */
+  clientId?: string
 }): Promise<string> {
-  return getTransport().call("follow_up_enqueue", args)
+  return getTransport().call(
+    "follow_up_enqueue",
+    args,
+    onceOnly(`follow_up_enqueue:${args.clientId ?? randomUUID()}`)
+  )
 }
 
 export function followUpList(

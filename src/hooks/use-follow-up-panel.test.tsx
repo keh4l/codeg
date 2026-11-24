@@ -103,6 +103,8 @@ describe("useFollowUpPanel", () => {
       conversationId: 7,
       text: "use env.ts",
       blocks: [{ type: "text", text: "use env.ts" }],
+      // keh4l build: the server queues it itself if the turn has ended.
+      nextMessage: { modeId: "code" },
     })
     expect(toastMock.info).not.toHaveBeenCalled()
   })
