@@ -2276,7 +2276,11 @@
         "updateGroupFailed": "فشل تحديث المجموعة: {message}",
         "deleteGroupFailed": "فشل حذف المجموعة: {message}",
         "moveToGroupFailed": "فشل نقل المجلد: {message}",
-        "applyLayoutFailed": "فشل حفظ ترتيب المجلدات: {message}"
+        "applyLayoutFailed": "فشل حفظ ترتيب المجلدات: {message}",
+        "renameConversationFailed": "فشل إعادة تسمية المحادثة: {message}",
+        "deleteConversationFailed": "فشل حذف المحادثة: {message}",
+        "pinConversationFailed": "فشل تغيير التثبيت: {message}",
+        "conversationStatusFailed": "فشل تغيير الحالة: {message}"
       },
       "statsLabel": "{folders} مجلدات · {convos} محادثة",
       "reorderHandle": "اسحب لإعادة الترتيب",
@@ -3543,7 +3547,8 @@
         "noticeTitle": "{agent}: {title}",
         "pluginLoadFailedTitle": "تعذّر على {agent} تحميل {count} من الإضافات",
         "snapshotHydrateFailedTitle": "تعذّرت قراءة حالة جلسة {agent} بالكامل",
-        "snapshotHydrateFailedDescription": "تمت استعادتها من حالتها الأساسية، فيمكنك المتابعة. قد لا يظهر الرد الجاري كاملًا إلا بعد انتهائه."
+        "snapshotHydrateFailedDescription": "تمت استعادتها من حالتها الأساسية، فيمكنك المتابعة. قد لا يظهر الرد الجاري كاملًا إلا بعد انتهائه.",
+        "answerSendFailed": "فشل إرسال ردّك: {message}"
       },
       "connectionLifecycle": {
         "tasks": {
@@ -3647,7 +3652,8 @@
         "mentionGroupSession": "الجلسات",
         "mentionGroupCommit": "عمليات الإيداع",
         "mentionGroupSkill": "المهارات",
-        "mentionGroupAssistant": "المساعدون"
+        "mentionGroupAssistant": "المساعدون",
+        "stopping": "جارٍ الإيقاف…"
       },
       "messageQueue": {
         "addToQueue": "إضافة للقائمة",

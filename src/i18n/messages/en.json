@@ -2276,7 +2276,11 @@
         "updateGroupFailed": "Failed to update group: {message}",
         "deleteGroupFailed": "Failed to delete group: {message}",
         "moveToGroupFailed": "Failed to move folder: {message}",
-        "applyLayoutFailed": "Failed to save the folder order: {message}"
+        "applyLayoutFailed": "Failed to save the folder order: {message}",
+        "renameConversationFailed": "Failed to rename conversation: {message}",
+        "deleteConversationFailed": "Failed to delete conversation: {message}",
+        "pinConversationFailed": "Failed to change pin: {message}",
+        "conversationStatusFailed": "Failed to change status: {message}"
       },
       "statsLabel": "{folders} folders · {convos} conversations",
       "reorderHandle": "Drag to reorder",
@@ -3543,7 +3547,8 @@
         "noticeTitle": "{agent}: {title}",
         "pluginLoadFailedTitle": "{agent} couldn't load {count, plural, one {# plugin} other {# plugins}}",
         "snapshotHydrateFailedTitle": "Couldn't fully read {agent}'s session state",
-        "snapshotHydrateFailedDescription": "It was restored from its basic status, so you can keep working. The reply in progress may only show in full once it finishes."
+        "snapshotHydrateFailedDescription": "It was restored from its basic status, so you can keep working. The reply in progress may only show in full once it finishes.",
+        "answerSendFailed": "Failed to send your answer: {message}"
       },
       "connectionLifecycle": {
         "tasks": {
@@ -3647,7 +3652,8 @@
         "mentionGroupSession": "Sessions",
         "mentionGroupCommit": "Commits",
         "mentionGroupSkill": "Skills",
-        "mentionGroupAssistant": "Assistants"
+        "mentionGroupAssistant": "Assistants",
+        "stopping": "Stopping…"
       },
       "messageQueue": {
         "addToQueue": "Queue message",

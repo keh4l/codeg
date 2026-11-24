@@ -2276,7 +2276,11 @@
         "updateGroupFailed": "그룹 업데이트 실패: {message}",
         "deleteGroupFailed": "그룹 삭제 실패: {message}",
         "moveToGroupFailed": "폴더 이동 실패: {message}",
-        "applyLayoutFailed": "폴더 순서 저장 실패: {message}"
+        "applyLayoutFailed": "폴더 순서 저장 실패: {message}",
+        "renameConversationFailed": "대화 이름 변경 실패: {message}",
+        "deleteConversationFailed": "대화 삭제 실패: {message}",
+        "pinConversationFailed": "고정 변경 실패: {message}",
+        "conversationStatusFailed": "상태 변경 실패: {message}"
       },
       "statsLabel": "{folders}개 폴더 · {convos}개 대화",
       "reorderHandle": "드래그하여 순서 변경",
@@ -3543,7 +3547,8 @@
         "noticeTitle": "{agent}: {title}",
         "pluginLoadFailedTitle": "{agent}에서 플러그인 {count}개를 불러오지 못했습니다",
         "snapshotHydrateFailedTitle": "{agent} 세션 상태를 완전히 읽지 못했습니다",
-        "snapshotHydrateFailedDescription": "기본 상태로 복구했으므로 계속 사용할 수 있습니다. 진행 중인 응답은 끝난 뒤에야 전체가 표시될 수 있습니다."
+        "snapshotHydrateFailedDescription": "기본 상태로 복구했으므로 계속 사용할 수 있습니다. 진행 중인 응답은 끝난 뒤에야 전체가 표시될 수 있습니다.",
+        "answerSendFailed": "응답 전송 실패: {message}"
       },
       "connectionLifecycle": {
         "tasks": {
@@ -3647,7 +3652,8 @@
         "mentionGroupSession": "세션",
         "mentionGroupCommit": "커밋",
         "mentionGroupSkill": "스킬",
-        "mentionGroupAssistant": "어시스턴트"
+        "mentionGroupAssistant": "어시스턴트",
+        "stopping": "중지하는 중…"
       },
       "messageQueue": {
         "addToQueue": "대기열에 추가",

@@ -23,12 +23,13 @@ import {
 } from "@/lib/chat-view-prefs"
 import { dispatchOpenThreadFind } from "@/components/message/compact/thread-find-bar"
 import { useImeGuard } from "@/hooks/use-ime-guard"
+import { toast } from "sonner"
 import {
-  deleteConversation,
-  updateConversationPinned,
-  updateConversationStatus,
-  updateConversationTitle,
-} from "@/lib/api"
+  deleteConversationNow,
+  renameConversation,
+  setConversationPinned,
+  setConversationStatus,
+} from "@/lib/conversation-actions"
 import { formatConversationTitle } from "@/lib/conversation-title"
 import {
   useConversationTitleLocked,
@@ -79,7 +80,7 @@ import { ConversationHeaderTags } from "./conversation-tag-picker"
 import { useIsMobile } from "@/hooks/use-mobile"
 import {
   DeleteConversationWorktreeOption,
-  removeChosenDelegationWorktree,
+  takeChosenDelegationWorktree,
 } from "./delete-conversation-worktree-option"
 
 // Phones only (fork-only, keh4l/codeg#10). Loaded on demand: desktop never
@@ -129,6 +130,7 @@ export const ConversationDetailHeader = memo(function ConversationDetailHeader({
   status,
 }: ConversationDetailHeaderProps) {
   const t = useTranslations("Folder.conversationCard")
+  const tSidebar = useTranslations("Folder.sidebar")
   const ime = useImeGuard()
   const tConv = useTranslations("Folder.conversation")
   const tStatus = useTranslations("Folder.statusLabels")
@@ -137,12 +139,6 @@ export const ConversationDetailHeader = memo(function ConversationDetailHeader({
   const tAppearance = useTranslations("AppearanceSettings.chatView")
   const chatViewPrefs = useChatViewPrefs()
   const { closeTab, openNewConversationTab } = useTabActions()
-  const updateConversationLocal = useAppWorkspaceStore(
-    (s) => s.updateConversationLocal
-  )
-  const refreshConversations = useAppWorkspaceStore(
-    (s) => s.refreshConversations
-  )
   // A brand-new (draft-origin) conversation keeps streaming under its virtual
   // runtime key even after it persists — its DB row exists, but the live
   // session (detail/turns) stays keyed by `runtimeConversationId`. So details
@@ -208,15 +204,12 @@ export const ConversationDetailHeader = memo(function ConversationDetailHeader({
   const handleTogglePin = useCallback(() => {
     if (conversationId == null) return
     const next = !isPinned
-    // Optimistic: instantly reorder the sidebar row; the upsert echo reconciles
-    // the server `pinned_at` (mirrors sidebar card handleTogglePin).
-    updateConversationLocal(conversationId, {
-      pinned_at: next ? new Date().toISOString() : null,
-    })
-    updateConversationPinned(conversationId, next).catch((err) => {
-      console.error("[ConversationDetailHeader] toggle pin:", err)
-    })
-  }, [conversationId, isPinned, updateConversationLocal])
+    // Instantly reorders the sidebar row; the upsert echo brings the server
+    // `pinned_at` (keh4l build: taken back with a toast if refused).
+    void setConversationPinned(conversationId, next, (message) =>
+      toast.error(tSidebar("toasts.pinConversationFailed", { message }))
+    )
+  }, [conversationId, isPinned, tSidebar])
 
   const handleNewConversation = useCallback(() => {
     if (!folderPath) return
@@ -231,30 +224,28 @@ export const ConversationDetailHeader = memo(function ConversationDetailHeader({
     setRenameTarget({ id: conversationId, title })
   }, [conversationId, title])
 
-  const handleRenameConfirm = useCallback(async () => {
+  // keh4l build: rename, status and delete change the row at once and take
+  // it back with a toast if the server refuses (`conversation-actions`); the
+  // server's broadcast replaces the list re-read.
+  const handleRenameConfirm = useCallback(() => {
     if (renameTarget == null) return
     const trimmed = renameValue.trim()
     if (trimmed && trimmed !== renameTarget.title) {
-      try {
-        await updateConversationTitle(renameTarget.id, trimmed)
-        refreshConversations()
-      } catch (err) {
-        console.error("[ConversationDetailHeader] rename:", err)
-      }
+      void renameConversation(renameTarget.id, trimmed, (message) =>
+        toast.error(tSidebar("toasts.renameConversationFailed", { message }))
+      )
     }
     setRenameTarget(null)
-  }, [renameTarget, renameValue, refreshConversations])
+  }, [renameTarget, renameValue, tSidebar])
 
   const handleStatusChange = useCallback(
     (next: ConversationStatus) => {
       if (conversationId == null) return
-      // Optimistic local patch, then persist (mirrors sidebar handleStatusChange).
-      updateConversationLocal(conversationId, { status: next })
-      updateConversationStatus(conversationId, next).catch((err) => {
-        console.error("[ConversationDetailHeader] status change:", err)
-      })
+      void setConversationStatus(conversationId, next, (message) =>
+        toast.error(tSidebar("toasts.conversationStatusFailed", { message }))
+      )
     },
-    [conversationId, updateConversationLocal]
+    [conversationId, tSidebar]
   )
 
   const handleDeleteOpen = useCallback(() => {
@@ -262,21 +253,24 @@ export const ConversationDetailHeader = memo(function ConversationDetailHeader({
     setDeleteTarget({ id: conversationId, tabId, title: displayTitle })
   }, [conversationId, tabId, displayTitle])
 
-  const handleDeleteConfirm = useCallback(async () => {
+  const handleDeleteConfirm = useCallback(() => {
     if (deleteTarget == null) return
-    try {
-      await deleteConversation(deleteTarget.id)
-      // keh4l build: and the delegation worktree, when the user said so.
-      void removeChosenDelegationWorktree(deleteTarget.id)
-      // The deleted conversation is gone — close its tab and refresh the list.
-      // Not recorded for reopen: there is no longer a conversation to reopen.
-      closeTab(deleteTarget.tabId, { recordForReopen: false })
-      refreshConversations()
-    } catch (err) {
-      console.error("[ConversationDetailHeader] delete:", err)
-    }
+    const { id, tabId: targetTabId } = deleteTarget
+    // keh4l build: the delegation worktree goes once the server has deleted
+    // the conversation, when the user said so (taken now: closing clears it).
+    const removeWorktree = takeChosenDelegationWorktree(id)
+    void deleteConversationNow(
+      id,
+      // Close its tab at once. Not recorded for reopen: there is no longer a
+      // conversation to reopen.
+      () => closeTab(targetTabId, { recordForReopen: false }),
+      (message) =>
+        toast.error(tSidebar("toasts.deleteConversationFailed", { message }))
+    ).then((deleted) => {
+      if (deleted) void removeWorktree?.()
+    })
     setDeleteTarget(null)
-  }, [deleteTarget, closeTab, refreshConversations])
+  }, [deleteTarget, closeTab, tSidebar])
 
   const handleOpenDetails = useCallback(() => {
     // Resolve on demand (no reactive whole-session subscription) via the same

@@ -2276,7 +2276,11 @@
         "updateGroupFailed": "Échec de la mise à jour du groupe : {message}",
         "deleteGroupFailed": "Échec de la suppression du groupe : {message}",
         "moveToGroupFailed": "Échec du déplacement du dossier : {message}",
-        "applyLayoutFailed": "Échec de l'enregistrement de l'ordre des dossiers : {message}"
+        "applyLayoutFailed": "Échec de l'enregistrement de l'ordre des dossiers : {message}",
+        "renameConversationFailed": "Échec du renommage de la conversation : {message}",
+        "deleteConversationFailed": "Échec de la suppression de la conversation : {message}",
+        "pinConversationFailed": "Échec de la modification de l'épinglage : {message}",
+        "conversationStatusFailed": "Échec de la modification du statut : {message}"
       },
       "statsLabel": "{folders} dossiers · {convos} conversations",
       "reorderHandle": "Glisser pour réorganiser",
@@ -3543,7 +3547,8 @@
         "noticeTitle": "{agent} : {title}",
         "pluginLoadFailedTitle": "{agent} n'a pas pu charger {count, plural, one {# plugin} other {# plugins}}",
         "snapshotHydrateFailedTitle": "Impossible de lire entièrement l'état de la session de {agent}",
-        "snapshotHydrateFailedDescription": "Elle a été restaurée à partir de son état de base, vous pouvez continuer. La réponse en cours ne s'affichera peut-être en entier qu'une fois terminée."
+        "snapshotHydrateFailedDescription": "Elle a été restaurée à partir de son état de base, vous pouvez continuer. La réponse en cours ne s'affichera peut-être en entier qu'une fois terminée.",
+        "answerSendFailed": "Échec de l'envoi de votre réponse : {message}"
       },
       "connectionLifecycle": {
         "tasks": {
@@ -3647,7 +3652,8 @@
         "mentionGroupSession": "Sessions",
         "mentionGroupCommit": "Commits",
         "mentionGroupSkill": "Compétences",
-        "mentionGroupAssistant": "Assistants"
+        "mentionGroupAssistant": "Assistants",
+        "stopping": "Arrêt en cours…"
       },
       "messageQueue": {
         "addToQueue": "Mettre en file",

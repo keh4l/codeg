@@ -56,15 +56,19 @@ import {
   openImportSessionsWindow,
   openInCode,
   openProjectBootWindow,
-  updateConversationTitle,
-  updateConversationStatus,
-  updateConversationPinned,
-  updateFolderColor,
-  updateFolderAlias,
-  updateFolderDefaultAgent,
-  deleteConversation,
   listChildConversations,
 } from "@/lib/api"
+import {
+  changeFolderColor,
+  changeFolderDefaultAgent,
+  setFolderAlias,
+} from "@/lib/folder-actions"
+import {
+  deleteConversationNow,
+  renameConversation,
+  setConversationPinned,
+  setConversationStatus,
+} from "@/lib/conversation-actions"
 import { isDesktop, revealItemInDir } from "@/lib/platform"
 import type {
   AgentType,
@@ -989,12 +993,6 @@ export function SidebarConversationList({
   const ensureGitHead = useAppWorkspaceStore((s) => s.ensureGitHead)
   const loading = useAppWorkspaceStore((s) => s.conversationsLoading)
   const error = useAppWorkspaceStore((s) => s.conversationsError)
-  const refreshConversations = useAppWorkspaceStore(
-    (s) => s.refreshConversations
-  )
-  const updateConversationLocal = useAppWorkspaceStore(
-    (s) => s.updateConversationLocal
-  )
   const removeFolderFromWorkspace = useAppWorkspaceStore(
     (s) => s.removeFolderFromWorkspace
   )
@@ -1006,7 +1004,6 @@ export function SidebarConversationList({
     (s) => s.deleteFolderGroup
   )
   const setFolderGroupAction = useAppWorkspaceStore((s) => s.setFolderGroup)
-  const refreshFolder = useAppWorkspaceStore((s) => s.refreshFolder)
   const refreshing = loading
   const { activeFolder } = useActiveFolder()
 
@@ -1311,45 +1308,34 @@ export function SidebarConversationList({
     })
   }, [])
 
+  // keh4l build: the folder changes at once and the update's own answer
+  // replaces the folder re-read; a refused change is taken back with a toast
+  // (`folder-actions`).
   const handleChangeFolderColor = useCallback(
     async (folderId: number, color: FolderThemeColor) => {
-      try {
-        await updateFolderColor(folderId, color)
-        await refreshFolder(folderId)
-      } catch (err) {
-        const msg = toErrorMessage(err)
-        toast.error(t("toasts.changeFolderColorFailed", { message: msg }))
-      }
+      await changeFolderColor(folderId, color, (message) =>
+        toast.error(t("toasts.changeFolderColorFailed", { message }))
+      )
     },
-    [refreshFolder, t]
+    [t]
   )
 
   const handleSetFolderAlias = useCallback(
     async (folderId: number, alias: string | null) => {
-      try {
-        await updateFolderAlias(folderId, alias)
-        await refreshFolder(folderId)
-      } catch (err) {
-        const msg = toErrorMessage(err)
-        toast.error(t("toasts.setFolderAliasFailed", { message: msg }))
-      }
+      await setFolderAlias(folderId, alias, (message) =>
+        toast.error(t("toasts.setFolderAliasFailed", { message }))
+      )
     },
-    [refreshFolder, t]
+    [t]
   )
 
   const handleChangeFolderDefaultAgent = useCallback(
     async (folderId: number, agentType: AgentType | null) => {
-      try {
-        await updateFolderDefaultAgent(folderId, agentType)
-        await refreshFolder(folderId)
-      } catch (err) {
-        const msg = toErrorMessage(err)
-        toast.error(
-          t("toasts.changeFolderDefaultAgentFailed", { message: msg })
-        )
-      }
+      await changeFolderDefaultAgent(folderId, agentType, (message) =>
+        toast.error(t("toasts.changeFolderDefaultAgentFailed", { message }))
+      )
     },
-    [refreshFolder, t]
+    [t]
   )
 
   const handleOpenFolderInSystemExplorer = useCallback(
@@ -2224,49 +2210,58 @@ export function SidebarConversationList({
     [openTab, openConversations]
   )
 
+  // keh4l build: rename, delete, status and pin change the row at once and
+  // take it back with a toast if the server refuses (`conversation-actions`).
+  // The server's `conversation://changed` broadcast replaces the list re-read
+  // each of them used to do.
   const handleRename = useCallback(
     async (id: number, newTitle: string) => {
-      await updateConversationTitle(id, newTitle)
-      refreshConversations()
+      void renameConversation(id, newTitle, (message) =>
+        toast.error(t("toasts.renameConversationFailed", { message }))
+      )
     },
-    [refreshConversations]
+    [t]
   )
 
+  /** Resolves once the server has deleted it; rejects if it could not. */
   const handleDelete = useCallback(
     async (id: number, agentType: string, folderId: number) => {
-      await deleteConversation(id)
-      // No-op if no matching tab is open (the context guards on its tab ref).
-      closeConversationTab(
-        folderId,
+      const deleted = await deleteConversationNow(
         id,
-        agentType as Parameters<typeof openTab>[2]
+        // No-op if no matching tab is open (the context guards on its tab ref).
+        () =>
+          closeConversationTab(
+            folderId,
+            id,
+            agentType as Parameters<typeof openTab>[2]
+          ),
+        (message) =>
+          toast.error(t("toasts.deleteConversationFailed", { message }))
       )
-      refreshConversations()
+      if (!deleted) throw new Error("conversation not deleted")
     },
-    [closeConversationTab, refreshConversations]
+    [closeConversationTab, t]
   )
 
   const handleStatusChange = useCallback(
     async (id: number, status: ConversationStatus) => {
-      updateConversationLocal(id, { status })
-      await updateConversationStatus(id, status)
+      void setConversationStatus(id, status, (message) =>
+        toast.error(t("toasts.conversationStatusFailed", { message }))
+      )
     },
-    [updateConversationLocal]
+    [t]
   )
 
   const handleTogglePin = useCallback(
     async (id: number, nextPinned: boolean) => {
-      // Optimistic: instantly move the row into / out of the Pinned section. The
-      // upsert echo (emit_conversation_upsert) reconciles the exact server
-      // `pinned_at`; on failure the next refresh / WS reconnect corrects it
-      // (mirrors handleStatusChange's lenient pattern). Stable callback — only
-      // `updateConversationLocal` as a dep — so the card memo keeps bailing out.
-      updateConversationLocal(id, {
-        pinned_at: nextPinned ? new Date().toISOString() : null,
-      })
-      await updateConversationPinned(id, nextPinned)
+      // Instantly moves the row into / out of the Pinned section; the upsert
+      // echo (emit_conversation_upsert) brings the exact server `pinned_at`.
+      // Stable callback, so the card memo keeps bailing out.
+      void setConversationPinned(id, nextPinned, (message) =>
+        toast.error(t("toasts.pinConversationFailed", { message }))
+      )
     },
-    [updateConversationLocal]
+    [t]
   )
 
   // "Move to folder" — the row's submenu picks the folder, this one dialog for

@@ -20,6 +20,8 @@ import {
   type ReactNode,
 } from "react"
 import { useTranslations } from "next-intl"
+import { toast } from "sonner"
+import { toErrorMessage } from "@/lib/app-error"
 import { subscribe, getEventStream } from "@/lib/platform"
 import type {
   AttachHandlers,
@@ -795,6 +797,15 @@ type Action =
        * Omit for unconditional clears (e.g. cancel paths).
        */
       requestId?: string
+    }
+  | {
+      // keh4l build: a card cleared at the click whose answer could not be
+      // sent comes back — each only while no other card has taken its place.
+      type: "BLOCKING_PROMPT_RESTORED"
+      contextKey: string
+      permission?: PendingPermission
+      askQuestion?: PendingQuestionState
+      planApproval?: PendingPlanApprovalState
     }
   | {
       // What an answered permission request decided about its tool call
@@ -2962,6 +2973,25 @@ function connectionsReducer(
       return next
     }
 
+    case "BLOCKING_PROMPT_RESTORED": {
+      const conn = state.get(action.contextKey)
+      if (!conn) return state
+      const restored: Partial<ConnectionState> = {}
+      if (action.permission && conn.pendingPermission == null) {
+        restored.pendingPermission = action.permission
+      }
+      if (action.askQuestion && conn.pendingAskQuestion == null) {
+        restored.pendingAskQuestion = action.askQuestion
+      }
+      if (action.planApproval && conn.pendingPlanApproval == null) {
+        restored.pendingPlanApproval = action.planApproval
+      }
+      if (Object.keys(restored).length === 0) return state
+      const next = new Map(state)
+      next.set(action.contextKey, { ...conn, ...restored })
+      return next
+    }
+
     case "TOOL_APPROVAL": {
       const conn = state.get(action.contextKey)
       if (!conn) return state
@@ -4335,6 +4365,9 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
 
   // Activity tracking (no re-renders)
   const lastActivityRef = useRef(new Map<string, number>())
+  // keh4l build: the latest pick of each config option per connection
+  // (`setConfigOption`), so a failed older pick does not undo a newer one.
+  const latestConfigPickRef = useRef(new Map<string, symbol>())
   // Streaming coalescing queue + its window, PER CONNECTION (see
   // `flushStreamingQueue`). Entries are created on the first delta after a
   // flush and removed by the flush that drains them, so both maps hold only
@@ -8855,6 +8888,24 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
     async (contextKey: string, configId: string, valueId: string) => {
       const conn = storeRef.current.connections.get(contextKey)
       if (!conn) return
+      // keh4l build: what the picker showed before, to put back if this pick
+      // cannot be sent — unless a newer pick of the same option has started.
+      const shownValue = (c: ConnectionState | undefined) => {
+        const options =
+          c?.configOptions ??
+          (c ? selectorsCache.get(c.agentType)?.configOptions : null) ??
+          null
+        const kind = options?.find((o) => o.id === configId)?.kind
+        return kind &&
+          (kind.type === "select" || kind.type === "boolean") &&
+          kind.current_value != null
+          ? String(kind.current_value)
+          : null
+      }
+      const previousValue = shownValue(conn)
+      const pickKey = `${contextKey}\u0000${configId}`
+      const pick = Symbol(pickKey)
+      latestConfigPickRef.current.set(pickKey, pick)
       dispatch({
         type: "CONFIG_OPTION_CHANGED",
         contextKey,
@@ -8865,9 +8916,37 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
       // can ship it back to the backend as a preferred config value.
       saveConfigPreference(conn.agentType, configId, valueId)
       lastActivityRef.current.set(contextKey, Date.now())
-      await acpSetConfigOption(conn.connectionId, configId, valueId)
+      try {
+        await acpSetConfigOption(conn.connectionId, configId, valueId)
+      } catch (e) {
+        const latest = latestConfigPickRef.current.get(pickKey) === pick
+        if (
+          latest &&
+          previousValue != null &&
+          !isConnectionGoneError(e) &&
+          shownValue(storeRef.current.connections.get(contextKey)) === valueId
+        ) {
+          dispatch({
+            type: "CONFIG_OPTION_CHANGED",
+            contextKey,
+            configId,
+            valueId: previousValue,
+          })
+          saveConfigPreference(conn.agentType, configId, previousValue)
+          toast.error(
+            t("backendErrors.setConfigOptionFailed", {
+              agent: getAgentLabel(conn.agentType),
+            })
+          )
+        }
+        throw e
+      } finally {
+        if (latestConfigPickRef.current.get(pickKey) === pick) {
+          latestConfigPickRef.current.delete(pickKey)
+        }
+      }
     },
-    [dispatch]
+    [dispatch, t]
   )
 
   const cancel = useCallback(
@@ -8911,6 +8990,37 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
     []
   )
 
+  /** keh4l build: an answer cleared its card at the click and then could
+   *  not be sent: a connection the backend no longer has is settled as gone;
+   *  otherwise the card comes back (if no other took its place) and a toast
+   *  says why. */
+  const failedAnswer = useCallback(
+    (
+      contextKey: string,
+      connectionId: string,
+      error: unknown,
+      cards: {
+        permission?: PendingPermission | null
+        askQuestion?: PendingQuestionState | null
+        planApproval?: PendingPlanApprovalState | null
+      }
+    ) => {
+      if (isConnectionGoneError(error)) {
+        markConnectionGone(contextKey, connectionId)
+        return
+      }
+      dispatch({
+        type: "BLOCKING_PROMPT_RESTORED",
+        contextKey,
+        permission: cards.permission ?? undefined,
+        askQuestion: cards.askQuestion ?? undefined,
+        planApproval: cards.planApproval ?? undefined,
+      })
+      toast.error(t("answerSendFailed", { message: toErrorMessage(error) }))
+    },
+    [dispatch, markConnectionGone, t]
+  )
+
   const respondPermission = useCallback(
     async (contextKey: string, requestId: string, optionId: string) => {
       const conn = storeRef.current.connections.get(contextKey)
@@ -8921,16 +9031,27 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
         )
         return
       }
+      // keh4l build: the card goes at the click, not a round trip later; it
+      // comes back with a toast if the answer cannot be sent. The answer is
+      // safe to send again (the server ignores one for a request it no
+      // longer holds), so a network failure is retried.
+      const card =
+        conn.pendingPermission?.request_id === requestId
+          ? conn.pendingPermission
+          : null
+      lastActivityRef.current.set(contextKey, Date.now())
+      dispatch({ type: "PERMISSION_CLEARED", contextKey, requestId })
       try {
-        lastActivityRef.current.set(contextKey, Date.now())
-        await acpRespondPermission(conn.connectionId, requestId, optionId)
-        dispatch({ type: "PERMISSION_CLEARED", contextKey, requestId })
+        await acpRespondPermission(conn.connectionId, requestId, optionId, {
+          retry: { attempts: 2 },
+        })
       } catch (e) {
         console.error("[AcpConnections] respondPermission failed:", e)
+        failedAnswer(contextKey, conn.connectionId, e, { permission: card })
         throw e
       }
     },
-    [dispatch]
+    [dispatch, failedAnswer]
   )
 
   const answerQuestion = useCallback(
@@ -8945,18 +9066,24 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           `[AcpConnections] answerQuestion: no connection for ${contextKey}`
         )
       }
+      // keh4l build: the card goes at the click (the backend also broadcasts
+      // question_resolved, idempotent on the matched id); it comes back with
+      // a toast if the answer cannot be sent.
+      const card =
+        conn.pendingAskQuestion?.question_id === questionId
+          ? conn.pendingAskQuestion
+          : null
+      lastActivityRef.current.set(contextKey, Date.now())
+      dispatch({ type: "CLEAR_ASK_QUESTION", contextKey, questionId })
       try {
-        lastActivityRef.current.set(contextKey, Date.now())
         await acpAnswerQuestion(conn.connectionId, questionId, answer)
-        // Optimistically clear; the backend also broadcasts question_resolved
-        // (idempotent on the matched id).
-        dispatch({ type: "CLEAR_ASK_QUESTION", contextKey, questionId })
       } catch (e) {
         console.error("[AcpConnections] answerQuestion failed:", e)
+        failedAnswer(contextKey, conn.connectionId, e, { askQuestion: card })
         throw e
       }
     },
-    [dispatch]
+    [dispatch, failedAnswer]
   )
 
   const answerPlanApproval = useCallback(
@@ -8974,18 +9101,24 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           `[AcpConnections] answerPlanApproval: no connection for ${contextKey}`
         )
       }
+      // keh4l build: the card goes at the click (the backend also broadcasts
+      // plan_approval_resolved, idempotent on the matched id); it comes back
+      // with a toast if the answer cannot be sent.
+      const card =
+        conn.pendingPlanApproval?.approval_id === approvalId
+          ? conn.pendingPlanApproval
+          : null
+      lastActivityRef.current.set(contextKey, Date.now())
+      dispatch({ type: "CLEAR_PLAN_APPROVAL", contextKey, approvalId })
       try {
-        lastActivityRef.current.set(contextKey, Date.now())
         await acpAnswerPlanApproval(conn.connectionId, approvalId, answer)
-        // Optimistically clear; the backend also broadcasts
-        // plan_approval_resolved (idempotent on the matched id).
-        dispatch({ type: "CLEAR_PLAN_APPROVAL", contextKey, approvalId })
       } catch (e) {
         console.error("[AcpConnections] answerPlanApproval failed:", e)
+        failedAnswer(contextKey, conn.connectionId, e, { planApproval: card })
         throw e
       }
     },
-    [dispatch]
+    [dispatch, failedAnswer]
   )
 
   const attachDelegationChild = useCallback(

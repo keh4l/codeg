@@ -296,9 +296,6 @@ const ConversationTabView = memo(function ConversationTabView({
   const sharedT = useTranslations("Folder.chat.shared")
   const tMessageList = useTranslations("Folder.chat.messageList")
   const tAsyncTasks = useTranslations("Folder.chat.asyncTasks")
-  const refreshConversations = useAppWorkspaceStore(
-    (s) => s.refreshConversations
-  )
   const upsertFolder = useAppWorkspaceStore((s) => s.upsertFolder)
   // Subscribe to ONLY this tab's own row (identified by `tabId`), not the whole
   // `tabs` array — so a sibling tab changing, or a tab-switch (isActive rides in
@@ -1323,7 +1320,6 @@ const ConversationTabView = memo(function ConversationTabView({
             setDbConversationId(effectiveConversationId, newConversationId)
             if (!mountedRef.current) {
               setPendingCleanup(effectiveConversationId, true)
-              refreshConversations()
               return
             }
             // Seed allFolders with the hidden chat folder so the tab's new
@@ -1359,7 +1355,6 @@ const ConversationTabView = memo(function ConversationTabView({
               // Component unmounted while creating — mark for deferred cleanup
               // so the background turn_complete handler can clean up later.
               setPendingCleanup(effectiveConversationId, true)
-              refreshConversations()
               return
             }
             setCreatedConversationId(newConversationId)
@@ -1372,7 +1367,8 @@ const ConversationTabView = memo(function ConversationTabView({
             )
           }
           clearMessageInputDraft(buildNewConversationDraftStorageKey(tabId))
-          refreshConversations()
+          // keh4l build: no list re-read — the server's create broadcasts the
+          // new row (`conversation://changed`).
 
           // Now that the row exists, kick off the actual prompt with the
           // conversation_id pinned so the backend adopts our row instead of
@@ -1427,7 +1423,6 @@ const ConversationTabView = memo(function ConversationTabView({
       hasPersistedConversation,
       lifecycleSend,
       pinTab,
-      refreshConversations,
       selectedAgent,
       setDbConversationId,
       setExternalId,
@@ -1496,8 +1491,8 @@ const ConversationTabView = memo(function ConversationTabView({
         sessionIdRef.current = forkedSessionId
         setExternalId(effectiveConversationId, forkedSessionId)
         // The backend's two-row reshuffle: the current row now points at S2
-        // and a freshly inserted sibling preserves S1.
-        refreshConversations()
+        // and a freshly inserted sibling preserves S1. keh4l build: both rows
+        // arrive on the fork's own broadcast, so no list re-read.
         // This row's HISTORY just changed — the whole point is that S2 ends
         // at the chosen turn. The turns rendered right now came
         // from S1 — the persisted detail plus every turn this session streamed
@@ -1540,7 +1535,6 @@ const ConversationTabView = memo(function ConversationTabView({
       effectiveConversationId,
       folderId,
       refetchDetail,
-      refreshConversations,
       setExternalId,
       t,
     ]

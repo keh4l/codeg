@@ -208,9 +208,6 @@ export function CanvasConversationSurface({
     setSyncState,
     syncTurnMetadata,
   } = useConversationRuntimeActions()
-  const refreshConversations = useAppWorkspaceStore(
-    (s) => s.refreshConversations
-  )
   const upsertFolder = useAppWorkspaceStore((s) => s.upsertFolder)
 
   // Fixed at mount, like the tab view's: a draft streams under a virtual id and
@@ -685,7 +682,8 @@ export function CanvasConversationSurface({
           setExternalId(effectiveConversationId, connSessionId ?? null)
           setDbConversationId(effectiveConversationId, newId)
           setCreatedConversationId(newId)
-          refreshConversations()
+          // keh4l build: no list re-read — the server's create broadcasts the
+          // new row (`conversation://changed`).
           onConversationCreated?.(newId, sendFolderId)
           lifecycleSend(draft, selectedModeIdArg, {
             folderId: sendFolderId,
@@ -724,7 +722,6 @@ export function CanvasConversationSurface({
       effectiveConversationId,
       lifecycleSend,
       onConversationCreated,
-      refreshConversations,
       removeOptimisticTurn,
       setDbConversationId,
       setExternalId,

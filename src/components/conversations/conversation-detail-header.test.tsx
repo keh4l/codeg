@@ -39,6 +39,8 @@ vi.mock("@/stores/app-workspace-store", () => {
   const state = {
     updateConversationLocal: h.updateConversationLocal,
     refreshConversations: h.refreshConversations,
+    applyConversationRemove: vi.fn(),
+    restoreConversation: vi.fn(),
     conversations: [] as unknown[],
   }
   const useStore = (selector: (s: typeof state) => unknown) => selector(state)
@@ -107,14 +109,15 @@ describe("ConversationDetailHeader dialog target snapshot", () => {
     await user.click(getByRole("button", { name: "Delete" }))
 
     await waitFor(() => {
-      expect(h.deleteConversation).toHaveBeenCalledWith(1)
+      // keh4l build: the delete goes with its retry options.
+      expect(h.deleteConversation).toHaveBeenCalledWith(1, expect.anything())
       // `recordForReopen: false`: the row is deleted, so "reopen closed tab"
       // must not be able to mint a tab pointing back at it.
       expect(h.closeTab).toHaveBeenCalledWith("tab-a", {
         recordForReopen: false,
       })
     })
-    expect(h.deleteConversation).not.toHaveBeenCalledWith(2)
+    expect(h.deleteConversation).not.toHaveBeenCalledWith(2, expect.anything())
     expect(h.closeTab).not.toHaveBeenCalledWith("tab-b", expect.anything())
   })
 
@@ -135,8 +138,16 @@ describe("ConversationDetailHeader dialog target snapshot", () => {
     await user.click(getByRole("button", { name: "Save" }))
 
     await waitFor(() => {
-      expect(h.updateConversationTitle).toHaveBeenCalledWith(1, "renamed")
+      expect(h.updateConversationTitle).toHaveBeenCalledWith(
+        1,
+        "renamed",
+        expect.anything()
+      )
     })
-    expect(h.updateConversationTitle).not.toHaveBeenCalledWith(2, "renamed")
+    expect(h.updateConversationTitle).not.toHaveBeenCalledWith(
+      2,
+      "renamed",
+      expect.anything()
+    )
   })
 })

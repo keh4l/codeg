@@ -475,6 +475,90 @@ describe("WebTransport.call", () => {
   })
 })
 
+describe("WebTransport retrying a call (CallOptions.retry)", () => {
+  const ok = (body: unknown) => ({
+    status: 200,
+    ok: true,
+    text: async () => JSON.stringify(body),
+  })
+  type Outcome = { value: unknown } | { error: unknown }
+  const outcome = (p: Promise<unknown>): Promise<Outcome> =>
+    p.then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error })
+    )
+
+  it("sends a call that failed on the network again, with the same key", async () => {
+    const t = new WebTransport("http://localhost")
+    fetchMock
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce({
+        status: 502,
+        ok: false,
+        json: async () => {
+          throw new SyntaxError("html")
+        },
+      })
+      .mockResolvedValueOnce(ok({ done: true }))
+
+    const call = t.call(
+      "update_conversation_title",
+      { conversationId: 1, title: "x" },
+      { idempotencyKey: "k-1", retry: { attempts: 2 } }
+    )
+    await vi.advanceTimersByTimeAsync(2_100)
+    expect(await call).toEqual({ done: true })
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    for (const [, init] of fetchMock.mock.calls) {
+      expect(init.headers["X-Codeg-Idempotency-Key"]).toBe("k-1")
+    }
+  })
+
+  it("gives up after its attempts, or once the result is no longer wanted", async () => {
+    const t = new WebTransport("http://localhost")
+    fetchMock.mockRejectedValue(new TypeError("Failed to fetch"))
+    const spent = outcome(t.call("x", {}, { retry: { attempts: 1 } }))
+    await vi.advanceTimersByTimeAsync(2_100)
+    expect(String(((await spent) as { error: unknown }).error)).toContain(
+      "Failed to fetch"
+    )
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+
+    fetchMock.mockClear()
+    let wanted = true
+    const dropped = outcome(
+      t.call("x", {}, { retry: { attempts: 2, stillWanted: () => wanted } })
+    )
+    await vi.advanceTimersByTimeAsync(100)
+    wanted = false
+    await vi.advanceTimersByTimeAsync(2_100)
+    expect("error" in (await dropped)).toBe(true)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not send again what the server answered, or without retry", async () => {
+    const t = new WebTransport("http://localhost")
+    fetchMock.mockResolvedValue({
+      status: 500,
+      ok: false,
+      json: async () => ({ code: "io_error", message: "disk" }),
+    })
+    const answered = outcome(t.call("x", {}, { retry: { attempts: 2 } }))
+    await vi.advanceTimersByTimeAsync(2_100)
+    expect(await answered).toEqual({
+      error: { code: "io_error", message: "disk" },
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    fetchMock.mockClear()
+    fetchMock.mockRejectedValue(new TypeError("Failed to fetch"))
+    const plain = outcome(t.call("x", {}, { timeoutMs: 1_000 }))
+    await vi.advanceTimersByTimeAsync(2_100)
+    expect("error" in (await plain)).toBe(true)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe("WebTransport answering from the head script's batch", () => {
   type BootWindow = { __CODEG_BOOT__?: unknown }
   function prime(answer: (cmd: string) => unknown) {

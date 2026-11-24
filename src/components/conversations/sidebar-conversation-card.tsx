@@ -90,7 +90,7 @@ import { useBranchChip, useResolvedTags } from "@/hooks/use-conversation-tags"
 import { useAssistant } from "@/stores/assistants-store"
 import {
   DeleteConversationWorktreeOption,
-  removeChosenDelegationWorktree,
+  takeChosenDelegationWorktree,
 } from "./delete-conversation-worktree-option"
 
 /** How long the pointer rests on a row before its conversation is read
@@ -391,15 +391,20 @@ export const SidebarConversationCard = memo(function SidebarConversationCard({
     setRenameOpen(false)
   }, [renameValue, conversation.id, conversation.title, onRename])
 
-  const handleDeleteConfirm = useCallback(async () => {
-    await onDelete(
+  const handleDeleteConfirm = useCallback(() => {
+    // keh4l build: the row goes at once (`onDelete`), and the delegation
+    // worktree — when the user said so — once the server has deleted the
+    // conversation. The choice is taken now: closing the dialog clears it.
+    const removeWorktree = takeChosenDelegationWorktree(conversation.id)
+    setDeleteOpen(false)
+    void onDelete(
       conversation.id,
       conversation.agent_type,
       conversation.folder_id
+    ).then(
+      () => removeWorktree?.(),
+      () => {}
     )
-    // keh4l build: and the delegation worktree, when the user said so.
-    void removeChosenDelegationWorktree(conversation.id)
-    setDeleteOpen(false)
   }, [
     conversation.id,
     conversation.agent_type,

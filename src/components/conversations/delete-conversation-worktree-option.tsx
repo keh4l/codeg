@@ -88,6 +88,26 @@ export function DeleteConversationWorktreeOption({
   )
 }
 
+/**
+ * Take the user's choice for `conversationId` now — closing the dialog
+ * clears it — and return what removes that worktree, to run once the
+ * conversation is deleted; `null` when nothing was chosen.
+ */
+export function takeChosenDelegationWorktree(
+  conversationId: number
+): (() => Promise<void>) | null {
+  const taskId = chosen.get(conversationId)
+  chosen.delete(conversationId)
+  if (!taskId) return null
+  return async () => {
+    try {
+      await removeDelegationWorktree(taskId, false, true)
+    } catch (err) {
+      toast.error(toErrorMessage(err))
+    }
+  }
+}
+
 /** Remove the worktree the user chose to delete with `conversationId`. */
 export async function removeChosenDelegationWorktree(
   conversationId: number

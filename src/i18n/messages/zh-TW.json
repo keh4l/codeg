@@ -2276,7 +2276,11 @@
         "updateGroupFailed": "更新分組失敗：{message}",
         "deleteGroupFailed": "刪除分組失敗：{message}",
         "moveToGroupFailed": "移動資料夾失敗：{message}",
-        "applyLayoutFailed": "儲存資料夾順序失敗：{message}"
+        "applyLayoutFailed": "儲存資料夾順序失敗：{message}",
+        "renameConversationFailed": "重新命名會話失敗：{message}",
+        "deleteConversationFailed": "刪除會話失敗：{message}",
+        "pinConversationFailed": "變更置頂失敗：{message}",
+        "conversationStatusFailed": "變更狀態失敗：{message}"
       },
       "statsLabel": "{folders} 個資料夾 · {convos} 個對話",
       "reorderHandle": "拖拽排序",
@@ -3543,7 +3547,8 @@
         "noticeTitle": "{agent}：{title}",
         "pluginLoadFailedTitle": "{agent} 有 {count} 個外掛載入失敗",
         "snapshotHydrateFailedTitle": "{agent} 的工作階段狀態未能完整讀取",
-        "snapshotHydrateFailedDescription": "已依基本狀態恢復，可以繼續使用。進行中的回覆可能要等它結束後才會完整顯示。"
+        "snapshotHydrateFailedDescription": "已依基本狀態恢復，可以繼續使用。進行中的回覆可能要等它結束後才會完整顯示。",
+        "answerSendFailed": "回覆傳送失敗：{message}"
       },
       "connectionLifecycle": {
         "tasks": {
@@ -3647,7 +3652,8 @@
         "mentionGroupSession": "工作階段",
         "mentionGroupCommit": "提交",
         "mentionGroupSkill": "技能",
-        "mentionGroupAssistant": "助手"
+        "mentionGroupAssistant": "助手",
+        "stopping": "正在停止…"
       },
       "messageQueue": {
         "addToQueue": "加入佇列",

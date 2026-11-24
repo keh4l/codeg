@@ -10885,3 +10885,177 @@ describe("a surface never stays on its `connecting` placeholder", () => {
     })
   })
 })
+
+describe("AcpConnectionsProvider answering a permission request (fork)", () => {
+  async function ownerWithPermission(): Promise<AttachHandlers> {
+    h.acpFindConnectionForConversation.mockResolvedValue(null)
+    await mountProvider()
+    await act(async () => {
+      await h.actions!.connect(TAB, "claude_code", "/tmp/x", "sess-1", 42)
+    })
+    const handlers = latestAttachHandlers()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "permission_request",
+      request_id: "req-1",
+      tool_call: { toolCallId: "call-1", title: "Run ls" },
+      options: [{ option_id: "allow", name: "Allow", kind: "allow_once" }],
+    } as unknown as EventEnvelope)
+    expect(h.store!.getConnection(TAB)?.pendingPermission?.request_id).toBe(
+      "req-1"
+    )
+    return handlers
+  }
+
+  async function respondMock() {
+    const api = await import("@/lib/api")
+    return vi.mocked(api.acpRespondPermission)
+  }
+
+  it("clears the card at the click, before the answer reaches the server", async () => {
+    await ownerWithPermission()
+    const respond = await respondMock()
+    respond.mockReset()
+    respond.mockReturnValue(new Promise(() => {}))
+
+    act(() => {
+      void h.actions!.respondPermission(TAB, "req-1", "allow")
+    })
+
+    expect(h.store!.getConnection(TAB)?.pendingPermission).toBeNull()
+    expect(respond).toHaveBeenCalledWith(
+      "spawned-conn",
+      "req-1",
+      "allow",
+      expect.objectContaining({ retry: expect.anything() })
+    )
+  })
+
+  it("brings the card back with a toast when the answer cannot be sent", async () => {
+    await ownerWithPermission()
+    const respond = await respondMock()
+    respond.mockReset()
+    respond.mockRejectedValue({ code: "io_error", message: "socket closed" })
+
+    await act(async () => {
+      await h.actions!.respondPermission(TAB, "req-1", "allow").catch(() => {})
+    })
+
+    expect(h.store!.getConnection(TAB)?.pendingPermission?.request_id).toBe(
+      "req-1"
+    )
+    expect(h.toastError).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not bring it back over a newer request", async () => {
+    const handlers = await ownerWithPermission()
+    const respond = await respondMock()
+    respond.mockReset()
+    let fail!: (reason: unknown) => void
+    respond.mockReturnValue(
+      new Promise((_, reject) => {
+        fail = reject
+      })
+    )
+    let answered!: Promise<void>
+    act(() => {
+      answered = h.actions!.respondPermission(TAB, "req-1", "allow")
+    })
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "permission_request",
+      request_id: "req-2",
+      tool_call: { toolCallId: "call-2", title: "Run pwd" },
+      options: [{ option_id: "allow", name: "Allow", kind: "allow_once" }],
+    } as unknown as EventEnvelope)
+    await act(async () => {
+      fail({ code: "io_error", message: "socket closed" })
+      await answered.catch(() => {})
+    })
+
+    expect(h.store!.getConnection(TAB)?.pendingPermission?.request_id).toBe(
+      "req-2"
+    )
+  })
+})
+
+describe("AcpConnectionsProvider picking a config option (fork)", () => {
+  const MODEL = (current: string) => ({
+    id: "model",
+    name: "Model",
+    kind: {
+      type: "select",
+      current_value: current,
+      options: [
+        { value: "a", name: "A" },
+        { value: "b", name: "B" },
+        { value: "c", name: "C" },
+      ],
+      groups: [],
+    },
+  })
+
+  async function ownerWithModel() {
+    h.acpFindConnectionForConversation.mockResolvedValue(null)
+    await mountProvider()
+    await act(async () => {
+      await h.actions!.connect(TAB, "claude_code", "/tmp/x", "sess-1", 42)
+    })
+    emitAcpEvent(latestAttachHandlers(), {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "session_config_options",
+      config_options: [MODEL("a")],
+    } as unknown as EventEnvelope)
+    const api = await import("@/lib/api")
+    const send = vi.mocked(api.acpSetConfigOption)
+    send.mockReset()
+    return send
+  }
+
+  const shown = () => {
+    const kind = h.store!.getConnection(TAB)?.configOptions?.[0]?.kind
+    return kind?.type === "select" ? kind.current_value : null
+  }
+
+  it("puts the earlier value back with a toast when the pick cannot be sent", async () => {
+    const send = await ownerWithModel()
+    send.mockRejectedValue(new TypeError("Failed to fetch"))
+
+    await act(async () => {
+      await h.actions!.setConfigOption(TAB, "model", "b").catch(() => {})
+    })
+
+    expect(shown()).toBe("a")
+    expect(h.toastError).toHaveBeenCalledTimes(1)
+  })
+
+  it("leaves a newer pick alone when an older one fails", async () => {
+    const send = await ownerWithModel()
+    let failOlder!: (reason: unknown) => void
+    send
+      .mockReturnValueOnce(
+        new Promise((_, reject) => {
+          failOlder = reject
+        })
+      )
+      .mockResolvedValueOnce(undefined)
+
+    let older!: Promise<void>
+    act(() => {
+      older = h.actions!.setConfigOption(TAB, "model", "b")
+    })
+    await act(async () => {
+      await h.actions!.setConfigOption(TAB, "model", "c")
+    })
+    await act(async () => {
+      failOlder(new TypeError("Failed to fetch"))
+      await older.catch(() => {})
+    })
+
+    expect(shown()).toBe("c")
+    expect(h.toastError).not.toHaveBeenCalled()
+  })
+})

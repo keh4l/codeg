@@ -2276,7 +2276,11 @@
         "updateGroupFailed": "Falha ao atualizar o grupo: {message}",
         "deleteGroupFailed": "Falha ao excluir o grupo: {message}",
         "moveToGroupFailed": "Falha ao mover a pasta: {message}",
-        "applyLayoutFailed": "Falha ao salvar a ordem das pastas: {message}"
+        "applyLayoutFailed": "Falha ao salvar a ordem das pastas: {message}",
+        "renameConversationFailed": "Falha ao renomear conversa: {message}",
+        "deleteConversationFailed": "Falha ao excluir conversa: {message}",
+        "pinConversationFailed": "Falha ao alterar fixação: {message}",
+        "conversationStatusFailed": "Falha ao alterar status: {message}"
       },
       "statsLabel": "{folders} pastas · {convos} conversas",
       "reorderHandle": "Arraste para reordenar",
@@ -3543,7 +3547,8 @@
         "noticeTitle": "{agent}: {title}",
         "pluginLoadFailedTitle": "{agent} não conseguiu carregar {count, plural, one {# plugin} other {# plugins}}",
         "snapshotHydrateFailedTitle": "Não foi possível ler totalmente o estado da sessão de {agent}",
-        "snapshotHydrateFailedDescription": "Ela foi restaurada a partir do estado básico, então você pode continuar. A resposta em andamento pode aparecer completa só quando terminar."
+        "snapshotHydrateFailedDescription": "Ela foi restaurada a partir do estado básico, então você pode continuar. A resposta em andamento pode aparecer completa só quando terminar.",
+        "answerSendFailed": "Falha ao enviar sua resposta: {message}"
       },
       "connectionLifecycle": {
         "tasks": {
@@ -3647,7 +3652,8 @@
         "mentionGroupSession": "Sessões",
         "mentionGroupCommit": "Commits",
         "mentionGroupSkill": "Habilidades",
-        "mentionGroupAssistant": "Assistentes"
+        "mentionGroupAssistant": "Assistentes",
+        "stopping": "Parando…"
       },
       "messageQueue": {
         "addToQueue": "Adicionar à fila",

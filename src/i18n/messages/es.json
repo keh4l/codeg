@@ -2276,7 +2276,11 @@
         "updateGroupFailed": "Error al actualizar el grupo: {message}",
         "deleteGroupFailed": "Error al eliminar el grupo: {message}",
         "moveToGroupFailed": "Error al mover la carpeta: {message}",
-        "applyLayoutFailed": "Error al guardar el orden de las carpetas: {message}"
+        "applyLayoutFailed": "Error al guardar el orden de las carpetas: {message}",
+        "renameConversationFailed": "Error al renombrar la conversación: {message}",
+        "deleteConversationFailed": "Error al eliminar la conversación: {message}",
+        "pinConversationFailed": "Error al cambiar el anclaje: {message}",
+        "conversationStatusFailed": "Error al cambiar el estado: {message}"
       },
       "statsLabel": "{folders} carpetas · {convos} conversaciones",
       "reorderHandle": "Arrastrar para reordenar",
@@ -3543,7 +3547,8 @@
         "noticeTitle": "{agent}: {title}",
         "pluginLoadFailedTitle": "{agent} no pudo cargar {count, plural, one {# plugin} other {# plugins}}",
         "snapshotHydrateFailedTitle": "No se pudo leer por completo el estado de la sesión de {agent}",
-        "snapshotHydrateFailedDescription": "Se restauró a partir de su estado básico, así que puedes seguir trabajando. La respuesta en curso puede mostrarse completa solo cuando termine."
+        "snapshotHydrateFailedDescription": "Se restauró a partir de su estado básico, así que puedes seguir trabajando. La respuesta en curso puede mostrarse completa solo cuando termine.",
+        "answerSendFailed": "Error al enviar tu respuesta: {message}"
       },
       "connectionLifecycle": {
         "tasks": {
@@ -3647,7 +3652,8 @@
         "mentionGroupSession": "Sesiones",
         "mentionGroupCommit": "Commits",
         "mentionGroupSkill": "Habilidades",
-        "mentionGroupAssistant": "Asistentes"
+        "mentionGroupAssistant": "Asistentes",
+        "stopping": "Deteniendo…"
       },
       "messageQueue": {
         "addToQueue": "Agregar a la cola",

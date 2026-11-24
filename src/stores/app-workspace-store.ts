@@ -33,6 +33,10 @@ import type {
   SidebarLayoutEntry,
 } from "@/lib/types"
 import type { FolderThemeColor } from "@/lib/theme-presets"
+import {
+  overlayConversation,
+  overlayConversations,
+} from "./conversation-row-overlay"
 
 /**
  * Workspace-level shared state (folders, conversations, branches) as a Zustand
@@ -102,6 +106,9 @@ export interface AppWorkspaceStoreState {
   ) => void
   applyConversationUpsert: (summary: DbConversationSummary) => void
   applyConversationRemove: (id: number) => void
+  /** keh4l build: put back a row removed here whose delete then failed, at
+   *  `index` (its place before), lifting its tombstone. */
+  restoreConversation: (summary: DbConversationSummary, index: number) => void
   getBranch: (folderId: number) => string | null | undefined
   setBranch: (folderId: number, branch: string | null) => void
   /** Equality-guarded merge of one folder's polled HEAD into branches/gitHeads. */
@@ -403,7 +410,11 @@ export const useAppWorkspaceStore = create<AppWorkspaceStoreState>()(
       set({ conversationsLoading: true })
       try {
         const list = await listAllConversations()
-        set({ ...withConversations(list), conversationsError: null })
+        // keh4l build: changes made here and not yet confirmed stay on screen.
+        set({
+          ...withConversations(overlayConversations(list)),
+          conversationsError: null,
+        })
       } catch (err) {
         set({ conversationsError: toErrorMessage(err) })
       } finally {
@@ -455,9 +466,11 @@ export const useAppWorkspaceStore = create<AppWorkspaceStoreState>()(
     // Insert-or-replace a conversation by id (create + field updates). Root-only:
     // delegation children (parent_id set) are not sidebar rows. New rows prepend
     // (most-recent-first); existing rows replace in place to keep their position.
-    applyConversationUpsert: (summary) => {
-      if (summary.parent_id != null) return
-      if (deletedIds.has(summary.id)) return
+    applyConversationUpsert: (incoming) => {
+      if (incoming.parent_id != null) return
+      if (deletedIds.has(incoming.id)) return
+      // keh4l build: changes made here and not yet confirmed stay on screen.
+      const summary = overlayConversation(incoming)
       const prev = get().conversations
       const idx = prev.findIndex((c) => c.id === summary.id)
       if (idx < 0) {
@@ -491,6 +504,15 @@ export const useAppWorkspaceStore = create<AppWorkspaceStoreState>()(
       if (idx < 0) return
       const next = prev.slice()
       next.splice(idx, 1)
+      set(withConversations(next))
+    },
+
+    restoreConversation: (summary, index) => {
+      deletedIds.delete(summary.id)
+      const prev = get().conversations
+      if (prev.some((c) => c.id === summary.id)) return
+      const next = prev.slice()
+      next.splice(Math.max(0, Math.min(index, next.length)), 0, summary)
       set(withConversations(next))
     },
 
@@ -648,8 +670,12 @@ export const useAppWorkspaceStore = create<AppWorkspaceStoreState>()(
     },
 
     removeFolderFromWorkspace: async (folderId) => {
-      await apiRemoveFolderFromWorkspace(folderId)
-      const { folders, branches, refreshConversations } = get()
+      // keh4l build: the folder leaves the sidebar at once, and comes back
+      // where it was if the server refuses.
+      const { folders, branches } = get()
+      const index = folders.findIndex((f) => f.id === folderId)
+      const removed = index >= 0 ? folders[index] : undefined
+      const removedBranch = branches.get(folderId)
       const patch: Partial<AppWorkspaceStoreState> = {
         folders: folders.filter((f) => f.id !== folderId),
       }
@@ -659,7 +685,24 @@ export const useAppWorkspaceStore = create<AppWorkspaceStoreState>()(
         patch.branches = next
       }
       set(patch)
-      void refreshConversations()
+      try {
+        await apiRemoveFolderFromWorkspace(folderId)
+      } catch (err) {
+        const now = get()
+        if (removed && !now.folders.some((f) => f.id === folderId)) {
+          const back = now.folders.slice()
+          back.splice(Math.min(index, back.length), 0, removed)
+          const restore: Partial<AppWorkspaceStoreState> = { folders: back }
+          if (removedBranch !== undefined && !now.branches.has(folderId)) {
+            const nextBranches = new Map(now.branches)
+            nextBranches.set(folderId, removedBranch)
+            restore.branches = nextBranches
+          }
+          set(restore)
+        }
+        throw err
+      }
+      void get().refreshConversations()
     },
 
     applySidebarLayout: async (entries) => {

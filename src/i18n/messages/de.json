@@ -2276,7 +2276,11 @@
         "updateGroupFailed": "Gruppe konnte nicht aktualisiert werden: {message}",
         "deleteGroupFailed": "Gruppe konnte nicht gelöscht werden: {message}",
         "moveToGroupFailed": "Ordner konnte nicht verschoben werden: {message}",
-        "applyLayoutFailed": "Ordnerreihenfolge konnte nicht gespeichert werden: {message}"
+        "applyLayoutFailed": "Ordnerreihenfolge konnte nicht gespeichert werden: {message}",
+        "renameConversationFailed": "Konversation konnte nicht umbenannt werden: {message}",
+        "deleteConversationFailed": "Konversation konnte nicht gelöscht werden: {message}",
+        "pinConversationFailed": "Anheften konnte nicht geändert werden: {message}",
+        "conversationStatusFailed": "Status konnte nicht geändert werden: {message}"
       },
       "statsLabel": "{folders} Ordner · {convos} Konversationen",
       "reorderHandle": "Zum Neuordnen ziehen",
@@ -3543,7 +3547,8 @@
         "noticeTitle": "{agent}: {title}",
         "pluginLoadFailedTitle": "{agent} konnte {count, plural, one {# Plugin} other {# Plugins}} nicht laden",
         "snapshotHydrateFailedTitle": "Der Sitzungsstatus von {agent} konnte nicht vollständig gelesen werden",
-        "snapshotHydrateFailedDescription": "Er wurde aus dem Grundstatus wiederhergestellt, Sie können weiterarbeiten. Die laufende Antwort erscheint möglicherweise erst vollständig, wenn sie fertig ist."
+        "snapshotHydrateFailedDescription": "Er wurde aus dem Grundstatus wiederhergestellt, Sie können weiterarbeiten. Die laufende Antwort erscheint möglicherweise erst vollständig, wenn sie fertig ist.",
+        "answerSendFailed": "Antwort konnte nicht gesendet werden: {message}"
       },
       "connectionLifecycle": {
         "tasks": {
@@ -3647,7 +3652,8 @@
         "mentionGroupSession": "Sitzungen",
         "mentionGroupCommit": "Commits",
         "mentionGroupSkill": "Fähigkeiten",
-        "mentionGroupAssistant": "Assistenten"
+        "mentionGroupAssistant": "Assistenten",
+        "stopping": "Wird gestoppt…"
       },
       "messageQueue": {
         "addToQueue": "Zur Warteschlange",

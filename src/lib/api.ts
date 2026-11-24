@@ -7,6 +7,7 @@ import {
   isRemoteDesktopMode,
   notifyRemoteDesktopUnauthorized,
 } from "./transport"
+import type { CallOptions } from "./transport/types"
 import {
   codegAuthHeaders,
   getCodegToken,
@@ -449,13 +450,14 @@ export async function acpStopAsyncTask(
 export async function acpRespondPermission(
   connectionId: string,
   requestId: string,
-  optionId: string
+  optionId: string,
+  options?: CallOptions
 ): Promise<void> {
-  return getTransport().call("acp_respond_permission", {
-    connectionId,
-    requestId,
-    optionId,
-  })
+  return getTransport().call(
+    "acp_respond_permission",
+    { connectionId, requestId, optionId },
+    options
+  )
 }
 
 /**
@@ -4002,38 +4004,45 @@ export async function createChatDir(): Promise<CreateChatDirResult> {
 
 export async function updateConversationStatus(
   conversationId: number,
-  status: string
+  status: string,
+  options?: CallOptions
 ): Promise<void> {
-  return getTransport().call("update_conversation_status", {
-    conversationId,
-    status,
-  })
+  return getTransport().call(
+    "update_conversation_status",
+    { conversationId, status },
+    options
+  )
 }
 
 export async function updateConversationTitle(
   conversationId: number,
-  title: string
+  title: string,
+  options?: CallOptions
 ): Promise<void> {
-  return getTransport().call("update_conversation_title", {
-    conversationId,
-    title,
-  })
+  return getTransport().call(
+    "update_conversation_title",
+    { conversationId, title },
+    options
+  )
 }
 
 export async function updateConversationPinned(
   conversationId: number,
-  pinned: boolean
+  pinned: boolean,
+  options?: CallOptions
 ): Promise<void> {
-  return getTransport().call("update_conversation_pinned", {
-    conversationId,
-    pinned,
-  })
+  return getTransport().call(
+    "update_conversation_pinned",
+    { conversationId, pinned },
+    options
+  )
 }
 
 export async function deleteConversation(
-  conversationId: number
+  conversationId: number,
+  options?: CallOptions
 ): Promise<void> {
-  return getTransport().call("delete_conversation", { conversationId })
+  return getTransport().call("delete_conversation", { conversationId }, options)
 }
 
 /**

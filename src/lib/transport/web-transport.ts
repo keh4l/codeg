@@ -103,6 +103,28 @@ interface WebEvent {
   payload: unknown
 }
 
+// Fork: a call's retries (`CallOptions.retry`) wait this long before each
+// try, and carry its key in this header (`web/idempotency.rs`).
+const RETRY_DELAYS_MS = [500, 1_500]
+export const IDEMPOTENCY_KEY_HEADER = "X-Codeg-Idempotency-Key"
+
+/** Whether a call failed before the server could answer it — the network
+ *  (`fetch` rejects with a TypeError), the call's time limit, or a gateway in
+ *  front of the server — so sending it again can help. */
+function isRetryableFailure(err: unknown): boolean {
+  if (err instanceof TypeError) return true
+  if (err instanceof Error) return err.message === "Request timed out"
+  if (err && typeof err === "object") {
+    const { code, message } = err as { code?: unknown; message?: unknown }
+    return (
+      code === "network_error" &&
+      typeof message === "string" &&
+      /^HTTP 50[234]$/.test(message)
+    )
+  }
+  return false
+}
+
 const getToken = getCodegToken
 
 export class WebTransport implements Transport {
@@ -274,7 +296,33 @@ export class WebTransport implements Transport {
     }
   }
 
+  /** Fork: one call, sent again on a network failure while `options.retry`
+   *  allows (`CallOptions.retry`). */
   private async callDirect<T>(
+    command: string,
+    args?: Record<string, unknown>,
+    options?: CallOptions
+  ): Promise<T> {
+    const retry = options?.retry
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.callOnce<T>(command, args, options)
+      } catch (err) {
+        const again =
+          retry != null &&
+          attempt < retry.attempts &&
+          isRetryableFailure(err) &&
+          retry.stillWanted?.() !== false
+        if (!again) throw err
+        await new Promise((resolve) =>
+          setTimeout(resolve, RETRY_DELAYS_MS[attempt] ?? RETRY_DELAYS_MS[1])
+        )
+        if (retry.stillWanted?.() === false) throw err
+      }
+    }
+  }
+
+  private async callOnce<T>(
     command: string,
     args?: Record<string, unknown>,
     options?: CallOptions
@@ -298,6 +346,9 @@ export class WebTransport implements Transport {
         headers: {
           "Content-Type": "application/json",
           ...codegAuthHeaders(token),
+          ...(options?.idempotencyKey
+            ? { [IDEMPOTENCY_KEY_HEADER]: options.idempotencyKey }
+            : {}),
         },
         body: JSON.stringify(args ?? {}),
         signal: controller.signal,

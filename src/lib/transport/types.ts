@@ -92,6 +92,20 @@ export interface CallOptions {
    * backend can return its own structured error.
    */
   timeoutMs?: number
+  /**
+   * keh4l build: send the call with this key (`X-Codeg-Idempotency-Key`), so
+   * a server that already ran it answers the same instead of running it
+   * again. WebTransport only.
+   */
+  idempotencyKey?: string
+  /**
+   * keh4l build: send the call again when it fails on the network or times
+   * out — at most `attempts` more times, and only while `stillWanted()` (when
+   * given) says its result is still wanted. Only for calls that are safe to
+   * repeat: idempotent by themselves, or sent with an `idempotencyKey`.
+   * WebTransport only.
+   */
+  retry?: { attempts: number; stillWanted?: () => boolean }
 }
 
 export interface Transport {
