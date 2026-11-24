@@ -2,6 +2,7 @@ pub mod auth;
 pub mod blob_store;
 pub mod body_caps;
 pub mod static_cache;
+pub mod warm_up;
 pub mod browser_bridge;
 pub mod browser_tunnel;
 pub mod compression;

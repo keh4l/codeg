@@ -595,6 +595,9 @@ async fn async_main(
     // non-fatal.
     tokio::spawn(codeg_lib::skills::startup::run(state.emitter.clone()));
 
+    // Fork: the agents list's first, slow computation, before a client asks.
+    codeg_lib::web::warm_up::spawn(state.clone());
+
     // Start chat channel background tasks (event subscriber, command dispatcher, scheduler, auto-connect)
     state
         .chat_channel_manager
