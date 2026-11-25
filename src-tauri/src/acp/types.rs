@@ -601,6 +601,22 @@ pub enum AcpEvent {
     PlanUpdate { entries: Vec<PlanEntryInfo> },
     /// Connection status changed
     StatusChanged { status: ConnectionStatus },
+    /// keh4l build: the agent started a turn on its own — no codeg prompt is
+    /// open (Claude Code after a background task's notification, a Codex
+    /// continuation, Grok after a background workflow). Emitted right before
+    /// that turn's `StatusChanged(Prompting)`; the turn then ends with a
+    /// `TurnComplete` like any other.
+    ///
+    /// `from_transcript`: the turn's content renders from the agent's own
+    /// transcript (Claude Code's `background_activity` overlay), not from the
+    /// wire, so clients keep dropping its wire content as they do between
+    /// turns. `task_id`: the async task that stands for the turn, if any — what
+    /// a Stop has to stop.
+    AgentTurnStarted {
+        from_transcript: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task_id: Option<String>,
+    },
     /// Error occurred
     Error {
         message: String,

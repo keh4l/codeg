@@ -3496,6 +3496,16 @@ export type AcpEvent =
       status: ConnectionStatus
     }
   | {
+      /** keh4l build: the agent started a turn on its own (no prompt of
+       *  codeg's is open); its `status_changed(prompting)` follows. With
+       *  `from_transcript` the turn's content comes from the transcript
+       *  overlay (`background_activity`), so its wire content is dropped as
+       *  between turns. Cleared when the turn leaves `prompting`. */
+      type: "agent_turn_started"
+      from_transcript: boolean
+      task_id?: string | null
+    }
+  | {
       type: "error"
       message: string
       agent_type: string
@@ -4208,6 +4218,9 @@ export interface LiveSessionSnapshot {
   status: ConnectionStatus
   external_id: string | null
   live_message: LiveMessage | null
+  /** keh4l build: the running turn is one the agent started on its own and
+   *  renders from its transcript (see `agent_turn_started`). Absent = false. */
+  agent_turn_from_transcript?: boolean
   active_tool_calls: ToolCallState[]
   pending_permission: PendingPermissionState | null
   /** Awaiting-answer `ask_user_question`, recoverable on mid-turn attach.

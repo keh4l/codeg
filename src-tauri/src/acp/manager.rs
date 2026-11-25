@@ -2414,15 +2414,31 @@ impl ConnectionManager {
     /// unknown, terminal, and already-stopping tasks), and a local check could
     /// only ever be staler than the adapter's — it would turn a race into a
     /// silent no-op rather than the `false` the caller can report.
-    pub async fn stop_async_task(&self, conn_id: &str, task_id: &str) -> Result<bool, AcpError> {
-        let cmd_tx = {
+    pub async fn stop_async_task(
+        &self,
+        db: &DatabaseConnection,
+        conn_id: &str,
+        task_id: &str,
+    ) -> Result<bool, AcpError> {
+        let (cmd_tx, state_arc) = {
             let connections = self.connections.lock().await;
-            connections
+            let conn = connections
                 .get(conn_id)
-                .ok_or_else(|| AcpError::ConnectionNotFound(conn_id.into()))?
-                .cmd_tx
-                .clone()
+                .ok_or_else(|| AcpError::ConnectionNotFound(conn_id.into()))?;
+            (conn.cmd_tx.clone(), conn.state.clone())
         };
+        // keh4l build: the task standing for a turn the agent started on its
+        // own (Claude Code's `autonomous-turn-…`) is that turn, which shows as
+        // running: its row's Stop is the composer's Stop, so the turn ends,
+        // its cards close and the conversation row is marked, as `cancel`
+        // does (the connection stops the task itself on the way).
+        let is_agent_turn = {
+            let s = state_arc.read().await;
+            s.agent_initiated_turn && s.agent_turn_task_id.as_deref() == Some(task_id)
+        };
+        if is_agent_turn {
+            return self.cancel(db, conn_id).await.map(|()| true);
+        }
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         cmd_tx
             .send(ConnectionCommand::StopAsyncTask {
@@ -10953,6 +10969,46 @@ mod tests {
     /// copy away only when it postdates the injection, so that the same words
     /// sent in an earlier round are never hidden — would show the message both
     /// as a transcript turn and as a live one.
+    /// keh4l build: Stop on the row of the task that stands for a turn the
+    /// agent started on its own (Claude Code's `autonomous-turn-…`) is the
+    /// composer's Stop — a `Cancel`, which ends the turn, closes its cards and
+    /// marks the conversation — while any other task's Stop stays a plain
+    /// task stop.
+    #[tokio::test]
+    async fn stopping_the_agent_turns_task_cancels_the_turn() {
+        use crate::db::test_helpers;
+        let db = test_helpers::fresh_in_memory_db().await;
+        let mgr = ConnectionManager::new();
+        let mut rx = mgr
+            .insert_test_connection_live("c1", AgentType::ClaudeCode, None, EventEmitter::Noop)
+            .await;
+        {
+            let state = mgr.get_state("c1").await.unwrap();
+            let mut s = state.write().await;
+            s.status = ConnectionStatus::Prompting;
+            s.agent_initiated_turn = true;
+            s.agent_turn_task_id = Some("autonomous-turn-1".into());
+        }
+        assert!(mgr
+            .stop_async_task(&db.conn, "c1", "autonomous-turn-1")
+            .await
+            .unwrap());
+        assert!(matches!(rx.try_recv(), Ok(ConnectionCommand::Cancel)));
+        assert!(rx.try_recv().is_err(), "nothing else is enqueued");
+
+        let fake_loop = tokio::spawn(async move {
+            match rx.recv().await {
+                Some(ConnectionCommand::StopAsyncTask { task_id, reply }) => {
+                    let _ = reply.send(Ok(true));
+                    task_id
+                }
+                _ => panic!("expected a StopAsyncTask command"),
+            }
+        });
+        assert!(mgr.stop_async_task(&db.conn, "c1", "bash-1").await.unwrap());
+        assert_eq!(fake_loop.await.unwrap(), "bash-1");
+    }
+
     #[tokio::test]
     async fn native_submit_stamps_the_note_before_the_agent_can_see_it() {
         let mgr = ConnectionManager::new();

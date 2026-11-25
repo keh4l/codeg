@@ -4139,6 +4139,127 @@ describe("out-of-turn wire guard + background activity", () => {
     ])
   })
 
+  // keh4l build: a turn the agent started on its own runs as `prompting`
+  // (composer Stop, running status), but when the transcript overlay draws it
+  // (Claude Code's after a background task) its wire content stays out of
+  // `liveMessage` as it does between turns — else it would show twice.
+  it("keeps a transcript-drawn turn of the agent's own out of liveMessage", async () => {
+    const handlers = await mountOwnerConnection()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "agent_turn_started",
+      from_transcript: true,
+      task_id: "autonomous-turn-1",
+    })
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "status_changed",
+      status: "prompting",
+    })
+    emitAcpEvent(handlers, {
+      seq: 3,
+      connection_id: "spawned-conn",
+      type: "content_delta",
+      text: "the overlay draws this",
+    })
+    emitAcpEvent(handlers, {
+      seq: 4,
+      connection_id: "spawned-conn",
+      type: "tool_call",
+      tool_call_id: "bg-read",
+      title: "Read build.log",
+      kind: "read",
+      status: "in_progress",
+      content: null,
+      raw_input: JSON.stringify({ file_path: "build.log" }),
+      raw_output: null,
+    })
+    emitAcpEvent(handlers, {
+      seq: 5,
+      connection_id: "spawned-conn",
+      type: "usage_update",
+      used: 1,
+      size: 100,
+    })
+    const during = h.store!.getConnection(TAB)
+    expect(during?.status).toBe("prompting")
+    expect(during?.agentTurnFromTranscript).toBe(true)
+    expect(during?.liveMessage?.content ?? []).toEqual([])
+    // Still kept for a permission dialog, as between turns.
+    expect(during?.outOfTurnToolCalls?.get("bg-read")?.title).toBe(
+      "Read build.log"
+    )
+
+    emitAcpEvent(handlers, {
+      seq: 6,
+      connection_id: "spawned-conn",
+      type: "turn_complete",
+      session_id: "sess-1",
+      stop_reason: "end_turn",
+    })
+    expect(h.store!.getConnection(TAB)?.agentTurnFromTranscript).toBe(false)
+
+    // The next prompt's turn streams on the wire as usual.
+    emitAcpEvent(handlers, {
+      seq: 7,
+      connection_id: "spawned-conn",
+      type: "status_changed",
+      status: "prompting",
+    })
+    emitAcpEvent(handlers, {
+      seq: 8,
+      connection_id: "spawned-conn",
+      type: "content_delta",
+      text: "real reply",
+    })
+    emitAcpEvent(handlers, {
+      seq: 9,
+      connection_id: "spawned-conn",
+      type: "usage_update",
+      used: 2,
+      size: 100,
+    })
+    expect(h.store!.getConnection(TAB)?.liveMessage?.content).toEqual([
+      { type: "text", text: "real reply" },
+    ])
+  })
+
+  it("streams a wire-drawn turn of the agent's own into liveMessage", async () => {
+    const handlers = await mountOwnerConnection()
+    emitAcpEvent(handlers, {
+      seq: 1,
+      connection_id: "spawned-conn",
+      type: "agent_turn_started",
+      from_transcript: false,
+    })
+    emitAcpEvent(handlers, {
+      seq: 2,
+      connection_id: "spawned-conn",
+      type: "status_changed",
+      status: "prompting",
+    })
+    emitAcpEvent(handlers, {
+      seq: 3,
+      connection_id: "spawned-conn",
+      type: "content_delta",
+      text: "continuing the goal",
+    })
+    emitAcpEvent(handlers, {
+      seq: 4,
+      connection_id: "spawned-conn",
+      type: "usage_update",
+      used: 1,
+      size: 100,
+    })
+    const conn = h.store!.getConnection(TAB)
+    expect(conn?.agentTurnFromTranscript).toBe(false)
+    expect(conn?.liveMessage?.content).toEqual([
+      { type: "text", text: "continuing the goal" },
+    ])
+  })
+
   it("routes parented deltas into separate blocks and drops orphans (claude-agent-acp ≥0.63)", async () => {
     const handlers = await mountOwnerConnection()
     emitAcpEvent(handlers, {

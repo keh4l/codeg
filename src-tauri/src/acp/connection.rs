@@ -15483,7 +15483,41 @@ async fn run_conversation_loop(
                     if let Some(delta) = air_async_task_delta(&dispatch)
                         .or_else(|| grok_workflow_task_delta(&dispatch, agent_type))
                     {
+                        let turn_task = claude_turn_task(&delta, agent_type);
                         emit_with_state(&st, &h, AcpEvent::AsyncTask { delta }).await;
+                        // keh4l build: the task Claude Code announces a turn
+                        // of its own with opens that turn here, and its end
+                        // ends it (see `OwnAgentTurn::ClaudeTask`).
+                        match turn_task {
+                            Some(ClaudeTurnTask::Started(task_id)) => {
+                                open_own_agent_turn(
+                                    &st,
+                                    &h,
+                                    OwnAgentTurn::ClaudeTask(task_id),
+                                    &mut cb_state,
+                                )
+                                .await;
+                            }
+                            Some(ClaudeTurnTask::Ended(task_id, stop_reason)) => {
+                                let open_task = cb_state
+                                    .own_agent_turn
+                                    .as_ref()
+                                    .and_then(OwnAgentTurn::task_id);
+                                if open_task == Some(task_id.as_str()) {
+                                    close_own_agent_turn(
+                                        &st,
+                                        &h,
+                                        perms,
+                                        agent_type,
+                                        &agent_turn_session_id,
+                                        stop_reason,
+                                        &mut cb_state,
+                                    )
+                                    .await;
+                                }
+                            }
+                            None => {}
+                        }
                     } else if let Some(notice) = session_notice(&dispatch) {
                         // Advisories land outside a turn as readily as inside
                         // one (a config warning at startup, a model reroute
@@ -15512,6 +15546,23 @@ async fn run_conversation_loop(
                         // chunk is emitted.
                         if let Some(prompt_id) = grok_agent_turn_opener(&dispatch, agent_type, &cb_state) {
                             open_grok_agent_turn(&st, &h, prompt_id, &mut cb_state).await;
+                        }
+                        // keh4l build: so does one Codex runs on its own —
+                        // opened by the thread going `active` with no prompt
+                        // of codeg's open, or by its content while the thread
+                        // still reads `active` (it went straight on from the
+                        // prompt's turn, so no new status came), and ended by
+                        // the thread leaving `active` (below, after the frame).
+                        let codex_status = codex_thread_status(&dispatch, agent_type);
+                        if let Some(status) = codex_status {
+                            cb_state.codex_thread_active = Some(status == CodexThreadStatus::Active);
+                        }
+                        if cb_state.codex_thread_active == Some(true)
+                            && !agent_turn_open(&cb_state)
+                            && (codex_status == Some(CodexThreadStatus::Active)
+                                || is_turn_content_frame(&dispatch))
+                        {
+                            open_own_agent_turn(&st, &h, OwnAgentTurn::Codex, &mut cb_state).await;
                         }
                         let drift = &mut config_drift_to_reassert;
                         if let Err(e) = MatchDispatch::new(dispatch)
@@ -15551,6 +15602,20 @@ async fn run_conversation_loop(
                             // whose params did not deserialize — the same drop the
                             // in-turn loop counts, logged under the same throttle.
                             log_dropped_update(&mut drop_log_throttle, "idle", &e);
+                        }
+                        if let Some(status) = codex_status.filter(|s| *s != CodexThreadStatus::Active) {
+                            if cb_state.own_agent_turn == Some(OwnAgentTurn::Codex) {
+                                close_own_agent_turn(
+                                    &st,
+                                    &h,
+                                    perms,
+                                    agent_type,
+                                    &agent_turn_session_id,
+                                    status.stop_reason(),
+                                    &mut cb_state,
+                                )
+                                .await;
+                            }
                         }
                     }
                 }
@@ -15666,7 +15731,12 @@ async fn run_conversation_loop(
                 // that turn is still asking the user goes with it — otherwise
                 // Grok stays parked on a card no one can see, and this prompt
                 // waits behind it for good.
-                if close_grok_agent_turn(
+                // keh4l build: the same for a turn Claude Code or Codex runs
+                // on its own. Claude Code folds the prompt into its running
+                // turn and answers it there (claude-agent-acp 0.88.0+), and
+                // the transcript watcher leaves what follows the fold to the
+                // wire; Codex takes the prompt on the same way.
+                if close_agent_turn(
                     state,
                     emitter,
                     perms,
@@ -15930,6 +16000,13 @@ async fn run_conversation_loop(
                                     &dispatch,
                                     &mut cb_state.grok_ended_prompt_ids,
                                 );
+                            }
+                            // keh4l build: where Codex's thread stands when
+                            // this prompt ends, for the idle loop (see
+                            // `CodeBuddyLiveState::codex_thread_active`).
+                            if let Some(status) = codex_thread_status(&dispatch, agent_type) {
+                                cb_state.codex_thread_active =
+                                    Some(status == CodexThreadStatus::Active);
                             }
                             // Consumed before the typed pipeline (see
                             // `air_async_task_delta`). Only a SPAWN
@@ -16639,6 +16716,14 @@ async fn run_conversation_loop(
                                     // to send the steer next; that is not the user's
                                     // stop, so delegated sub-agents keep running.
                                     let steer_restart = crate::acp::follow_up::restart::cancel_is_restart(conn_id);
+                                    // keh4l build: this loop leaves now, so what
+                                    // Codex flushes of the stopped turn lands on
+                                    // the idle loop while its thread still reads
+                                    // `active` — which must not open a turn of
+                                    // its own there (and mark the stopped
+                                    // conversation for review when it idles).
+                                    // Unknown until Codex reports again.
+                                    cb_state.codex_thread_active = None;
                                     // Send CancelNotification to agent to stop the current turn
                                     let _ = cx.send_notification_to(
                                         Agent,
@@ -16938,14 +17023,37 @@ async fn run_conversation_loop(
                 let cx = session.connection();
                 let sid = session.session_id().clone();
                 let _ = cx.send_notification_to(Agent, CancelNotification::new(sid.clone()));
+                // keh4l build: a turn Claude Code runs on its own is stopped
+                // through the task that stands for it — the measured way to
+                // interrupt it ((gggg) of the claude entry in `registry.rs`).
+                // Codex's is interrupted by the `session/cancel` above.
+                if let Some(task_id) = cb_state
+                    .own_agent_turn
+                    .as_ref()
+                    .and_then(OwnAgentTurn::task_id)
+                    .map(str::to_string)
+                {
+                    if let Err(e) = send_stop_async_task_request(&cx, &sid, &task_id).await {
+                        tracing::warn!(
+                            "[ACP] stopping the agent-initiated turn's task {task_id} failed: {e}"
+                        );
+                    }
+                }
                 terminal_runtime
                     .release_all_for_session(sid.0.as_ref())
                     .await;
-                // The Stop button on a turn Grok is running on its own ends it
-                // now, like the mid-turn Cancel does — without waiting on the
-                // agent's own `turn_completed`, which the closed turn then
-                // ignores. That is the one idle turn with a `TurnComplete`.
-                let closed_agent_turn = close_grok_agent_turn(
+                // A Codex turn being stopped still reads `active` until its
+                // `idle` comes, and a chunk it flushes before then must not
+                // open a turn again: its status is unknown until reported.
+                if cb_state.own_agent_turn == Some(OwnAgentTurn::Codex) {
+                    cb_state.codex_thread_active = None;
+                }
+                // The Stop button on a turn the agent is running on its own
+                // ends it now, like the mid-turn Cancel does — without waiting
+                // on the agent's own end of it (Grok's `turn_completed`, Claude
+                // Code's task state, Codex's `idle`), which the closed turn
+                // then ignores. That is the one idle turn with a `TurnComplete`.
+                let closed_agent_turn = close_agent_turn(
                     state,
                     emitter,
                     perms,
@@ -16997,9 +17105,9 @@ async fn run_conversation_loop(
                     continue;
                 }
                 // The manager's between-turns check reads `turn_in_flight`,
-                // which a turn Grok started on its own never sets. Forking now
-                // would leave that turn open on the session we are leaving.
-                if cb_state.grok_agent_turn.is_some() {
+                // which a turn the agent started on its own never sets. Forking
+                // now would leave that turn open on the session we are leaving.
+                if agent_turn_open(&cb_state) {
                     let _ = reply.send(Err(AcpError::TurnInProgress));
                     continue;
                 }
@@ -21496,6 +21604,17 @@ struct CodeBuddyLiveState {
     /// Paired with `SessionState::agent_initiated_turn`, which keeps that
     /// turn's end off the prompt gate.
     grok_agent_turn: Option<String>,
+    /// keh4l build: the turn Claude Code or Codex is running on its own that
+    /// the idle loop has open (see [`OwnAgentTurn`]); `None` when none is.
+    /// Grok's keeps its own field above, which tracks it by prompt id.
+    own_agent_turn: Option<OwnAgentTurn>,
+    /// keh4l build: Codex's thread status as its last `threadStatus` report
+    /// left it — `Some(true)` while a turn runs, `Some(false)` once idle,
+    /// `None` until a report arrives (codex-acp before 2.3.0 sends none).
+    /// Read off every frame, in a turn and between turns alike, so a turn
+    /// that follows another without the thread going idle in between is
+    /// still known to be running when its content reaches the idle loop.
+    codex_thread_active: Option<bool>,
     /// The prompt id of every Grok turn this session has seen END — ones codeg
     /// started (read off their frames and responses), and agent-initiated ones
     /// it closed. Frames Grok still delivers for them afterwards must neither
@@ -25923,6 +26042,28 @@ async fn open_grok_agent_turn(
     cb_state.grok_progress_eligible.clear();
     cb_state.grok_pending_spawn_ids.clear();
     cb_state.grok_agent_turn = Some(prompt_id);
+    announce_agent_turn(state, emitter, false, None).await;
+}
+
+/// keh4l build: announce a turn the agent started on its own, once
+/// `begin_agent_initiated_turn` has claimed it: `AgentTurnStarted` (the
+/// conversation row goes `InProgress`, clients learn how it renders), then
+/// `Prompting`, as a prompt's turn opens.
+async fn announce_agent_turn(
+    state: &Arc<RwLock<SessionState>>,
+    emitter: &EventEmitter,
+    from_transcript: bool,
+    task_id: Option<String>,
+) {
+    emit_with_state(
+        state,
+        emitter,
+        AcpEvent::AgentTurnStarted {
+            from_transcript,
+            task_id,
+        },
+    )
+    .await;
     emit_with_state(
         state,
         emitter,
@@ -25955,6 +26096,22 @@ async fn close_grok_agent_turn(
         return false;
     };
     remember_grok_ended_prompt(&mut cb_state.grok_ended_prompt_ids, &prompt_id);
+    end_agent_turn(state, emitter, perms, agent_type, session_id, stop_reason).await;
+    true
+}
+
+/// End an agent-initiated turn the way a prompt's turn ends: the failure
+/// `Error` first when the stop reason is one, then `TurnComplete` (drained
+/// together with any permission card still up — see the turn loop's exit),
+/// then `Connected`.
+async fn end_agent_turn(
+    state: &Arc<RwLock<SessionState>>,
+    emitter: &EventEmitter,
+    perms: &PendingPermissions,
+    agent_type: AgentType,
+    session_id: &str,
+    stop_reason: &str,
+) {
     if let Some(error) = turn_failure_error_event(stop_reason, agent_type, None) {
         emit_with_state(state, emitter, error).await;
     }
@@ -25977,7 +26134,225 @@ async fn close_grok_agent_turn(
         },
     )
     .await;
-    true
+}
+
+/// keh4l build: a turn Claude Code or Codex runs on its own — after the prompt
+/// that came before it ended, with no `session/prompt` of codeg's around it —
+/// which the idle loop shows as a turn (`Prompting`) rather than as nothing.
+/// Before this, such a turn left the conversation looking finished while the
+/// agent went on working: Claude Code's after a background command or
+/// sub-agent finished (its content came through the transcript overlay, the
+/// status never moved), Codex's dropped altogether behind the "load background
+/// activity" pill.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum OwnAgentTurn {
+    /// Claude Code's, announced (claude-agent-acp 0.97.0+) as the AIR async
+    /// task `autonomous-turn-<uuid>` of type `turn`, which ends with the turn.
+    /// Its content keeps coming from the transcript (`background_watch`). The
+    /// task id is what a Stop stops: `_session/async_task/stop` on it
+    /// interrupts the turn (measured, see (gggg) of the claude entry in
+    /// `registry.rs`).
+    ClaudeTask(String),
+    /// Codex's, bracketed by the thread status it reports (codex-acp 2.3.0+):
+    /// `active` opens it, `idle` ends it. Its content streams on the wire.
+    /// `session/cancel` interrupts it: codex-acp interrupts the turn it last
+    /// saw start, whoever started it.
+    Codex,
+}
+
+impl OwnAgentTurn {
+    /// Whether the turn's content renders from the agent's transcript (see
+    /// `AcpEvent::AgentTurnStarted`).
+    fn renders_from_transcript(&self) -> bool {
+        matches!(self, Self::ClaudeTask(_))
+    }
+
+    fn task_id(&self) -> Option<&str> {
+        match self {
+            Self::ClaudeTask(id) => Some(id),
+            Self::Codex => None,
+        }
+    }
+}
+
+/// The async-task type claude-agent-acp gives the turn Claude Code starts on
+/// its own (the frontend's `AUTONOMOUS_TURN_TASK_TYPE`).
+const CLAUDE_AUTONOMOUS_TURN_TASK_TYPE: &str = "turn";
+
+/// What a Claude Code async-task frame says about a turn it runs on its own.
+#[derive(Debug, PartialEq, Eq)]
+enum ClaudeTurnTask {
+    /// The turn started: its task was spawned, and is not over already.
+    Started(String),
+    /// A task reached a terminal state; the turn ends with it if it is the
+    /// turn's. The stop reason it ends with.
+    Ended(String, &'static str),
+}
+
+fn claude_turn_task(delta: &AsyncTaskDelta, agent_type: AgentType) -> Option<ClaudeTurnTask> {
+    if agent_type != AgentType::ClaudeCode {
+        return None;
+    }
+    let terminal = delta
+        .state
+        .as_deref()
+        .filter(|state| crate::acp::types::async_task_state_is_terminal(state));
+    match terminal {
+        // `completed` is the turn's result. `failed` is a turn that broke (an
+        // API error): ended as one, so the row is not marked for review and
+        // the user is told. `stopped` that codeg did not ask for — a Stop goes
+        // through `Cancel`, which ends the turn before this frame comes back —
+        // is the CLI's own doing, and the turn is simply over.
+        Some(state) => Some(ClaudeTurnTask::Ended(
+            delta.task_id.clone(),
+            if state == "failed" { "unknown" } else { "end_turn" },
+        )),
+        None if delta.spawned
+            && delta.task_type.as_deref() == Some(CLAUDE_AUTONOMOUS_TURN_TASK_TYPE) =>
+        {
+            Some(ClaudeTurnTask::Started(delta.task_id.clone()))
+        }
+        None => None,
+    }
+}
+
+/// Codex's thread status as `threadStatus` reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodexThreadStatus {
+    /// A turn is running (re-sent mid-turn whenever its `activeFlags` change,
+    /// e.g. around an approval wait).
+    Active,
+    /// `idle` or `notLoaded`: no turn runs.
+    Idle,
+    /// `systemError`: the thread broke.
+    SystemError,
+}
+
+impl CodexThreadStatus {
+    /// The stop reason a turn that this status ends ends with.
+    fn stop_reason(self) -> &'static str {
+        match self {
+            Self::SystemError => "unknown",
+            Self::Active | Self::Idle => "end_turn",
+        }
+    }
+}
+
+/// Codex's thread status off a raw `session/update` dispatch: codex-acp
+/// (2.3.0+) forwards the app-server's `thread/status/changed` as a
+/// `session_info_update` whose `_meta.codex.threadStatus` is `{type: "active",
+/// activeFlags}`, `{type: "idle"}`, `{type: "systemError"}` or `{type:
+/// "notLoaded"}` — for every turn, a prompt's or one Codex starts itself, and
+/// after each `session/load` / `session/resume`. Peeked, not consumed: the
+/// frame goes on down the typed pipeline as before.
+fn codex_thread_status(dispatch: &Dispatch, agent_type: AgentType) -> Option<CodexThreadStatus> {
+    if agent_type != AgentType::Codex {
+        return None;
+    }
+    let Dispatch::Notification(msg) = dispatch else {
+        return None;
+    };
+    if msg.method() != "session/update" {
+        return None;
+    }
+    let update = msg.params.get("update")?;
+    if update.get("sessionUpdate").and_then(|v| v.as_str())? != "session_info_update" {
+        return None;
+    }
+    let status = update
+        .get("_meta")?
+        .get("codex")?
+        .get("threadStatus")?
+        .get("type")?
+        .as_str()?;
+    Some(match status {
+        "active" => CodexThreadStatus::Active,
+        "systemError" => CodexThreadStatus::SystemError,
+        _ => CodexThreadStatus::Idle,
+    })
+}
+
+/// Whether a frame is turn content — what a Codex turn streams. Used when its
+/// thread is known to be running but the idle loop has no turn open: the
+/// thread went straight from codeg's prompt into a turn of its own, without an
+/// `idle` in between to mark the change.
+fn is_turn_content_frame(dispatch: &Dispatch) -> bool {
+    let Dispatch::Notification(msg) = dispatch else {
+        return false;
+    };
+    if msg.method() != "session/update" {
+        return false;
+    }
+    matches!(
+        msg.params
+            .get("update")
+            .and_then(|u| u.get("sessionUpdate"))
+            .and_then(|v| v.as_str()),
+        Some("agent_message_chunk" | "agent_thought_chunk" | "tool_call" | "plan")
+    )
+}
+
+/// Open a turn for one Claude Code or Codex started on its own, BEFORE its
+/// first content is emitted. Skipped when another agent turn is open, or when
+/// a prompt codeg admitted is about to start — the agent's output then lands
+/// in that prompt's turn (see `SessionState::begin_agent_initiated_turn`).
+async fn open_own_agent_turn(
+    state: &Arc<RwLock<SessionState>>,
+    emitter: &EventEmitter,
+    turn: OwnAgentTurn,
+    cb_state: &mut CodeBuddyLiveState,
+) {
+    if cb_state.own_agent_turn.is_some() || cb_state.grok_agent_turn.is_some() {
+        return;
+    }
+    if !state.write().await.begin_agent_initiated_turn() {
+        return;
+    }
+    tracing::info!("[ACP] agent-initiated turn opened: {turn:?}");
+    let from_transcript = turn.renders_from_transcript();
+    let task_id = turn.task_id().map(str::to_string);
+    cb_state.own_agent_turn = Some(turn);
+    announce_agent_turn(state, emitter, from_transcript, task_id).await;
+}
+
+/// End the Claude Code / Codex turn the idle loop has open, if any. Returns
+/// the turn that was open.
+async fn close_own_agent_turn(
+    state: &Arc<RwLock<SessionState>>,
+    emitter: &EventEmitter,
+    perms: &PendingPermissions,
+    agent_type: AgentType,
+    session_id: &str,
+    stop_reason: &str,
+    cb_state: &mut CodeBuddyLiveState,
+) -> Option<OwnAgentTurn> {
+    let turn = cb_state.own_agent_turn.take()?;
+    tracing::info!("[ACP] agent-initiated turn closed ({stop_reason}): {turn:?}");
+    end_agent_turn(state, emitter, perms, agent_type, session_id, stop_reason).await;
+    Some(turn)
+}
+
+/// End whichever agent-initiated turn the idle loop has open — Grok's, Claude
+/// Code's or Codex's. Returns whether one was.
+async fn close_agent_turn(
+    state: &Arc<RwLock<SessionState>>,
+    emitter: &EventEmitter,
+    perms: &PendingPermissions,
+    agent_type: AgentType,
+    session_id: &str,
+    stop_reason: &str,
+    cb_state: &mut CodeBuddyLiveState,
+) -> bool {
+    close_grok_agent_turn(state, emitter, perms, agent_type, session_id, stop_reason, cb_state)
+        .await
+        || close_own_agent_turn(state, emitter, perms, agent_type, session_id, stop_reason, cb_state)
+            .await
+            .is_some()
+}
+
+/// Whether the idle loop has an agent-initiated turn open.
+fn agent_turn_open(cb_state: &CodeBuddyLiveState) -> bool {
+    cb_state.grok_agent_turn.is_some() || cb_state.own_agent_turn.is_some()
 }
 
 /// Answer, declined, a question or plan approval an agent-initiated turn is
@@ -48960,6 +49335,13 @@ mod tests {
         on_fork: Vec<GrokFrame>,
         /// Whether the session supports `session/fork`.
         forks: bool,
+        /// keh4l build: the agent the loop runs as — Grok unless set, for the
+        /// Claude Code and Codex scripts of the turns those agents start
+        /// themselves.
+        agent: Option<AgentType>,
+        /// keh4l build: sent when the client asks `_session/async_task/stop`,
+        /// before it is answered `{stopped: true}`.
+        on_stop_task: Vec<GrokFrame>,
     }
 
     fn grok_frame(
@@ -49123,6 +49505,12 @@ mod tests {
     #[serde(transparent)]
     struct TestSetModelRequest(serde_json::Value);
 
+    /// `_session/async_task/stop` as the agent receives it, the raw params.
+    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, JsonRpcRequest)]
+    #[request(method = "_session/async_task/stop", response = serde_json::Value)]
+    #[serde(transparent)]
+    struct TestStopAsyncTaskRequest(serde_json::Value);
+
     /// `run_conversation_loop` for a Grok session, attached to a scripted agent.
     struct GrokLoop {
         state: Arc<RwLock<SessionState>>,
@@ -49133,6 +49521,8 @@ mod tests {
         seen: Vec<AcpEvent>,
         /// Every `session/set_model` the agent received, in order.
         set_models: Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
+        /// Every `_session/async_task/stop` task id the agent received.
+        stopped_tasks: Arc<std::sync::Mutex<Vec<String>>>,
         go: Arc<tokio::sync::Notify>,
         respond: Arc<tokio::sync::Notify>,
         after: Arc<tokio::sync::Notify>,
@@ -49147,6 +49537,7 @@ mod tests {
             };
 
             let supports_fork = script.forks;
+            let agent_type = script.agent.unwrap_or(AgentType::Grok);
             let script = Arc::new(script);
             let go = Arc::new(tokio::sync::Notify::new());
             let respond = Arc::new(tokio::sync::Notify::new());
@@ -49161,6 +49552,9 @@ mod tests {
             let agent_after = Arc::clone(&after);
             let set_models = Arc::new(std::sync::Mutex::new(Vec::new()));
             let agent_set_models = Arc::clone(&set_models);
+            let stopped_tasks = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let agent_stopped_tasks = Arc::clone(&stopped_tasks);
+            let stop_script = Arc::clone(&script);
             let agent = tokio::spawn(async move {
                 let _ = Agent
                     .builder()
@@ -49178,6 +49572,17 @@ mod tests {
                                     _cx: ConnectionTo<Client>| {
                             agent_set_models.lock().unwrap().push(req.0);
                             responder.respond(serde_json::json!({}))
+                        },
+                        on_receive_request!(),
+                    )
+                    .on_receive_request(
+                        async move |req: TestStopAsyncTaskRequest,
+                                    responder: Responder<serde_json::Value>,
+                                    cx: ConnectionTo<Client>| {
+                            let task_id = req.0["asyncTaskId"].as_str().unwrap_or_default();
+                            agent_stopped_tasks.lock().unwrap().push(task_id.to_string());
+                            send_grok_frames(&cx, &stop_script.on_stop_task)?;
+                            responder.respond(serde_json::json!({"stopped": true}))
                         },
                         on_receive_request!(),
                     )
@@ -49236,7 +49641,7 @@ mod tests {
 
             let state = Arc::new(RwLock::new(SessionState::new(
                 "conn-grok".to_string(),
-                AgentType::Grok,
+                agent_type,
                 None,
                 "win".to_string(),
                 None,
@@ -49260,7 +49665,7 @@ mod tests {
                     // As `run_connection` registers it: the catalog broadcast
                     // names no session, so no session router sees it.
                     .with_handler(GrokModelCatalogBroadcasts {
-                        agent_type: AgentType::Grok,
+                        agent_type,
                         state: catalog_state,
                         emitter: EventEmitter::Noop,
                     })
@@ -49283,7 +49688,7 @@ mod tests {
                             "conn-grok",
                             &EventEmitter::Noop,
                             &loop_state,
-                            AgentType::Grok,
+                            agent_type,
                             &perms,
                             &mut cmd_rx,
                             Arc::new(TerminalRuntime::with_base_env(BTreeMap::new())),
@@ -49307,6 +49712,7 @@ mod tests {
                 events,
                 seen: Vec::new(),
                 set_models,
+                stopped_tasks,
                 go,
                 respond,
                 after,
@@ -49465,6 +49871,7 @@ mod tests {
             // they are read in-turn rather than racing the response.
             hold_response: true,
             forks: false,
+            ..GrokScript::default()
         }
     }
 
@@ -49788,6 +50195,587 @@ mod tests {
             "refused as busy, not attempted"
         );
         grok.shutdown().await;
+    }
+
+    // ── keh4l build: turns Claude Code and Codex start on their own ─────────
+    //
+    // Same harness as Grok's above. Claude Code's frames follow
+    // claude-agent-acp 0.97.0+'s announcement of such a turn ((gggg) of the
+    // claude entry in `registry.rs`); Codex's, codex-acp's forwarding of
+    // `thread/status/changed` (2.3.0+).
+
+    const CLAUDE_TURN_TASK: &str = "autonomous-turn-3f1c9e2a";
+
+    fn claude_turn_spawned_frame() -> GrokFrame {
+        grok_frame(
+            "session/update",
+            serde_json::json!({
+                "sessionUpdate": "async_task_spawned",
+                "asyncTaskId": CLAUDE_TURN_TASK,
+                "name": "Claude is working",
+                "taskType": "turn",
+                "description": "Background command \"pnpm build\" completed (exit code 0)",
+                "showInTranscript": false,
+                "canStop": true,
+            }),
+            serde_json::json!({}),
+        )
+    }
+
+    fn async_task_state_frame(task_id: &str, state: &str) -> GrokFrame {
+        grok_frame(
+            "session/update",
+            serde_json::json!({
+                "sessionUpdate": "async_task_state_update",
+                "asyncTaskId": task_id,
+                "state": state,
+            }),
+            serde_json::json!({}),
+        )
+    }
+
+    fn codex_status_frame(status: &str) -> GrokFrame {
+        let status = if status == "active" {
+            serde_json::json!({"type": "active", "activeFlags": []})
+        } else {
+            serde_json::json!({"type": status})
+        };
+        grok_frame(
+            "session/update",
+            serde_json::json!({
+                "sessionUpdate": "session_info_update",
+                "_meta": {"codex": {"threadStatus": status}},
+            }),
+            serde_json::json!({}),
+        )
+    }
+
+    /// Every `AgentTurnStarted`: its index, `from_transcript` and task id.
+    fn agent_turn_starts(seen: &[AcpEvent]) -> Vec<(usize, bool, Option<String>)> {
+        seen.iter()
+            .enumerate()
+            .filter_map(|(i, e)| match e {
+                AcpEvent::AgentTurnStarted {
+                    from_transcript,
+                    task_id,
+                } => Some((i, *from_transcript, task_id.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn position_of(seen: &[AcpEvent], what: impl Fn(&AcpEvent) -> bool) -> usize {
+        seen.iter()
+            .position(what)
+            .unwrap_or_else(|| panic!("not seen: {seen:#?}"))
+    }
+
+    /// The turn Claude Code starts once a background command finishes runs as
+    /// a turn — announced, `Prompting`, and ended by the task that stands for
+    /// it — where it used to leave the conversation looking finished.
+    #[tokio::test]
+    async fn a_claude_turn_of_its_own_runs_from_its_task_to_the_task_end() {
+        let mut claude = GrokLoop::start(GrokScript {
+            agent: Some(AgentType::ClaudeCode),
+            in_turn: vec![grok_chunk(
+                "agent_message_chunk",
+                "Building in the background.",
+                None,
+            )],
+            later: vec![
+                claude_turn_spawned_frame(),
+                grok_chunk("agent_message_chunk", "The build passed.", None),
+                async_task_state_frame(CLAUDE_TURN_TASK, "completed"),
+                grok_barrier(),
+            ],
+            ..GrokScript::default()
+        })
+        .await;
+        claude.prompt("build it in the background").await;
+        claude
+            .until("the prompt's turn end", |e| {
+                matches!(e, AcpEvent::TurnComplete { .. })
+            })
+            .await;
+        claude.release_later();
+        claude.until_barrier().await;
+        let seen = claude.seen.clone();
+
+        let completes = turn_completes(&seen);
+        assert_eq!(
+            completes.iter().map(|(_, r)| r.as_str()).collect::<Vec<_>>(),
+            ["end_turn", "end_turn"],
+            "the prompt's turn, then Claude's own: {seen:#?}"
+        );
+        let edges = prompting_edges(&seen);
+        assert_eq!(edges.len(), 2, "{seen:#?}");
+        let starts = agent_turn_starts(&seen);
+        assert_eq!(
+            starts.iter().map(|(_, t, id)| (*t, id.clone())).collect::<Vec<_>>(),
+            [(true, Some(CLAUDE_TURN_TASK.to_string()))],
+            "announced once, as drawn from the transcript, with its task"
+        );
+        let (start, _, _) = starts[0];
+        assert!(completes[0].0 < start && start + 1 == edges[1], "{seen:#?}");
+        let content = position_of(&seen, |e| {
+            matches!(e, AcpEvent::ContentDelta { text, .. } if text == "The build passed.")
+        });
+        assert!(edges[1] < content && content < completes[1].0);
+        assert!(matches!(
+            seen[completes[1].0 + 1],
+            AcpEvent::StatusChanged {
+                status: ConnectionStatus::Connected
+            }
+        ));
+
+        let s = claude.state.read().await;
+        assert_eq!(s.status, ConnectionStatus::Connected);
+        assert!(!s.agent_initiated_turn && !s.turn_in_flight);
+        assert!(!s.agent_turn_from_transcript);
+        assert_eq!(s.agent_turn_task_id, None);
+        drop(s);
+        claude.shutdown().await;
+    }
+
+    /// While Claude's own turn runs, a client attaching gets no live message
+    /// — the transcript overlay draws that turn, and the wire content the
+    /// state still collects would show it twice. Stop stops the task standing
+    /// for the turn and ends the turn at once; the task's own `stopped` that
+    /// follows ends nothing a second time.
+    #[tokio::test]
+    async fn stopping_a_claude_turn_of_its_own_stops_its_task_and_ends_it_once() {
+        let mut claude = GrokLoop::start(GrokScript {
+            agent: Some(AgentType::ClaudeCode),
+            later: vec![
+                claude_turn_spawned_frame(),
+                grok_chunk("agent_message_chunk", "Reading the log.", None),
+                grok_barrier(),
+            ],
+            on_stop_task: vec![
+                async_task_state_frame(CLAUDE_TURN_TASK, "stopped"),
+                grok_barrier(),
+            ],
+            ..GrokScript::default()
+        })
+        .await;
+        claude.release_later();
+        claude.until_barrier().await;
+        {
+            let s = claude.state.read().await;
+            assert_eq!(s.status, ConnectionStatus::Prompting);
+            assert!(s.live_message.is_some(), "the wire content is still collected");
+            let snapshot = s.to_snapshot();
+            assert!(snapshot.agent_turn_from_transcript);
+            assert!(snapshot.live_message.is_none(), "but not handed to a client");
+        }
+
+        claude.send(ConnectionCommand::Cancel).await;
+        claude.until_barrier().await;
+        assert_eq!(
+            claude.stopped_tasks.lock().unwrap().clone(),
+            [CLAUDE_TURN_TASK.to_string()]
+        );
+        let completes = turn_completes(&claude.seen);
+        assert_eq!(completes.len(), 1, "ended once: {:#?}", claude.seen);
+        assert_eq!(completes[0].1, "cancelled");
+        assert_eq!(prompting_edges(&claude.seen).len(), 1);
+        let s = claude.state.read().await;
+        assert_eq!(s.status, ConnectionStatus::Connected);
+        assert!(!s.agent_initiated_turn);
+        drop(s);
+        claude.shutdown().await;
+    }
+
+    /// A turn of Claude's own that fails ends the way a failed prompt turn
+    /// does: the coded `Error`, then `TurnComplete` with the same reason.
+    #[tokio::test]
+    async fn a_failed_claude_turn_of_its_own_reports_the_failure() {
+        let mut claude = GrokLoop::start(GrokScript {
+            agent: Some(AgentType::ClaudeCode),
+            later: vec![
+                claude_turn_spawned_frame(),
+                async_task_state_frame(CLAUDE_TURN_TASK, "failed"),
+                grok_barrier(),
+            ],
+            ..GrokScript::default()
+        })
+        .await;
+        claude.release_later();
+        claude.until_barrier().await;
+        let seen = claude.seen.clone();
+        let completes = turn_completes(&seen);
+        assert_eq!(completes.len(), 1);
+        assert_eq!(completes[0].1, "unknown");
+        assert!(matches!(
+            &seen[completes[0].0 - 1],
+            AcpEvent::Error { code: Some(code), terminal: false, .. } if code == "turn_failed_unknown"
+        ));
+        claude.shutdown().await;
+    }
+
+    /// Another task reaching its end — a background shell — ends nothing, and
+    /// a turn task that is already over when it is announced opens nothing.
+    #[tokio::test]
+    async fn only_the_turn_task_opens_and_ends_claudes_own_turn() {
+        let mut claude = GrokLoop::start(GrokScript {
+            agent: Some(AgentType::ClaudeCode),
+            later: vec![
+                claude_turn_spawned_frame(),
+                async_task_state_frame("bash-7", "completed"),
+                grok_barrier(),
+            ],
+            ..GrokScript::default()
+        })
+        .await;
+        claude.release_later();
+        claude.until_barrier().await;
+        assert!(turn_completes(&claude.seen).is_empty(), "{:#?}", claude.seen);
+        assert_eq!(claude.state.read().await.status, ConnectionStatus::Prompting);
+        claude.shutdown().await;
+    }
+
+    /// A prompt admitted while Claude runs a turn of its own ends that turn
+    /// first (Claude Code folds the prompt into it and answers it there), and
+    /// the task's end arriving inside the prompt's turn ends nothing.
+    #[tokio::test]
+    async fn a_prompt_admitted_during_a_claude_turn_of_its_own_ends_it_first() {
+        let mut claude = GrokLoop::start(GrokScript {
+            agent: Some(AgentType::ClaudeCode),
+            in_turn: vec![
+                async_task_state_frame(CLAUDE_TURN_TASK, "completed"),
+                grok_chunk("agent_message_chunk", "Hi.", None),
+            ],
+            later: vec![claude_turn_spawned_frame(), grok_barrier()],
+            ..GrokScript::default()
+        })
+        .await;
+        claude.release_later();
+        claude.until_barrier().await;
+        claude.prompt("hello").await;
+        claude
+            .until("the prompt's reply", |e| {
+                matches!(e, AcpEvent::ContentDelta { text, .. } if text == "Hi.")
+            })
+            .await;
+        claude
+            .until("the prompt's turn end", |e| {
+                matches!(e, AcpEvent::TurnComplete { stop_reason, .. } if stop_reason == "end_turn")
+            })
+            .await;
+        let seen = claude.seen.clone();
+        let completes = turn_completes(&seen);
+        assert_eq!(
+            completes.iter().map(|(_, r)| r.as_str()).collect::<Vec<_>>(),
+            ["cancelled", "end_turn"],
+            "{seen:#?}"
+        );
+        let edges = prompting_edges(&seen);
+        assert_eq!(edges.len(), 2);
+        assert!(completes[0].0 < edges[1], "the agent's turn ends before the prompt's opens");
+        assert!(!claude.state.read().await.agent_turn_from_transcript);
+        claude.shutdown().await;
+    }
+
+    /// The turn Codex runs on its own (a goal it continues, say) opens when
+    /// its thread goes `active` with no prompt open and ends when it goes
+    /// `idle` — while the prompt's own `active` / `idle` open nothing.
+    #[tokio::test]
+    async fn a_codex_turn_of_its_own_opens_on_active_and_ends_on_idle() {
+        let mut codex = GrokLoop::start(GrokScript {
+            agent: Some(AgentType::Codex),
+            in_turn: vec![
+                codex_status_frame("active"),
+                grok_chunk("agent_message_chunk", "Planned.", None),
+            ],
+            hold_response: true,
+            // The prompt's `idle` can trail its response.
+            after_response: vec![codex_status_frame("idle"), grok_barrier()],
+            later: vec![
+                codex_status_frame("active"),
+                grok_chunk("agent_thought_chunk", "Continuing the goal.", None),
+                grok_chunk("agent_message_chunk", "Step two done.", None),
+                codex_status_frame("idle"),
+                grok_barrier(),
+            ],
+            ..GrokScript::default()
+        })
+        .await;
+        codex.prompt("work on the goal").await;
+        codex
+            .until("the prompt's reply", |e| {
+                matches!(e, AcpEvent::ContentDelta { text, .. } if text == "Planned.")
+            })
+            .await;
+        codex.release_response();
+        codex.after_turn_end().await;
+        codex.until_barrier().await;
+        assert!(
+            agent_turn_starts(&codex.seen).is_empty(),
+            "the prompt's late `idle` opens nothing: {:#?}",
+            codex.seen
+        );
+        codex.release_later();
+        codex.until_barrier().await;
+        let seen = codex.seen.clone();
+
+        let completes = turn_completes(&seen);
+        assert_eq!(
+            completes.iter().map(|(_, r)| r.as_str()).collect::<Vec<_>>(),
+            ["end_turn", "end_turn"],
+            "{seen:#?}"
+        );
+        let starts = agent_turn_starts(&seen);
+        assert_eq!(
+            starts.iter().map(|(_, t, id)| (*t, id.clone())).collect::<Vec<_>>(),
+            [(false, None)],
+            "its content streams on the wire"
+        );
+        let edges = prompting_edges(&seen);
+        assert_eq!(edges.len(), 2);
+        let first = position_of(&seen, |e| {
+            matches!(e, AcpEvent::Thinking { text, .. } if text == "Continuing the goal.")
+        });
+        let last = position_of(&seen, |e| {
+            matches!(e, AcpEvent::ContentDelta { text, .. } if text == "Step two done.")
+        });
+        assert!(completes[0].0 < edges[1] && edges[1] < first);
+        assert!(last < completes[1].0);
+        let s = codex.state.read().await;
+        assert_eq!(s.status, ConnectionStatus::Connected);
+        assert!(!s.agent_initiated_turn && !s.turn_in_flight);
+        assert_eq!(s.last_assistant_text.as_deref(), Some("Step two done."));
+        drop(s);
+        codex.shutdown().await;
+    }
+
+    /// Codex can go straight on from the prompt's turn into one of its own
+    /// with no `idle` between them, so no status marks the change: the
+    /// content that reaches the idle loop while the thread still reads
+    /// `active` opens the turn.
+    #[tokio::test]
+    async fn a_codex_turn_that_follows_the_prompt_without_idling_opens_on_its_content() {
+        let mut codex = GrokLoop::start(GrokScript {
+            agent: Some(AgentType::Codex),
+            in_turn: vec![
+                codex_status_frame("active"),
+                grok_chunk("agent_message_chunk", "First.", None),
+            ],
+            later: vec![
+                grok_chunk("agent_message_chunk", "Second.", None),
+                codex_status_frame("idle"),
+                grok_barrier(),
+            ],
+            ..GrokScript::default()
+        })
+        .await;
+        codex.prompt("go").await;
+        codex
+            .until("the prompt's turn end", |e| {
+                matches!(e, AcpEvent::TurnComplete { .. })
+            })
+            .await;
+        codex.release_later();
+        codex.until_barrier().await;
+        let seen = codex.seen.clone();
+        let edges = prompting_edges(&seen);
+        assert_eq!(edges.len(), 2, "{seen:#?}");
+        let second = position_of(&seen, |e| {
+            matches!(e, AcpEvent::ContentDelta { text, .. } if text == "Second.")
+        });
+        assert!(edges[1] < second);
+        let completes = turn_completes(&seen);
+        assert_eq!(completes.len(), 2);
+        assert!(second < completes[1].0);
+        codex.shutdown().await;
+    }
+
+    /// A Codex thread that breaks ends its own turn as failed.
+    #[tokio::test]
+    async fn a_codex_system_error_ends_its_own_turn_as_failed() {
+        let mut codex = GrokLoop::start(GrokScript {
+            agent: Some(AgentType::Codex),
+            later: vec![
+                codex_status_frame("active"),
+                grok_chunk("agent_message_chunk", "Working.", None),
+                codex_status_frame("systemError"),
+                grok_barrier(),
+            ],
+            ..GrokScript::default()
+        })
+        .await;
+        codex.release_later();
+        codex.until_barrier().await;
+        let completes = turn_completes(&codex.seen);
+        assert_eq!(completes.len(), 1);
+        assert_eq!(completes[0].1, "unknown");
+        codex.shutdown().await;
+    }
+
+    /// Stop on Codex's own turn ends it at once; a chunk Codex flushes before
+    /// its `idle` — the thread still reading `active` — opens no new turn.
+    #[tokio::test]
+    async fn stopping_a_codex_turn_of_its_own_ends_it_once() {
+        let mut codex = GrokLoop::start(GrokScript {
+            agent: Some(AgentType::Codex),
+            later: vec![
+                codex_status_frame("active"),
+                grok_chunk("agent_message_chunk", "Working.", None),
+                grok_barrier(),
+            ],
+            on_cancel: vec![
+                grok_chunk("agent_message_chunk", " Interrupted.", None),
+                codex_status_frame("idle"),
+                grok_barrier(),
+            ],
+            ..GrokScript::default()
+        })
+        .await;
+        codex.release_later();
+        codex.until_barrier().await;
+        assert_eq!(prompting_edges(&codex.seen).len(), 1);
+
+        codex.send(ConnectionCommand::Cancel).await;
+        codex.until_barrier().await;
+        let completes = turn_completes(&codex.seen);
+        assert_eq!(completes.len(), 1, "{:#?}", codex.seen);
+        assert_eq!(completes[0].1, "cancelled");
+        assert_eq!(prompting_edges(&codex.seen).len(), 1, "{:#?}", codex.seen);
+        assert!(codex.stopped_tasks.lock().unwrap().is_empty(), "Codex has no task to stop");
+        assert_eq!(codex.state.read().await.status, ConnectionStatus::Connected);
+        codex.shutdown().await;
+    }
+
+    /// Stop on a Codex PROMPT ends its turn at once and leaves the turn loop,
+    /// so what Codex flushes of it arrives on the idle loop before its
+    /// `idle` — with the thread still reading `active`. That opens no turn of
+    /// Codex's own (whose `end_turn` would put the stopped conversation back
+    /// up for review).
+    #[tokio::test]
+    async fn a_stopped_codex_prompts_late_frames_open_no_turn() {
+        let mut codex = GrokLoop::start(GrokScript {
+            agent: Some(AgentType::Codex),
+            in_turn: vec![
+                codex_status_frame("active"),
+                grok_chunk("agent_message_chunk", "Working.", None),
+            ],
+            hold_response: true,
+            on_cancel: vec![
+                grok_chunk("agent_message_chunk", " Flushed.", None),
+                codex_status_frame("idle"),
+                grok_barrier(),
+            ],
+            ..GrokScript::default()
+        })
+        .await;
+        codex.prompt("go").await;
+        codex
+            .until("the prompt's reply", |e| {
+                matches!(e, AcpEvent::ContentDelta { text, .. } if text == "Working.")
+            })
+            .await;
+        codex.send(ConnectionCommand::Cancel).await;
+        codex.until_barrier().await;
+        let completes = turn_completes(&codex.seen);
+        assert_eq!(
+            completes.iter().map(|(_, r)| r.as_str()).collect::<Vec<_>>(),
+            ["cancelled"],
+            "{:#?}",
+            codex.seen
+        );
+        assert!(agent_turn_starts(&codex.seen).is_empty(), "{:#?}", codex.seen);
+        assert_eq!(prompting_edges(&codex.seen).len(), 1);
+        codex.shutdown().await;
+    }
+
+    #[test]
+    fn claude_turn_tasks_open_and_end_claudes_own_turn() {
+        let delta = |spawned: bool, task_type: Option<&str>, state: Option<&str>| AsyncTaskDelta {
+            task_id: "t".into(),
+            spawned,
+            name: None,
+            task_type: task_type.map(str::to_string),
+            description: None,
+            show_in_transcript: None,
+            can_stop: None,
+            state: state.map(str::to_string),
+            summary: None,
+            last_tool_name: None,
+            usage: None,
+            output_file_path: None,
+            tool_call_id: None,
+            phase: None,
+            current_agent: None,
+        };
+        let claude = AgentType::ClaudeCode;
+        assert_eq!(
+            claude_turn_task(&delta(true, Some("turn"), Some("running")), claude),
+            Some(ClaudeTurnTask::Started("t".into()))
+        );
+        assert_eq!(claude_turn_task(&delta(true, Some("shell"), None), claude), None);
+        assert_eq!(
+            claude_turn_task(&delta(false, None, Some("completed")), claude),
+            Some(ClaudeTurnTask::Ended("t".into(), "end_turn"))
+        );
+        assert_eq!(
+            claude_turn_task(&delta(false, None, Some("stopped")), claude),
+            Some(ClaudeTurnTask::Ended("t".into(), "end_turn"))
+        );
+        assert_eq!(
+            claude_turn_task(&delta(false, None, Some("failed")), claude),
+            Some(ClaudeTurnTask::Ended("t".into(), "unknown"))
+        );
+        // Already over when announced: an end, never a start.
+        assert_eq!(
+            claude_turn_task(&delta(true, Some("turn"), Some("completed")), claude),
+            Some(ClaudeTurnTask::Ended("t".into(), "end_turn"))
+        );
+        assert_eq!(claude_turn_task(&delta(false, None, Some("running")), claude), None);
+        assert_eq!(
+            claude_turn_task(&delta(true, Some("turn"), None), AgentType::Codex),
+            None,
+            "Codex's tasks are its background terminals, never a turn"
+        );
+    }
+
+    #[test]
+    fn codex_thread_status_is_read_off_session_info_updates() {
+        let dispatch = |frame: GrokFrame| {
+            Dispatch::Notification(UntypedMessage::new(frame.0, frame.1).expect("frame"))
+        };
+        let codex = AgentType::Codex;
+        assert_eq!(
+            codex_thread_status(&dispatch(codex_status_frame("active")), codex),
+            Some(CodexThreadStatus::Active)
+        );
+        assert_eq!(
+            codex_thread_status(&dispatch(codex_status_frame("idle")), codex),
+            Some(CodexThreadStatus::Idle)
+        );
+        assert_eq!(
+            codex_thread_status(&dispatch(codex_status_frame("notLoaded")), codex),
+            Some(CodexThreadStatus::Idle)
+        );
+        assert_eq!(
+            codex_thread_status(&dispatch(codex_status_frame("systemError")), codex),
+            Some(CodexThreadStatus::SystemError)
+        );
+        assert_eq!(
+            codex_thread_status(&dispatch(codex_status_frame("active")), AgentType::ClaudeCode),
+            None
+        );
+        assert_eq!(
+            codex_thread_status(
+                &dispatch(grok_chunk("agent_message_chunk", "hi", None)),
+                codex
+            ),
+            None
+        );
+        assert!(is_turn_content_frame(&dispatch(grok_chunk(
+            "agent_thought_chunk",
+            "hm",
+            None
+        ))));
+        assert!(!is_turn_content_frame(&dispatch(codex_status_frame("active"))));
     }
 
     // ── Grok's model catalog broadcast, `_x.ai/models/update` (#876) ────────

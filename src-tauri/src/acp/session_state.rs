@@ -832,6 +832,20 @@ pub struct SessionState {
     /// serialized: backend-internal, like `turn_in_flight`.
     pub agent_initiated_turn: bool,
 
+    /// keh4l build: the open agent-initiated turn renders from the agent's
+    /// transcript, not from the wire (see `AcpEvent::AgentTurnStarted`). While
+    /// set, the snapshot carries no live message: the wire content this state
+    /// still collects is what clients drop, and a client attaching mid-turn
+    /// would otherwise show it beside the overlay. Set by `AgentTurnStarted`,
+    /// cleared by `TurnComplete`.
+    pub agent_turn_from_transcript: bool,
+
+    /// keh4l build: the async task standing for the open agent-initiated turn
+    /// (Claude Code's `autonomous-turn-…`), so a Stop on that task's row ends
+    /// the turn the way the composer's Stop does. Same lifetime as
+    /// `agent_turn_from_transcript`.
+    pub agent_turn_task_id: Option<String>,
+
     /// How many `TurnComplete`s this connection has applied — the turn's
     /// IDENTITY, paired with `turn_in_flight`. `turn_in_flight` alone only says
     /// "some turn is running"; a caller that admitted itself against turn N and
@@ -1054,6 +1068,8 @@ impl SessionState {
             pending_user_message_started_at: None,
             turn_in_flight: false,
             agent_initiated_turn: false,
+            agent_turn_from_transcript: false,
+            agent_turn_task_id: None,
             turns_completed: 0,
             turn_file_jobs: Vec::new(),
             last_turn_ended_abnormally: false,
@@ -1344,6 +1360,16 @@ impl SessionState {
                     self.remote_control = None;
                 }
                 self.status = status.clone();
+            }
+            AcpEvent::AgentTurnStarted {
+                from_transcript,
+                task_id,
+            } => {
+                // The turn itself was claimed by `begin_agent_initiated_turn`
+                // (it sets `agent_initiated_turn`); this records how it
+                // renders and what stops it, for the snapshot and the manager.
+                self.agent_turn_from_transcript = *from_transcript;
+                self.agent_turn_task_id = task_id.clone();
             }
             AcpEvent::SessionModes { modes } => {
                 self.current_mode = Some(modes.current_mode_id.clone());
@@ -1719,6 +1745,8 @@ impl SessionState {
                     self.turn_in_flight = false;
                 }
                 self.agent_initiated_turn = false;
+                self.agent_turn_from_transcript = false;
+                self.agent_turn_task_id = None;
                 // Same edge, the identity half: anyone holding "the turn I was
                 // admitted against" can now see that it is gone, even if a new
                 // turn sets `turn_in_flight` again before they look.
@@ -2771,7 +2799,14 @@ impl SessionState {
             folder_id: self.folder_id,
             status: self.status.clone(),
             external_id: self.external_id.clone(),
-            live_message: self.live_message.clone(),
+            // A turn that renders from the transcript shows nothing of what the
+            // wire carried (see `agent_turn_from_transcript`).
+            live_message: if self.agent_turn_from_transcript {
+                None
+            } else {
+                self.live_message.clone()
+            },
+            agent_turn_from_transcript: self.agent_turn_from_transcript,
             active_tool_calls: self.snapshot_tool_calls(),
             pending_permission: self.pending_permission.clone(),
             pending_question: self.pending_question.clone(),
@@ -2927,6 +2962,11 @@ pub struct LiveSessionSnapshot {
     pub status: ConnectionStatus,
     pub external_id: Option<String>,
     pub live_message: Option<LiveMessage>,
+    /// keh4l build: the running turn is one the agent started on its own and
+    /// renders from its transcript (see `SessionState.agent_turn_from_transcript`),
+    /// so a client keeps dropping its wire content. Absent when false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub agent_turn_from_transcript: bool,
     pub active_tool_calls: Vec<ToolCallState>,
     pub pending_permission: Option<PendingPermissionState>,
     /// The agent's in-flight `ask_user_question` (see

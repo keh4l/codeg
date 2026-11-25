@@ -214,6 +214,7 @@ function makeConnState(overrides: Partial<ConnectionState>): ConnectionState {
     promptSuggestion: null,
     remoteControl: null,
     liveMessage: null,
+    agentTurnFromTranscript: false,
     pendingPermission: null,
     pendingQuestion: null,
     pendingAskQuestion: null,

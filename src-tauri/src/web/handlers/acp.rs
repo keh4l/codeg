@@ -615,7 +615,7 @@ pub async fn acp_stop_async_task(
 ) -> Result<Json<bool>, AppCommandError> {
     let stopped = state
         .connection_manager
-        .stop_async_task(&params.connection_id, &params.task_id)
+        .stop_async_task(&state.db.conn, &params.connection_id, &params.task_id)
         .await
         .map_err(|e| AppCommandError::task_execution_failed(e.to_string()))?;
     Ok(Json(stopped))

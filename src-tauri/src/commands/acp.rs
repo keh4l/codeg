@@ -12955,9 +12955,12 @@ pub async fn acp_fork(
 pub async fn acp_stop_async_task(
     connection_id: String,
     task_id: String,
+    db: State<'_, AppDatabase>,
     manager: State<'_, ConnectionManager>,
 ) -> Result<bool, AcpError> {
-    manager.stop_async_task(&connection_id, &task_id).await
+    manager
+        .stop_async_task(&db.conn, &connection_id, &task_id)
+        .await
 }
 
 #[cfg(feature = "tauri-runtime")]

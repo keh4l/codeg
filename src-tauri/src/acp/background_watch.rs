@@ -646,7 +646,10 @@ async fn run_watch(
             (
                 s.external_id.clone(),
                 s.external_id_changed_at,
-                s.status == ConnectionStatus::Prompting,
+                // keh4l build: a turn Claude Code started on its own now runs
+                // as `Prompting` too, but it is what this watch renders — to
+                // the watch, "prompting" means a codeg prompt's wire turn.
+                s.status == ConnectionStatus::Prompting && !s.agent_initiated_turn,
                 s.last_turn_ended_abnormally,
             )
         };

@@ -410,6 +410,16 @@ export interface ConnectionState {
    */
   remoteControl: RemoteControlInfo | null
   liveMessage: LiveMessage | null
+  /**
+   * keh4l build: the running turn is one the agent started on its own and
+   * its content renders from the transcript overlay (`background_activity`),
+   * not the wire — Claude Code's after a background task (see the
+   * `agent_turn_started` event). Its wire content is then dropped as it is
+   * between turns: `liveMessage` stays empty, so the turn shows as running
+   * without drawing its content twice. Cleared when the turn leaves
+   * `prompting`.
+   */
+  agentTurnFromTranscript: boolean
   pendingPermission: PendingPermission | null
   /** In-flight user prompt for the current turn — set from a `user_message`
    *  event or a snapshot's `pending_user_message`. A VIEWER mirrors this into
@@ -678,6 +688,13 @@ type Action =
       /** The ending turn's stop reason, when `turn_complete` is what moved
        *  the status. */
       stopReason?: string
+    }
+  | {
+      // keh4l build: `agent_turn_started` — see
+      // `ConnectionState.agentTurnFromTranscript`.
+      type: "AGENT_TURN_STARTED"
+      contextKey: string
+      fromTranscript: boolean
     }
   | {
       // One AIR typed session-failure upsert (`session_failure` event).
@@ -1878,6 +1895,18 @@ function sameBackgroundTasks(
   })
 }
 
+/**
+ * Whether wire turn content belongs in `liveMessage` now: a turn is running,
+ * and it is not one whose content renders from the transcript overlay (see
+ * `ConnectionState.agentTurnFromTranscript`). Everything else is the
+ * out-of-turn content the guards below keep out of it.
+ */
+function wireTurnOpen(
+  conn: Pick<ConnectionState, "status" | "agentTurnFromTranscript">
+): boolean {
+  return conn.status === "prompting" && !conn.agentTurnFromTranscript
+}
+
 /** Last time an out-of-turn drop was logged — module-level sampling clock. */
 let lastOutOfTurnDropLogAt = 0
 
@@ -1891,10 +1920,12 @@ function applyStreamingAction(
   // the previous turn's completed liveMessage — the historical "background
   // results render garbled/incomplete" bug. The transcript watcher's
   // `background_activity` overlay is the single render path for out-of-turn
-  // content, so wire deltas outside a prompting turn are dropped. Ordering is
-  // safe: the backend emits StatusChanged(prompting) before any turn content,
-  // and turn_complete flushes queued deltas before flipping status back.
-  if (conn.status !== "prompting") {
+  // content, so wire deltas outside a prompting turn are dropped — and inside
+  // one the agent started on its own that the overlay draws (`wireTurnOpen`).
+  // Ordering is safe: the backend emits StatusChanged(prompting) before any
+  // turn content, and turn_complete flushes queued deltas before flipping
+  // status back.
+  if (!wireTurnOpen(conn)) {
     // Sampled: an autonomous (cron//loop) turn streams the ENTIRE wire
     // out-of-turn — logging every dropped delta would spam the console and
     // allocate per token for minutes at a time.
@@ -2190,6 +2221,7 @@ function connectionsReducer(
         promptSuggestion: null,
         remoteControl: null,
         liveMessage: null,
+        agentTurnFromTranscript: false,
         pendingPermission: null,
         pendingUserMessage: null,
         steeredMessageIds: EMPTY_STEERED_MESSAGE_IDS,
@@ -2258,6 +2290,7 @@ function connectionsReducer(
         promptSuggestion: null,
         remoteControl: null,
         liveMessage: null,
+        agentTurnFromTranscript: false,
         pendingPermission: null,
         pendingUserMessage: null,
         steeredMessageIds: EMPTY_STEERED_MESSAGE_IDS,
@@ -2403,9 +2436,14 @@ function connectionsReducer(
         const mergedSessionId = adoptStatus
           ? (current.sessionId ?? action.patch.sessionId)
           : current.sessionId
+        // Goes with the status it describes.
+        const mergedAgentTurnFromTranscript = adoptStatus
+          ? action.patch.agentTurnFromTranscript
+          : current.agentTurnFromTranscript
         if (
           mergedStatus === current.status &&
           mergedSessionId === current.sessionId &&
+          mergedAgentTurnFromTranscript === current.agentTurnFromTranscript &&
           mergedSelectorsReady === current.selectorsReady &&
           mergedSupportsFork === current.supportsFork &&
           mergedModes === current.modes &&
@@ -2424,6 +2462,7 @@ function connectionsReducer(
           ...current,
           status: mergedStatus,
           sessionId: mergedSessionId,
+          agentTurnFromTranscript: mergedAgentTurnFromTranscript,
           modes: mergedModes,
           configOptions: mergedConfigOptions,
           availableCommands: mergedAvailableCommands,
@@ -2459,6 +2498,7 @@ function connectionsReducer(
         promptSuggestion: action.patch.promptSuggestion,
         remoteControl: action.patch.remoteControl,
         liveMessage: hydratedLiveMessage,
+        agentTurnFromTranscript: action.patch.agentTurnFromTranscript,
         // A snapshot with a turn in flight carries a prompt newer than any the
         // user stopped, which ends that turn's window as the status event of
         // that prompt would have.
@@ -2595,6 +2635,21 @@ function connectionsReducer(
       return next
     }
 
+    case "AGENT_TURN_STARTED": {
+      // Precedes the turn's `status_changed(prompting)`, which keeps it (only
+      // leaving `prompting` clears it).
+      const conn = state.get(action.contextKey)
+      if (!conn || conn.agentTurnFromTranscript === action.fromTranscript) {
+        return state
+      }
+      const next = new Map(state)
+      next.set(action.contextKey, {
+        ...conn,
+        agentTurnFromTranscript: action.fromTranscript,
+      })
+      return next
+    }
+
     case "STATUS_CHANGED": {
       const conn = state.get(action.contextKey)
       if (!conn) return state
@@ -2635,6 +2690,8 @@ function connectionsReducer(
       } else if (conn.status === "prompting") {
         // Prompt cycle ended: clear in-flight Claude API retry banner.
         updated.claudeApiRetry = null
+        // keh4l build: and with it an agent-initiated turn's render source.
+        updated.agentTurnFromTranscript = false
         // AIR failures deliberately NOT settled here: leaving `prompting`
         // covers error/cancel exits too, where the incident did not recover —
         // settling on any exit painted a still-dead connection as a recovered
@@ -2754,7 +2811,7 @@ function connectionsReducer(
       // transcript overlay renders that content — grafting it here recreated
       // the garbled-timeline bug), but its context is still recorded so a
       // background permission request can render command/diff details.
-      if (conn.status !== "prompting") {
+      if (!wireTurnOpen(conn)) {
         const info: PermissionToolContext = {
           tool_call_id: action.tool_call_id,
           title: action.title,
@@ -2866,7 +2923,7 @@ function connectionsReducer(
       // stopped also folds into `cancelledTurn`. In-turn ordering is safe: the
       // panel flushes pending tool-call updates at turn_complete BEFORE status
       // flips back.
-      if (conn.status !== "prompting") {
+      if (!wireTurnOpen(conn)) {
         const existing = conn.outOfTurnToolCalls?.get(action.tool_call_id)
         const merged: PermissionToolContext = {
           tool_call_id: action.tool_call_id,
@@ -3385,7 +3442,7 @@ function connectionsReducer(
       const conn = state.get(action.contextKey)
       if (!conn) return state
       // Same out-of-turn guard as TOOL_CALL / streaming deltas.
-      if (conn.status !== "prompting") return state
+      if (!wireTurnOpen(conn)) return state
       const prev = ensureLiveMessage(conn.liveMessage)
       const nonPlanContent = prev.content.filter(
         (block) => block.type !== "plan"
@@ -3438,7 +3495,7 @@ function connectionsReducer(
       // its strip in that case (it is absent from `steeredMessageIds`), and
       // the history holds it either way (see the `steering` block), so a
       // reload still shows it.
-      if (conn.status !== "prompting") return state
+      if (!wireTurnOpen(conn)) return state
       // Idempotent by note id: the submit broadcast reaches every attached
       // client, and one client is also the sender.
       if (conn.steeredMessageIds.includes(action.id)) return state
@@ -3470,7 +3527,7 @@ function connectionsReducer(
       // Same out-of-turn guard as STEERING_MESSAGE: with no running turn there
       // is nothing to close, and appending would graft the line onto the
       // PREVIOUS turn's completed liveMessage.
-      if (conn.status !== "prompting") return state
+      if (!wireTurnOpen(conn)) return state
       const message = action.message.trim()
       if (!message) return state
       const prev = ensureLiveMessage(conn.liveMessage)
@@ -5821,6 +5878,13 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
             retireTurnFailures(turnConn?.connectionId ?? contextKey)
           }
           dispatch({ type: "STATUS_CHANGED", contextKey, status: e.status })
+          break
+        case "agent_turn_started":
+          dispatch({
+            type: "AGENT_TURN_STARTED",
+            contextKey,
+            fromTranscript: e.from_transcript,
+          })
           break
         case "content_delta":
           settleRetryIncidentsOnProgress(contextKey)

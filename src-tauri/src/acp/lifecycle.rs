@@ -37,8 +37,9 @@ use tokio::sync::RwLock;
 /// enter the queue. The remaining 8 event types arrive at most a handful
 /// of times per turn, so 64 slots is comfortable headroom for a sustained
 /// SQLite stall without forcing the dispatcher to block on `send`.
-/// (SessionStarted, TurnComplete, ConversationLinked, NativeSessionTitle,
-/// TranscriptRolledOver, ToolApproval, Disconnected, Error, and the selector
+/// (SessionStarted, TurnComplete, AgentTurnStarted, ConversationLinked,
+/// NativeSessionTitle, TranscriptRolledOver, ToolApproval, Disconnected, Error,
+/// and the selector
 /// events the conversation's stored selection follows — SessionModes,
 /// ModeChanged, SessionConfigOptions, SelectorsReady, ComposerModeChanged —
 /// which arrive per establishment or per pick.) `ToolApproval` is one per
@@ -78,6 +79,7 @@ fn is_lifecycle_relevant(event: &AcpEvent) -> bool {
             | AcpEvent::NativeSessionTitle { .. }
             | AcpEvent::TranscriptRolledOver { .. }
             | AcpEvent::ToolApproval { .. }
+            | AcpEvent::AgentTurnStarted { .. }
             | AcpEvent::StatusChanged {
                 status: ConnectionStatus::Disconnected
             }
@@ -463,6 +465,35 @@ pub(crate) async fn handle_event(
                 )
                 .await;
             }
+            Ok(())
+        }
+        AcpEvent::AgentTurnStarted { .. } => {
+            // keh4l build: a turn the agent started on its own is a turn like
+            // any other to the conversation row — `InProgress` while it runs,
+            // as `send_prompt_linked` writes for a prompt — so the sidebar
+            // shows it running and its `TurnComplete` moves the row on from
+            // there (an `end_turn` to `PendingReview`, a Stop through
+            // `manager.cancel()`'s CAS to `Cancelled`).
+            let Some((state_arc, emitter)) =
+                manager.get_state_and_emitter(&envelope.connection_id).await
+            else {
+                return Ok(());
+            };
+            let conversation_id = { state_arc.read().await.conversation_id };
+            let Some(cid) = conversation_id else {
+                return Ok(());
+            };
+            conversation_service::update_status(db_conn, cid, ConversationStatus::InProgress)
+                .await?;
+            emit_with_state(
+                &state_arc,
+                &emitter,
+                AcpEvent::ConversationStatusChanged {
+                    conversation_id: cid,
+                    status: ConversationStatus::InProgress,
+                },
+            )
+            .await;
             Ok(())
         }
         AcpEvent::NativeSessionTitle { title } => {
@@ -4041,6 +4072,55 @@ mod tests {
             },
         };
         handle_event(&db.conn, &mgr, &env, None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            read_row_status(&db, conv.id).await,
+            ConversationStatus::PendingReview
+        );
+    }
+
+    /// keh4l build: a turn the agent started on its own puts the row back to
+    /// `InProgress`, as a prompt does, so the sidebar shows it running; its
+    /// `end_turn` then moves it on to review like any turn's.
+    #[tokio::test]
+    async fn an_agent_initiated_turn_marks_the_row_in_progress() {
+        let db = test_helpers::fresh_in_memory_db().await;
+        let folder_id = test_helpers::seed_folder(&db, "/tmp/agent-turn").await;
+        let conv =
+            conversation_service::create(&db.conn, folder_id, AgentType::ClaudeCode, None, None)
+                .await
+                .unwrap();
+        conversation_service::update_status(&db.conn, conv.id, ConversationStatus::PendingReview)
+            .await
+            .unwrap();
+        let mgr = ConnectionManager::new();
+        let conn = fake_connection_with_state("c1", Some(conv.id));
+        mgr.connections.lock().await.insert("c1".to_string(), conn);
+        let envelope = |seq, payload| EventEnvelope {
+            seq,
+            connection_id: "c1".to_string(),
+            payload,
+        };
+        let started = AcpEvent::AgentTurnStarted {
+            from_transcript: true,
+            task_id: Some("autonomous-turn-1".into()),
+        };
+        assert!(is_lifecycle_relevant(&started));
+
+        handle_event(&db.conn, &mgr, &envelope(3, started), None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            read_row_status(&db, conv.id).await,
+            ConversationStatus::InProgress
+        );
+        let ended = AcpEvent::TurnComplete {
+            session_id: "ext-1".into(),
+            stop_reason: "end_turn".into(),
+            agent_type: "claude_code".into(),
+        };
+        handle_event(&db.conn, &mgr, &envelope(5, ended), None, None)
             .await
             .unwrap();
         assert_eq!(

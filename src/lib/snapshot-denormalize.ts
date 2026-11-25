@@ -63,6 +63,9 @@ export interface SnapshotPatch {
    *  like `usage`: applied on the fresh hydrate branch only. */
   remoteControl: RemoteControlInfo | null
   liveMessage: LocalLiveMessage | null
+  /** keh4l build: the running turn is one the agent started on its own and
+   *  renders from its transcript, not the wire (see `agent_turn_started`). */
+  agentTurnFromTranscript: boolean
   pendingPermission: PendingPermission | null
   /** Awaiting-answer multiple-choice `ask_user_question` carried by the
    *  snapshot, so a client attaching mid-turn re-renders the card. `null` when
@@ -159,6 +162,7 @@ export function denormalizeSnapshot(wire: LiveSessionSnapshot): SnapshotPatch {
     liveMessage: wire.live_message
       ? denormalizeLiveMessage(wire.live_message, toolMap)
       : null,
+    agentTurnFromTranscript: wire.agent_turn_from_transcript ?? false,
     pendingPermission: wire.pending_permission
       ? {
           request_id: wire.pending_permission.request_id,

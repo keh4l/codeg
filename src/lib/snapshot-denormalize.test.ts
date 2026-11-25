@@ -86,6 +86,21 @@ describe("denormalizeSnapshot — hasPrompted", () => {
   })
 })
 
+describe("denormalizeSnapshot — agentTurnFromTranscript", () => {
+  // keh4l build: a turn the agent started on its own that the transcript
+  // overlay draws — the client must keep dropping its wire content.
+  it("carries the flag, false when the server omits it", () => {
+    expect(
+      denormalizeSnapshot(
+        baseSnapshot({ status: "prompting", agent_turn_from_transcript: true })
+      ).agentTurnFromTranscript
+    ).toBe(true)
+    expect(denormalizeSnapshot(baseSnapshot()).agentTurnFromTranscript).toBe(
+      false
+    )
+  })
+})
+
 describe("denormalizeSnapshot — subagent attribution on live blocks", () => {
   it("forwards parent_tool_use_id onto text/thinking, absent field stays undefined", () => {
     const patch = denormalizeSnapshot(
