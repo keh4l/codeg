@@ -66,6 +66,9 @@
     <td width="50%" valign="top">⚡ <strong>Buttons react at once, replies flow evenly</strong><br/>Approve, rename, delete, stop and steer take effect the moment you press them. A request that didn't get through is retried and never runs twice; only a real failure undoes the change, with a notice. On a slow link a reply no longer jumps in bursts but appears at a steady pace.</td>
   </tr>
   <tr>
+    <td colspan="2" valign="top">🏃 <strong>Shown as running when the agent carries on by itself</strong><br/>When a background command or background sub-agent finishes, Claude Code carries on by itself, and Codex can start its next turn on its own. The conversation now shows as running while it does, with a Stop button, and is marked for review and notified only when it is done; what Codex does in that turn streams live, with no “Load background activity” to click.</td>
+  </tr>
+  <tr>
     <td colspan="2" valign="top">🔄 <strong>Follows upstream</strong><br/>Upstream is merged in regularly; anything not listed here works exactly as in the official build. The built-in Kiro CLI, the first thing this build added, has been part of the official build since 0.36.0. Claude Code thinking summaries use the official build's switch from 0.41.3-1 on: “Show Claude's thinking summaries” in Settings → Agents → Claude Code, off by default. From 0.46.0-1 the suggested next message is filled in the official way: Tab on a computer, the lightbulb button beside Send on a phone.</td>
   </tr>
 </table>
@@ -328,6 +331,19 @@
   - Creating or forking a conversation no longer reloads the whole conversation list.
 - Measured (same link): permission approved to card gone 0.42 s → 5 ms; rename 0.49 s → 0.06–0.09 s; delete 0.45 s → 0.07–0.2 s; Stop reacting 0.46 s → 0.03–0.07 s.
 - Steady text: on a slow link a reply is shown at the rate it has recently been arriving, a little behind it. How far behind is set from the link's longest recent stall (at most 1.5 s). On a smooth link nothing is held, as before. Before a tool card, a permission request or the end of the round appears, everything held is shown first, so the order never changes. Measured on the same link: median gap between text updates 100 → 34–38 ms, 95th percentile 190–214 → 66–100 ms. Turn it off in Settings → Appearance → Smooth streaming text; it applies to this device only.
+
+</details>
+
+<details>
+<summary><strong>Shown as running when the agent carries on by itself</strong>: details</summary>
+<br/>
+
+- The official build counts only the turns codeg sends as running. A turn the agent starts itself — Claude Code picking up after a background command (`run_in_background`), a Monitor or a background sub-agent finishes, or Codex going on with an unfinished `/goal` — leaves the conversation looking finished (Review): the composer shows Send, nothing can stop the turn, and no notification comes when it ends. Codex's turn is also dropped, leaving only a “Load background activity” button.
+- This build runs such a turn like any other: the conversation turns In Progress, its tab and sidebar entry show it running, and the composer offers Stop; when it ends it is marked Review and notified like any turn, and queued messages go out.
+- Claude Code: the turn's content is still read from its transcript and shown live, as before. The Stop on the “Claude Code is working” row in the background task list does the same as the composer's Stop. Needs claude-agent-acp 0.97.0 or later (this build ships 0.110.1).
+- Codex: the turn's content streams live. Its start and end come from the thread status Codex reports, which needs codex-acp 2.3.0 or later (this build ships 2.10.0).
+- A message you send while such a turn runs ends that turn first, then goes to the agent: Claude Code folds it into the turn it is running and answers it there, and Codex takes it on the same way.
+- The turn Grok starts by itself after a background workflow already showed as running in the official build; this build also moves the conversation to In Progress for it.
 
 </details>
 

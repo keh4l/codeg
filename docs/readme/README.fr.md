@@ -66,6 +66,9 @@
     <td width="50%" valign="top">⚡ <strong>Les boutons réagissent tout de suite, les réponses s'affichent à un rythme régulier</strong><br/>Approuver, renommer, supprimer, arrêter et intervenir prennent effet dès le clic. Une requête qui n'est pas passée est relancée et ne s'exécute jamais deux fois ; seul un vrai échec annule le changement, avec un avertissement. Sur une connexion lente, une réponse n'arrive plus par à-coups mais s'affiche à un rythme régulier.</td>
   </tr>
   <tr>
+    <td colspan="2" valign="top">🏃 <strong>Affiché en cours quand l'agent continue de lui-même</strong><br/>Quand une commande ou un sous-agent en arrière-plan se termine, Claude Code reprend le travail de lui-même, et Codex peut aussi lancer seul son tour suivant. La conversation s'affiche désormais en cours pendant ce temps, avec un bouton Arrêter, et ne passe en revue avec une notification qu'une fois le travail fini ; ce que fait Codex pendant ce tour s'affiche en direct, sans avoir à cliquer sur « Charger l'activité en arrière-plan ».</td>
+  </tr>
+  <tr>
     <td colspan="2" valign="top">🔄 <strong>Au plus près de l'original</strong><br/>Le projet d'origine est fusionné régulièrement ; ce qui n'est pas listé ici fonctionne comme dans la version officielle. Kiro CLI intégré, le premier ajout de cette version, fait partie de la version officielle depuis la 0.36.0. Les résumés de réflexion de Claude Code passent dès la 0.41.3-1 par l'interrupteur de la version officielle : « Afficher les résumés de réflexion de Claude » dans Réglages → Agents IA → Claude Code, désactivé par défaut. Depuis la 0.46.0-1, le message suivant suggéré se remplit comme dans la version officielle : Tab sur ordinateur, bouton ampoule à côté d’Envoyer sur téléphone.</td>
   </tr>
 </table>
@@ -328,6 +331,19 @@
   - Créer ou bifurquer une conversation ne recharge plus toute la liste des conversations.
 - Mesures (même liaison) : de l'autorisation approuvée à la disparition de la carte 0,42 s → 5 ms ; renommer 0,49 s → 0,06–0,09 s ; supprimer 0,45 s → 0,07–0,2 s ; réaction d'Arrêter 0,46 s → 0,03–0,07 s.
 - Texte régulier : sur une connexion lente, une réponse s'affiche au rythme auquel elle arrive depuis peu, avec un léger retard. Ce retard se règle sur la plus longue pause récente de cette liaison (1,5 s au plus). Sur une connexion fluide, rien n'est retenu, comme avant. Avant qu'une carte d'outil, une demande d'autorisation ou la fin du tour n'apparaisse, tout le texte retenu s'affiche d'abord, donc l'ordre ne change jamais. Mesuré sur la même liaison : écart médian entre mises à jour du texte 100 → 34–38 ms, 95ᵉ centile 190–214 → 66–100 ms. Se désactive dans Paramètres → Apparence → Texte en streaming fluide ; ne s'applique qu'à cet appareil.
+
+</details>
+
+<details>
+<summary><strong>Affiché en cours quand l'agent continue de lui-même</strong> : détails</summary>
+<br/>
+
+- La version officielle ne compte comme en cours que les tours envoyés par codeg. Un tour que l'agent lance lui-même — Claude Code qui reprend quand une commande en arrière-plan (`run_in_background`), un Monitor ou un sous-agent en arrière-plan se termine, ou Codex qui poursuit un `/goal` inachevé — laisse la conversation comme terminée (Revue) : la zone de saisie affiche Envoyer, rien ne peut arrêter le tour et aucune notification n'arrive à la fin. Le tour de Codex est en plus abandonné ; il ne reste qu'un bouton « Charger l'activité en arrière-plan ».
+- Cette version traite ces tours comme les autres : au début, la conversation passe En cours, son onglet et la barre latérale l'affichent en cours et la zone de saisie propose Arrêter ; à la fin, elle passe en Revue avec une notification comme pour tout tour, et les messages en file partent.
+- Claude Code : le contenu du tour est toujours lu dans son journal de conversation et affiché en direct, comme avant. Le bouton Arrêter de la ligne « Claude Code travaille » dans la liste des tâches en arrière-plan fait la même chose que celui de la zone de saisie. Nécessite claude-agent-acp 0.97.0 ou plus récent (cette version embarque 0.110.1).
+- Codex : le contenu du tour s'affiche directement en direct. Le début et la fin viennent de l'état du fil que signale Codex, ce qui nécessite codex-acp 2.3.0 ou plus récent (cette version embarque 2.10.0).
+- Un message envoyé pendant un tel tour termine d'abord ce tour, puis part à l'agent : Claude Code l'intègre au tour en cours et y répond, et Codex le traite de même.
+- Le tour que Grok lance de lui-même après un workflow en arrière-plan s'affichait déjà en cours dans la version officielle ; cette version fait aussi passer la conversation En cours.
 
 </details>
 

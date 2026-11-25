@@ -66,6 +66,9 @@
     <td width="50%" valign="top">⚡ <strong>Los botones responden al momento y las respuestas salen a ritmo constante</strong><br/>Aprobar permisos, renombrar, eliminar, detener e intervenir surten efecto en cuanto pulsas. Una petición que no llegó se reintenta sola y nunca se ejecuta dos veces; solo un fallo real deshace el cambio, con un aviso. Con la red lenta, la respuesta ya no salta a ráfagas: el texto sale a ritmo constante.</td>
   </tr>
   <tr>
+    <td colspan="2" valign="top">🏃 <strong>Se ve en marcha cuando el agente sigue por su cuenta</strong><br/>Cuando termina un comando o un subagente en segundo plano, Claude Code sigue trabajando por su cuenta, y Codex también puede empezar su siguiente turno solo. Ahora la conversación aparece en marcha mientras tanto, con botón de detener, y solo pasa a revisión y avisa cuando termina; lo que hace Codex en ese turno se muestra en directo, sin tener que pulsar «Cargar actividad en segundo plano».</td>
+  </tr>
+  <tr>
     <td colspan="2" valign="top">🔄 <strong>Al día con el original</strong><br/>Los cambios del proyecto original se incorporan con regularidad; lo que no aparece aquí funciona igual que en la versión oficial. Kiro CLI integrado, lo primero que añadió esta versión, forma parte de la versión oficial desde la 0.36.0. Los resúmenes del razonamiento de Claude Code usan desde la 0.41.3-1 el interruptor de la versión oficial: «Mostrar resúmenes del razonamiento de Claude» en Ajustes → Agentes → Claude Code, desactivado por defecto. Desde la 0.46.0-1, el siguiente mensaje sugerido se rellena como en la versión oficial: con Tab en el ordenador y con el botón de la bombilla junto a Enviar en el móvil.</td>
   </tr>
 </table>
@@ -328,6 +331,19 @@
   - Crear o bifurcar una conversación ya no vuelve a cargar toda la lista de conversaciones.
 - Medido (mismo enlace): de aprobar un permiso a que desaparezca la tarjeta, 0,42 s → 5 ms; renombrar, 0,49 s → 0,06–0,09 s; eliminar, 0,45 s → 0,07–0,2 s; reacción de Detener, 0,46 s → 0,03–0,07 s.
 - Texto a ritmo constante: con la red lenta, la respuesta se muestra al ritmo al que ha ido llegando últimamente, un poco por detrás. Cuánto por detrás se decide según la pausa más larga reciente de ese enlace (como mucho 1,5 s). Con la red fluida no se retiene nada, como antes. Antes de que aparezca una tarjeta de herramienta, una solicitud de permiso o el final del turno, se muestra primero todo el texto retenido, así que el orden no cambia. Medido en el mismo enlace: mediana del intervalo entre actualizaciones del texto 100 → 34–38 ms, percentil 95 190–214 → 66–100 ms. Se desactiva en Configuración → Apariencia → Texto en streaming suave, y solo afecta a este dispositivo.
+
+</details>
+
+<details>
+<summary><strong>Se ve en marcha cuando el agente sigue por su cuenta</strong>: detalles</summary>
+<br/>
+
+- La versión oficial solo cuenta como en marcha los turnos que envía codeg. Un turno que empieza el propio agente —Claude Code retomando el trabajo al terminar un comando en segundo plano (`run_in_background`), un Monitor o un subagente en segundo plano, o Codex siguiendo con un `/goal` sin terminar— deja la conversación como si hubiera terminado (Revisión): el cuadro de mensaje muestra Enviar, no hay forma de detener el turno y no llega aviso al acabar. Además, el turno de Codex se descarta y solo queda un botón «Cargar actividad en segundo plano».
+- Esta versión trata esos turnos como cualquier otro: al empezar, la conversación pasa a En progreso, su pestaña y la barra lateral la muestran en marcha y el cuadro de mensaje ofrece Detener; al terminar pasa a Revisión y avisa como cualquier turno, y se envían los mensajes en cola.
+- Claude Code: el contenido del turno se sigue leyendo de su registro de conversación y se muestra en directo, como antes. El botón de detener de la fila «Claude Code está trabajando» en la lista de tareas en segundo plano hace lo mismo que el del cuadro de mensaje. Requiere claude-agent-acp 0.97.0 o posterior (esta versión trae 0.110.1).
+- Codex: el contenido del turno se muestra en directo. El inicio y el final se toman del estado del hilo que informa Codex, lo que requiere codex-acp 2.3.0 o posterior (esta versión trae 2.10.0).
+- Si envías un mensaje mientras corre uno de esos turnos, primero se cierra ese turno y luego el mensaje pasa al agente: Claude Code lo incorpora al turno en curso y lo responde ahí, y Codex también sigue con él.
+- El turno que Grok empieza solo al acabar un flujo de trabajo en segundo plano ya se veía en marcha en la versión oficial; esta versión también pasa la conversación a En progreso.
 
 </details>
 

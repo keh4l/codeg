@@ -66,6 +66,9 @@
     <td width="50%" valign="top">⚡ <strong>Schaltflächen reagieren sofort, Antworten laufen gleichmäßig</strong><br/>Freigeben, Umbenennen, Löschen, Stopp und Einwurf wirken im Moment des Klicks. Eine Anfrage, die nicht ankam, wird wiederholt und nie doppelt ausgeführt; nur ein echter Fehler macht die Änderung rückgängig, mit Hinweis. Bei langsamer Verbindung springt eine Antwort nicht mehr schubweise, sondern erscheint in gleichmäßigem Tempo.</td>
   </tr>
   <tr>
+    <td colspan="2" valign="top">🏃 <strong>Läuft sichtbar weiter, wenn der Agent von selbst weitermacht</strong><br/>Ist ein Befehl oder ein Sub-Agent im Hintergrund fertig, macht Claude Code von selbst weiter, und auch Codex kann von sich aus den nächsten Durchgang starten. Die Unterhaltung erscheint dabei jetzt als laufend, lässt sich stoppen und wird erst danach zur Prüfung markiert und gemeldet; was Codex in diesem Durchgang tut, erscheint live, ohne „Hintergrundaktivität laden“ anklicken zu müssen.</td>
+  </tr>
+  <tr>
     <td colspan="2" valign="top">🔄 <strong>Nah am Upstream</strong><br/>Upstream wird regelmäßig hineingemergt; was hier nicht steht, funktioniert genau wie in der offiziellen Version. Das eingebaute Kiro CLI, das diese Version als Erstes hinzugefügt hat, ist seit 0.36.0 Teil der offiziellen Version. Die Zusammenfassungen von Claudes Denken nutzen seit 0.41.3-1 den Schalter der offiziellen Version: „Zusammenfassungen von Claudes Denken anzeigen“ unter Einstellungen → Agenten → Claude Code, standardmäßig aus. Seit 0.46.0-1 wird die vorgeschlagene nächste Nachricht wie in der offiziellen Version übernommen: am Computer mit Tab, am Handy mit der Glühbirnen-Schaltfläche neben „Senden“.</td>
   </tr>
 </table>
@@ -328,6 +331,19 @@
   - Eine Konversation anlegen oder verzweigen lädt nicht mehr die ganze Konversationsliste neu.
 - Gemessen (gleiche Verbindung): Berechtigung freigegeben bis Karte weg 0,42 s → 5 ms; Umbenennen 0,49 s → 0,06–0,09 s; Löschen 0,45 s → 0,07–0,2 s; Stopp reagiert 0,46 s → 0,03–0,07 s.
 - Gleichmäßiger Text: Bei langsamer Verbindung wird eine Antwort in dem Tempo gezeigt, in dem sie zuletzt ankam, etwas dahinter. Wie weit dahinter, richtet sich nach der längsten jüngsten Stockung dieser Verbindung (höchstens 1,5 s). Bei flüssiger Verbindung wird nichts zurückgehalten, wie bisher. Bevor eine Tool-Karte, eine Berechtigungsanfrage oder das Ende der Runde erscheint, wird alles Zurückgehaltene zuerst gezeigt, die Reihenfolge bleibt also gleich. Gemessen auf derselben Verbindung: Median des Abstands zwischen Textaktualisierungen 100 → 34–38 ms, 95. Perzentil 190–214 → 66–100 ms. Abschalten unter Einstellungen → Darstellung → Gestreamten Text gleichmäßig anzeigen; gilt nur für dieses Gerät.
+
+</details>
+
+<details>
+<summary><strong>Läuft sichtbar weiter, wenn der Agent von selbst weitermacht</strong> – Details</summary>
+<br/>
+
+- Die offizielle Version zählt nur die Durchgänge als laufend, die codeg sendet. Ein Durchgang, den der Agent selbst beginnt – Claude Code, das weitermacht, wenn ein Hintergrundbefehl (`run_in_background`), ein Monitor oder ein Sub-Agent im Hintergrund fertig ist, oder Codex, das ein unfertiges `/goal` fortsetzt –, lässt die Unterhaltung wie beendet aussehen (Prüfung): Das Eingabefeld zeigt Senden, nichts hält den Durchgang an, und an seinem Ende kommt keine Meldung. Den Durchgang von Codex verwirft sie außerdem; übrig bleibt nur die Schaltfläche „Hintergrundaktivität laden“.
+- Diese Version behandelt solche Durchgänge wie jeden anderen: Zu Beginn wechselt die Unterhaltung auf In Bearbeitung, Tab und Seitenleiste zeigen sie laufend, und das Eingabefeld bietet Stopp; am Ende wird sie wie jeder Durchgang zur Prüfung markiert und gemeldet, und Nachrichten in der Warteschlange gehen hinaus.
+- Claude Code: Der Inhalt des Durchgangs wird wie bisher aus seinem Gesprächsprotokoll gelesen und live angezeigt. Der Stopp in der Zeile „Claude Code arbeitet“ der Hintergrundaufgaben wirkt wie der Stopp im Eingabefeld. Benötigt claude-agent-acp 0.97.0 oder neuer (diese Version bringt 0.110.1 mit).
+- Codex: Der Inhalt des Durchgangs erscheint direkt live. Beginn und Ende ergeben sich aus dem Thread-Status, den Codex meldet; dafür ist codex-acp 2.3.0 oder neuer nötig (diese Version bringt 2.10.0 mit).
+- Schickst du während eines solchen Durchgangs eine Nachricht, wird zuerst dieser Durchgang beendet, dann geht die Nachricht an den Agenten: Claude Code nimmt sie in den laufenden Durchgang auf und beantwortet sie dort, und auch Codex arbeitet sie weiter ab.
+- Den Durchgang, den Grok nach einem Hintergrund-Workflow selbst beginnt, zeigte schon die offizielle Version als laufend; diese Version setzt dafür auch die Unterhaltung auf In Bearbeitung.
 
 </details>
 
