@@ -9,7 +9,6 @@ import {
   MessageSquare,
   MessageSquarePlus,
   Monitor,
-  UserRoundPlus,
   type LucideIcon,
 } from "lucide-react"
 
@@ -48,7 +47,6 @@ type AgentToolCopy =
   | "automations"
   | "taskboard"
   | "image"
-  | "assistants"
 
 /** Spelled as a union of literal keys rather than `string`, because that is
  *  what `useTranslations` checks against: a widened `string` compiles here
@@ -143,13 +141,6 @@ export const AGENT_TOOL_GROUPS: Record<
     short: "image.short",
     hint: "image.hint",
     icon: ImagePlus,
-  },
-  // keh4l build: `create_assistant` / `update_assistant`.
-  assistants: {
-    label: "assistants.label",
-    short: "assistants.short",
-    hint: "assistants.hint",
-    icon: UserRoundPlus,
   },
 }
 

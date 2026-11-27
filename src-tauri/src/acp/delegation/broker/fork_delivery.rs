@@ -260,6 +260,7 @@ mod tests {
                 external_handle: None,
                 assistant: None,
                 fork: Default::default(),
+                asked: None,
             })
             .await
             .task_id

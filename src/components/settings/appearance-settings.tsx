@@ -35,6 +35,7 @@ import {
   CHAT_CONTENT_MIN,
   chatContentWidthCeiling,
 } from "@/lib/chat-content-width"
+import { usePaAccent, type PaAccent } from "@/lib/personal-agent-accent"
 import { cn } from "@/lib/utils"
 import {
   SETTINGS_FORM_WIDTH,
@@ -79,6 +80,7 @@ export function AppearanceSettings() {
     useWelcomeQuickActions()
   const { chatAnimations, setChatAnimations } = useChatAnimationsSetting()
   const { chatContentWidth, setChatContentWidth } = useChatContentWidth()
+  const [paAccent, setPaAccent] = usePaAccent()
   const [screenWidth] = useState(readScreenWidth)
   // 宽度以 100% 缩放下的 px 计（随缩放一起放大），所以同一块屏幕在高缩放下能放下
   // 的宽度更小。
@@ -205,6 +207,35 @@ export function AppearanceSettings() {
               })}
             </div>
           </SettingsSection>
+
+          {/* ===== The assistants page's accent (10.7) ===== */}
+          <div data-pa-accent-setting="">
+            <SettingsSection
+              icon={Sparkles}
+              title={t("paAccent.title")}
+              description={t("paAccent.description")}
+              control={
+                <Select
+                  value={paAccent}
+                  onValueChange={(v) => setPaAccent(v as PaAccent)}
+                >
+                  <SelectTrigger
+                    size="sm"
+                    className="w-44 bg-background text-xs"
+                    aria-label={t("paAccent.title")}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent align="end">
+                    <SelectItem value="default">
+                      {t("paAccent.default")}
+                    </SelectItem>
+                    <SelectItem value="bot">{t("paAccent.bot")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              }
+            />
+          </div>
 
           {/* ===== Custom style (token overrides + free-form CSS) ===== */}
           <CustomStyleSection />

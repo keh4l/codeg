@@ -695,7 +695,7 @@ impl ParentDriver for ManagerParentDriver {
                 conn.emitter.clone(),
             )
         };
-        {
+        let turns_completed = {
             // The loop declines an open question before it steers, and an open
             // card would be raced: steer only into a turn nothing is waiting in.
             let s = state.read().await;
@@ -707,12 +707,14 @@ impl ParentDriver for ManagerParentDriver {
             {
                 return SteerResult::NotNow;
             }
-        }
+            s.turns_completed
+        };
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         let command = ConnectionCommand::Steer {
             blocks: vec![PromptInputBlock::Text {
                 text: notice.text.clone(),
             }],
+            expect_turns_completed: Some(turns_completed),
             reply: reply_tx,
         };
         if cmd_tx.send(command).await.is_err() {

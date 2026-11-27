@@ -25,6 +25,7 @@
  *    A modal dialog has no such stack: the second one simply buried the first.
  */
 
+import type { ReactNode } from "react"
 import { useTranslations } from "next-intl"
 
 import {
@@ -57,6 +58,9 @@ interface Props {
    * live stream (the agent CLI writes its JSONL asynchronously).
    */
   kickoffTask?: string | null
+  /** Drawn at the header's end, before the close button (a way out of the
+   *  drawer, such as opening the conversation as a tab). */
+  headerActions?: ReactNode
 }
 
 export function SubAgentSessionDialog({
@@ -66,6 +70,7 @@ export function SubAgentSessionDialog({
   childConnectionId,
   identity,
   kickoffTask,
+  headerActions,
 }: Props) {
   const t = useTranslations("Folder.chat.delegation")
   // keh4l build: "Round 2 · follow-up from the main agent" over the prompts
@@ -99,6 +104,7 @@ export function SubAgentSessionDialog({
                 identity={identity}
                 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground"
               />
+              {headerActions}
             </div>
             <LiveTranscriptView
               conversationId={childConversationId}

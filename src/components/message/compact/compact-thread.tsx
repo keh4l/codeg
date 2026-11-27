@@ -28,8 +28,6 @@ export interface CompactThreadValue {
   /** The reply the local connection is streaming, for the working row's
    *  clock and speed. Null for a passive viewer and between replies. */
   liveMessage: LiveMessage | null
-  /** Put a sent message back in the composer to edit and send again. */
-  onEditUserMessage?: (text: string) => void
   /** Make `change` (opening or closing something) without moving `element`
    *  on screen: the thread lets go of the bottom it may be following and
    *  scrolls back by however far the change moved the element (T3 Code's

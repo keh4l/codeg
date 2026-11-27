@@ -528,9 +528,14 @@ describe("ConversationDetailPanel send-path hardening", () => {
     // (keh4l build: the dependency list wraps, and a queue kept on the server
     // is never flushed here at all.)
     expect(effectWithDeps).toMatch(
-      /\}, \[[^\]]*\bqueueSteerInFlight\b[^\]]*\]\)$/
+      /\}, \[[^\]]*\bqueueSteerInFlight\b[^\]]*\beditInFlight\b[^\]]*\]\)$/
     )
     expect(effectWithDeps).toContain("if (mqServerMode) return")
+    // An edited message between its rewind and its send holds it the same
+    // way (`handleEditUserTurn`): nothing else may take the cut session's
+    // first turn, so the timer re-checks the ref too.
+    expect(effectWithDeps).toContain("if (editInFlight) return")
+    expect(effectWithDeps).toContain("if (editInFlightRef.current) return")
 
     const steerStart = source.indexOf("const handleQueueSteer = useCallback")
     expect(steerStart).toBeGreaterThan(-1)
@@ -569,7 +574,7 @@ describe("ConversationDetailPanel send-path hardening", () => {
     const guardIdx = source.indexOf("shouldRejectDuplicateCreate(")
     // The CALL site (assignment), not the function definition earlier in the file.
     const optimisticIdx = source.indexOf(
-      "const optimisticTurn = buildOptimisticUserTurnFromDraft("
+      "const builtTurn = buildOptimisticUserTurnFromDraft("
     )
     expect(guardIdx).toBeGreaterThan(-1)
     expect(optimisticIdx).toBeGreaterThan(guardIdx)

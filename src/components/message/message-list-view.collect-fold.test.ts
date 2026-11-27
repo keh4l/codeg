@@ -67,6 +67,7 @@ function item(g: ResolvedMessageGroup, index: number): ThreadRenderItem {
     showStats: false,
     isRoleTransition: false,
     previousUserIndex: null,
+    previousUserGroup: null,
     isLastAssistantRun: false,
     isThreadTail: false,
     sourceTurns: [],

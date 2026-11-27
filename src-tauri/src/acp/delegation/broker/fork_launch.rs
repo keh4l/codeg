@@ -82,6 +82,7 @@ fn failed(agent_type: AgentType, code: &str, message: String) -> DelegationTaskR
         blocked_on: None,
         assistant_id: None,
         assistant_name: None,
+        bot: None,
         progress: None,
     }
 }

@@ -50,26 +50,23 @@
     <td width="50%" valign="top">⏯️ <strong>Subagenten machen nach einem Fehler weiter</strong><br/>Bleibt ein delegierter Subagent stehen, weil das Netz weg war, sein Kontingent aufgebraucht ist, seine Anmeldung abgelaufen ist oder der Anbieter einen Fehler gemeldet hat, kann der Hauptagent ihn in seiner ursprünglichen Sitzung weitermachen lassen – mit Kontext und halb fertiger Arbeit, statt in einer neuen Sitzung von vorn anzufangen.</td>
   </tr>
   <tr>
-    <td width="50%" valign="top">🧑‍💼 <strong>Agenten richten @-Assistenten für dich ein</strong><br/>Sag in einer Unterhaltung „leg einen Review-Assistenten mit Codex und hohem Reasoning an“, und der Agent legt den @-Assistenten an oder ändert ihn: Name, Agent, Modell und dauerhafte Anweisungen wie gesagt, jede nicht genannte Option auf dem Standard des Agenten. Mit Bearbeiten direkt in der Unterhaltung passt du ihn an.</td>
     <td width="50%" valign="top">🧭 <strong>Gruppierte Einstellungen</strong><br/>Die Navigation der Einstellungen steht unter fünf Überschriften; volle Seiten fassen zusammengehörige Optionen auf einer Karte zusammen, jede Seite hat einen Titel, und auf dem Handy drückt ein Auswahlfeld seine Beschreibung nicht mehr zu einem Streifen zusammen.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">↩️ <strong>Subagenten wecken den Hauptagenten, wenn sie fertig sind</strong><br/>Ist ein delegierter Subagent fertig, geht sein Ergebnis von selbst an den Hauptagenten zurück: Ist der frei, startet er einen neuen Durchgang und macht weiter; ist er beschäftigt, bekommt er es im laufenden Durchgang; und schickst du gerade eine Nachricht, geht es mit ihr. Der Hauptagent kann seinen Durchgang beenden, sobald er die Arbeit verteilt hat, statt auf die Ergebnisse zu warten.</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">🌿 <strong>Subagenten arbeiten in ihrem eigenen Worktree</strong><br/>Der Hauptagent kann einen Subagenten Code in einem eigenen Git-Worktree und Branch ändern lassen, sodass sich mehrere parallel nicht in die Quere kommen; jede Delegation kann ihr eigenes Modell und Reasoning festlegen, und einem fertigen Subagenten lässt sich in derselben Sitzung weitere Arbeit geben.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">🗣️ <strong>Jederzeit einwerfen</strong><br/>Während der Agent antwortet, schickt die Sendetaste deine Nachricht in die laufende Runde, und der Agent liest sie nach dem aktuellen Schritt; mit gedrückter ⌘/Ctrl-Taste wird sie stattdessen für nach der Runde eingereiht. Jeder Agent nimmt Einwürfe an. Die Warteschlange liegt auf dem Server, übersteht also ein Neuladen und folgt dir aufs nächste Gerät; Stopp oder Fehler pausieren sie, bis du fortsetzt.</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">✨ <strong>Kompakte Gesprächsansicht im T3-Stil</strong><br/>Klappt die Arbeitsschritte jeder Antwort in eine „Xs gearbeitet“-Zeile ein und zeigt im Lauf nur den aktuellen Schritt; ersetzt Dateikarten durch einen Änderungsbaum und blendet die Antwort-Fußzeile erst bei Hover ein. Mit vier Tool-Sichtbarkeitsstufen, Zeitleisten-Minimap, ⌘/Ctrl+F-Suche über den gesamten Verlauf, rückverlinkten Zitaten, Code-Umbruch &amp; „Im Terminal ausführen“ sowie dem tiefschwarzen „Karbon“-Theme. Jederzeit in den Einstellungen umstellbar.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">🛰️ <strong>Schneller Fernzugriff übers Internet</strong><br/>Die Web-App über eine öffentliche IP: nach dem Neuladen etwa eine Sekunde bis zum Tippen, die letzte Runde einer langen Konversation in unter einer Sekunde sichtbar, und beim Zurückwechseln zu einer gerade gesehenen Konversation kein „Verbinde“ mehr. Ein kurzer Netzaussetzer wird von selbst nachgeholt: kein Hinweis auf Neuverbindung, kein verlorener Text.</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">⚡ <strong>Schaltflächen reagieren sofort, Antworten laufen gleichmäßig</strong><br/>Freigeben, Umbenennen, Löschen, Stopp und Einwurf wirken im Moment des Klicks. Eine Anfrage, die nicht ankam, wird wiederholt und nie doppelt ausgeführt; nur ein echter Fehler macht die Änderung rückgängig, mit Hinweis. Bei langsamer Verbindung springt eine Antwort nicht mehr schubweise, sondern erscheint in gleichmäßigem Tempo.</td>
+    <td width="50%" valign="top">🏃 <strong>Läuft sichtbar weiter, wenn der Agent von selbst weitermacht</strong><br/>Ist ein Befehl oder ein Sub-Agent im Hintergrund fertig, macht Claude Code von selbst weiter, und auch Codex kann von sich aus den nächsten Durchgang starten. Die Unterhaltung erscheint dabei jetzt als laufend, lässt sich stoppen und wird erst danach zur Prüfung markiert und gemeldet; was Codex in diesem Durchgang tut, erscheint live, ohne „Hintergrundaktivität laden“ anklicken zu müssen.</td>
   </tr>
   <tr>
-    <td colspan="2" valign="top">🏃 <strong>Läuft sichtbar weiter, wenn der Agent von selbst weitermacht</strong><br/>Ist ein Befehl oder ein Sub-Agent im Hintergrund fertig, macht Claude Code von selbst weiter, und auch Codex kann von sich aus den nächsten Durchgang starten. Die Unterhaltung erscheint dabei jetzt als laufend, lässt sich stoppen und wird erst danach zur Prüfung markiert und gemeldet; was Codex in diesem Durchgang tut, erscheint live, ohne „Hintergrundaktivität laden“ anklicken zu müssen.</td>
-  </tr>
-  <tr>
-    <td colspan="2" valign="top">🔄 <strong>Nah am Upstream</strong><br/>Upstream wird regelmäßig hineingemergt; was hier nicht steht, funktioniert genau wie in der offiziellen Version. Das eingebaute Kiro CLI, das diese Version als Erstes hinzugefügt hat, ist seit 0.36.0 Teil der offiziellen Version. Die Zusammenfassungen von Claudes Denken nutzen seit 0.41.3-1 den Schalter der offiziellen Version: „Zusammenfassungen von Claudes Denken anzeigen“ unter Einstellungen → Agenten → Claude Code, standardmäßig aus. Seit 0.46.0-1 wird die vorgeschlagene nächste Nachricht wie in der offiziellen Version übernommen: am Computer mit Tab, am Handy mit der Glühbirnen-Schaltfläche neben „Senden“.</td>
+    <td colspan="2" valign="top">🔄 <strong>Nah am Upstream</strong><br/>Upstream wird regelmäßig hineingemergt; was hier nicht steht, funktioniert genau wie in der offiziellen Version. Das eingebaute Kiro CLI, das diese Version als Erstes hinzugefügt hat, ist seit 0.36.0 Teil der offiziellen Version. Die Zusammenfassungen von Claudes Denken nutzen seit 0.41.3-1 den Schalter der offiziellen Version: „Zusammenfassungen von Claudes Denken anzeigen“ unter Einstellungen → Agenten → Claude Code, standardmäßig aus. Seit 0.46.0-1 wird die vorgeschlagene nächste Nachricht wie in der offiziellen Version übernommen: am Computer mit Tab, am Handy mit der Glühbirnen-Schaltfläche neben „Senden“. Seit 0.49.0 läuft das Anlegen und Ändern von Assistenten über die persönlichen Assistenten der offiziellen Version (per natürlicher Sprache mit Bestätigungskarte und Rückgängig).</td>
   </tr>
 </table>
 
@@ -203,18 +200,6 @@
 </details>
 
 <details>
-<summary><strong>Agenten richten @-Assistenten für dich ein</strong> – Details</summary>
-<br/>
-
-- Im offiziellen Build lassen sich @-Assistenten (Delegations-Voreinstellungen, die man in einer Nachricht mit @ erwähnt: ein Agent, jede seiner Optionen und dauerhafte Anweisungen) nur Feld für Feld unter Einstellungen → Zusammenarbeit → Multi-Agent-Zusammenarbeit → Assistenten ausfüllen; ein Agent kann nicht helfen.
-- Dieser Build gibt Agenten zwei Tools, `create_assistant` und `update_assistant`. Sag dem Agenten, welchen Assistenten du willst (etwa „leg einen Reviewer an: Codex, GPT-5.5, hohes Reasoning, nur lesen, für Diff-Reviews“), und er legt ihn an; sag „stell den Reviewer auf GPT-5.4 um“ oder „ergänz die Anweisungen des Reviewers um eine Regel“, und er ändert ihn.
-- Beim Anlegen startet Codeg den Agenten kurz, um seine echten Optionen zu lesen (ein paar Sekunden). Genannte Optionen werden wie gesagt gesetzt, die übrigen auf die Standardwerte des Agenten (die der Editor als Empfohlen markiert); beim Ändern bleiben nicht genannte Optionen, wie sie sind. Passt ein Modell oder eine Option nicht, wird nichts gespeichert, und der Agent erfährt, was verfügbar ist.
-- In der Unterhaltung erscheint eine Zeile „Assistent … wird erstellt“; aufgeklappt zeigt sie Agent, Optionen und Anweisungen des Assistenten, und Bearbeiten öffnet denselben Editor wie in den Einstellungen. Der neue Assistent steht sofort im @-Menü und kann gleich Aufgaben bekommen.
-- Der Schalter ist „Assistenten erstellen“ unter Einstellungen → Zusammenarbeit → Tools in der Unterhaltung, standardmäßig an; aus, sehen Agenten die beiden Tools nicht. Ein Agent, der Dateien und Befehle selbst übernimmt, bekommt sie nicht – genau wie die Delegations-Tools.
-
-</details>
-
-<details>
 <summary><strong>Gruppierte Einstellungen</strong> – Details</summary>
 <br/>
 
@@ -280,7 +265,7 @@
 - <strong>Live-Zeile &amp; Auto-Einklappen</strong>: Während der Agent arbeitet, ist „Arbeitet seit Xs“ eine Zeitzeile mit durchlaufendem Lichtschimmer; jede fertige Gruppe von Tool-Aufrufen wird zu einer Zusammenfassungszeile („2 Dateien gelesen, einmal gesucht“), Text dazwischen bleibt an seinem Platz, und der laufende Schritt bekommt eine eigene schimmernde Zeile – ein Klick öffnet diese Gruppe. Am Ende wird dieselbe Zeile an Ort und Stelle zu „Xs gearbeitet ›“ und alles vor der Antwort klappt darunter ein; aufgeklappt erscheinen wieder die Zusammenfassungszeilen, und jede Gruppe zeigt ihre Schritte in einer kurzen, eigenständig scrollenden Box mit weichen Rändern. Beim Auf- und Zuklappen bleibt die angeklickte Zeile, wo sie ist. Unbehobene Fehler, ausstehende Freigaben, Rückfragen, Pläne, laufende Sub-Agents und erzeugte Bilder bleiben immer außerhalb; eine Runde, die du während des Laufs geöffnet hast, bleibt offen.
 - <strong>Vier Tool-Sichtbarkeitsstufen</strong>: Alle anzeigen, Erfolgreiche ausblenden, Alle ausblenden und Zen-Modus — in den Einstellungen oder im „…“-Menü der Kopfzeile.
 - <strong>Änderungsbaum &amp; Diff-Panel</strong>: Zusammengefasste Ordnerketten, bis 8 Dateien standardmäßig geöffnet, ab 250 Zeilen virtualisiert; Klick öffnet das Diff-Panel, neue HTML-/Markdown-/Bilddateien lassen sich inline voranzeigen, und Bearbeitungszeilen öffnen ebenfalls direkt den Diff.
-- <strong>Ruhigere Blasen &amp; Hover-Fußzeile</strong>: Aufeinanderfolgende Nutzernachrichten gruppieren sich dicht, Bilder sitzen als Collage in der Blase, Klappgrenze 22rem, Hover zeigt Zeit, Kopieren und Bearbeiten im Eingabefeld (ohne Datei-Rollback). Die Antwort-Fußzeile erscheint erst bei Hover (letzte Antwort dauerhaft); tok/s ist standardmäßig aus. Neue Nachrichten werden 24px unter dem oberen Rand verankert.
+- <strong>Ruhigere Blasen &amp; Hover-Fußzeile</strong>: Aufeinanderfolgende Nutzernachrichten gruppieren sich dicht, Bilder sitzen als Collage in der Blase, Klappgrenze 22rem, Hover zeigt Zeit, Kopieren sowie das offizielle direkte Bearbeiten und Neu-Senden (bei Agenten mit Rewind). Die Antwort-Fußzeile erscheint erst bei Hover (letzte Antwort dauerhaft); tok/s ist standardmäßig aus. Neue Nachrichten werden 24px unter dem oberen Rand verankert.
 - <strong>Minimap, Volltextsuche, Zitate &amp; Karbon-Theme</strong>: Desktop-Minimap am Rand mit Hover-Vorschau, ⌘/Ctrl+F durchsucht den gesamten Verlauf inkl. ungeladener Runden und klappt Treffer automatisch auf, Zitate werden als anklickbare Rücksprung-Karten gerendert (2s Highlight), Codeblöcke erhalten Umbruch-Schalter und „Im Terminal ausführen“ (fügt nur ein, führt nicht aus), plus das tiefschwarze Theme „Karbon“.
 
 </details>
@@ -340,8 +325,8 @@
 
 - Die offizielle Version zählt nur die Durchgänge als laufend, die codeg sendet. Ein Durchgang, den der Agent selbst beginnt – Claude Code, das weitermacht, wenn ein Hintergrundbefehl (`run_in_background`), ein Monitor oder ein Sub-Agent im Hintergrund fertig ist, oder Codex, das ein unfertiges `/goal` fortsetzt –, lässt die Unterhaltung wie beendet aussehen (Prüfung): Das Eingabefeld zeigt Senden, nichts hält den Durchgang an, und an seinem Ende kommt keine Meldung. Den Durchgang von Codex verwirft sie außerdem; übrig bleibt nur die Schaltfläche „Hintergrundaktivität laden“.
 - Diese Version behandelt solche Durchgänge wie jeden anderen: Zu Beginn wechselt die Unterhaltung auf In Bearbeitung, Tab und Seitenleiste zeigen sie laufend, und das Eingabefeld bietet Stopp; am Ende wird sie wie jeder Durchgang zur Prüfung markiert und gemeldet, und Nachrichten in der Warteschlange gehen hinaus.
-- Claude Code: Der Inhalt des Durchgangs wird wie bisher aus seinem Gesprächsprotokoll gelesen und live angezeigt. Der Stopp in der Zeile „Claude Code arbeitet“ der Hintergrundaufgaben wirkt wie der Stopp im Eingabefeld. Benötigt claude-agent-acp 0.97.0 oder neuer (diese Version bringt 0.110.1 mit).
-- Codex: Der Inhalt des Durchgangs erscheint direkt live. Beginn und Ende ergeben sich aus dem Thread-Status, den Codex meldet; dafür ist codex-acp 2.3.0 oder neuer nötig (diese Version bringt 2.10.0 mit).
+- Claude Code: Der Inhalt des Durchgangs wird wie bisher aus seinem Gesprächsprotokoll gelesen und live angezeigt. Der Stopp in der Zeile „Claude Code arbeitet“ der Hintergrundaufgaben wirkt wie der Stopp im Eingabefeld. Benötigt claude-agent-acp 0.97.0 oder neuer (diese Version bringt 0.113.0 mit).
+- Codex: Der Inhalt des Durchgangs erscheint direkt live. Beginn und Ende ergeben sich aus dem Thread-Status, den Codex meldet; dafür ist codex-acp 2.3.0 oder neuer nötig (diese Version bringt 2.12.1 mit).
 - Schickst du während eines solchen Durchgangs eine Nachricht, wird zuerst dieser Durchgang beendet, dann geht die Nachricht an den Agenten: Claude Code nimmt sie in den laufenden Durchgang auf und beantwortet sie dort, und auch Codex arbeitet sie weiter ab.
 - Den Durchgang, den Grok nach einem Hintergrund-Workflow selbst beginnt, zeigte schon die offizielle Version als laufend; diese Version setzt dafür auch die Unterhaltung auf In Bearbeitung.
 

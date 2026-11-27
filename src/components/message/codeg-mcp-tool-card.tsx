@@ -3,8 +3,7 @@
 /**
  * Inline card for the codeg-mcp *workbench* companion tools — `get_session_info`,
  * `task_progress`, `task_complete`, `create_automation`, `create_work_task` and
- * `resume_delegation` — plus, in the keh4l build, `create_assistant` and
- * `update_assistant`, whose panel draws the assistant they saved.
+ * `resume_delegation`.
  *
  * One collapsed line framed around what the agent was actually doing ("读取会话
  * #2122", "进度：tests passing", "任务完成 · 成功"), with a status badge and an
@@ -31,8 +30,6 @@ import {
   ClipboardList,
   RotateCcw,
   Signpost,
-  UserRoundPen,
-  UserRoundPlus,
 } from "lucide-react"
 
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -51,9 +48,6 @@ import {
 } from "@/components/message/activity/activity-row"
 import { StatusFigure } from "@/components/message/activity/step-visuals"
 import { StatusBadge } from "@/components/message/delegation-status-badge"
-import { AssistantToolSummary } from "@/components/message/assistant-tool-summary"
-import { assistantIdFromResult } from "@/lib/assistant-tools"
-import { useAssistant } from "@/stores/assistants-store"
 
 interface Props {
   /** Canonical tool name — selects the label, icon and argument to state. */
@@ -78,8 +72,6 @@ export const CODEG_MCP_TOOL_ICONS: Record<
   create_automation: CalendarClock,
   create_work_task: ClipboardList,
   resume_delegation: RotateCcw,
-  create_assistant: UserRoundPlus,
-  update_assistant: UserRoundPen,
 }
 
 /** The panel's Markdown blocks: the report and the result share one look,
@@ -139,15 +131,6 @@ export function CodegMcpToolCard({
     () => parseCodegMcpToolCall({ tool, input, output, errorText, state }),
     [tool, input, output, errorText, state]
   )
-  // keh4l build: the assistant a `create_assistant` / `update_assistant` call
-  // saved, live from the store — the row then names it as it is now.
-  const assistantId =
-    (tool === "create_assistant" || tool === "update_assistant") &&
-    model.status === "ok"
-      ? assistantIdFromResult(model.resultText)
-      : null
-  const savedAssistant = useAssistant(assistantId)
-  const assistantName = savedAssistant?.name ?? model.detail
 
   const label = useMemo(() => {
     switch (tool) {
@@ -181,16 +164,8 @@ export function CodegMcpToolCard({
         return model.detail
           ? t("resumeDelegation", { task: model.detail })
           : t("resumeDelegationNoId")
-      case "create_assistant":
-        return assistantName
-          ? t("createAssistant", { name: assistantName })
-          : t("createAssistantNoName")
-      case "update_assistant":
-        return assistantName
-          ? t("updateAssistant", { name: assistantName })
-          : t("updateAssistantNoName")
     }
-  }, [t, tool, model, assistantName])
+  }, [t, tool, model])
 
   const Icon = CODEG_MCP_TOOL_ICONS[tool]
   const isError = model.status === "err"
@@ -209,11 +184,7 @@ export function CodegMcpToolCard({
   // an authoring call's prompt is worth auditing and a work-task report is
   // worth reading in full, and both arrive with the arguments, long before any
   // result. Past that, anything that came back is worth a look.
-  // The saved assistant replaces the reply text, which is written for the
-  // model; a refusal, or an assistant this window never saw, keeps the text.
-  const showAssistant = assistantId !== null && savedAssistant !== undefined
   const expandable =
-    showAssistant ||
     resultText !== "" ||
     prompt !== "" ||
     attachments.length > 0 ||
@@ -364,11 +335,7 @@ export function CodegMcpToolCard({
               writes anything else — `code`, bullets, bold. */}
           {report !== "" && <MarkdownBlock>{report}</MarkdownBlock>}
           {ack && <TaskAckLine ack={ack} />}
-          {showAssistant && assistantId !== null ? (
-            <AssistantToolSummary assistantId={assistantId} />
-          ) : (
-            resultText !== "" && <MarkdownBlock>{resultText}</MarkdownBlock>
-          )}
+          {resultText !== "" && <MarkdownBlock>{resultText}</MarkdownBlock>}
         </div>
       )}
     </div>

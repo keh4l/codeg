@@ -97,6 +97,7 @@ function identityOf(task: DelegationResultsTask): DelegationIdentity {
     agentType: coerceAgentType(task.agent_type),
     assistantId: null,
     assistantName: task.assistant ?? null,
+    botUid: null,
   }
 }
 

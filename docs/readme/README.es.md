@@ -50,26 +50,23 @@
     <td width="50%" valign="top">⏯️ <strong>Los subagentes siguen donde un error los paró</strong><br/>Cuando un subagente delegado se detiene porque se cayó la red, se agotó su cuota, caducó su inicio de sesión o el proveedor devolvió un error, el agente principal puede hacer que continúe en su sesión original, con el contexto y el trabajo a medias intactos, en lugar de empezar de cero en una nueva.</td>
   </tr>
   <tr>
-    <td width="50%" valign="top">🧑‍💼 <strong>Los agentes te preparan asistentes @</strong><br/>Di «añade un asistente revisor con Codex y razonamiento alto» en una conversación y el agente crea o cambia el asistente @: nombre, agente, modelo e instrucciones permanentes como lo dijiste, y cada opción que no mencionaste con el valor por defecto del agente. Pulsa Editar en la propia conversación para ajustarlo.</td>
     <td width="50%" valign="top">🧭 <strong>Ajustes agrupados</strong><br/>La navegación de Ajustes se agrupa bajo cinco títulos; las páginas con muchas opciones reúnen las relacionadas en una sola tarjeta, todas las páginas tienen título y en el móvil un desplegable ya no aplasta su descripción.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">↩️ <strong>Los subagentes despiertan al agente principal al terminar</strong><br/>Cuando un subagente delegado termina, su resultado vuelve solo al agente principal: si está libre, empieza un turno nuevo y sigue; si está ocupado, lo recibe en el turno en curso; y si justo estás enviando un mensaje, va con él. El agente principal puede cerrar su turno nada más repartir el trabajo, sin quedarse esperando para consultar los resultados.</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">🌿 <strong>Los subagentes trabajan en su propio worktree</strong><br/>El agente principal puede hacer que un subagente cambie código en un worktree y una rama de git aparte, así que varios en paralelo no se estorban; cada delegación puede indicar su propio modelo y nivel de razonamiento, y a un subagente que ya terminó se le puede encargar más trabajo en la misma sesión.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">🗣️ <strong>Intervenir en cualquier momento</strong><br/>Mientras el agente responde, la tecla de envío mete tu mensaje en el turno en curso y el agente lo lee tras el paso actual; con ⌘/Ctrl lo pones en cola para después. Se puede intervenir en cualquier agente. La cola vive en el servidor, así que sobrevive a una recarga y te sigue a otro dispositivo; al detener o si hay un error, la cola se pausa hasta que digas continuar.</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">✨ <strong>Vista compacta estilo T3</strong><br/>Pliega el trabajo de cada respuesta en una sola línea «Trabajó Xs» y muestra solo el paso activo al ejecutarse; cambia las tarjetas por un árbol de archivos modificados y revela el pie al pasar el cursor. Incluye cuatro niveles de herramientas, minimapa lateral, búsqueda ⌘/Ctrl+F en todo el hilo, citas con salto al origen, ajuste de línea y «Ejecutar en terminal» en código, y tema negro puro «Carbón». Revertible en Ajustes.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">🛰️ <strong>Acceso remoto más ágil</strong><br/>Con la versión web por una IP pública: tras recargar se puede escribir en un segundo o así, el último turno de una conversación larga se ve en menos de un segundo y volver a una conversación que acabas de ver ya no se queda en «Conectando». Si la red falla un momento, lo que faltó llega solo, sin aviso de reconexión ni texto perdido.</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">⚡ <strong>Los botones responden al momento y las respuestas salen a ritmo constante</strong><br/>Aprobar permisos, renombrar, eliminar, detener e intervenir surten efecto en cuanto pulsas. Una petición que no llegó se reintenta sola y nunca se ejecuta dos veces; solo un fallo real deshace el cambio, con un aviso. Con la red lenta, la respuesta ya no salta a ráfagas: el texto sale a ritmo constante.</td>
+    <td width="50%" valign="top">🏃 <strong>Se ve en marcha cuando el agente sigue por su cuenta</strong><br/>Cuando termina un comando o un subagente en segundo plano, Claude Code sigue trabajando por su cuenta, y Codex también puede empezar su siguiente turno solo. Ahora la conversación aparece en marcha mientras tanto, con botón de detener, y solo pasa a revisión y avisa cuando termina; lo que hace Codex en ese turno se muestra en directo, sin tener que pulsar «Cargar actividad en segundo plano».</td>
   </tr>
   <tr>
-    <td colspan="2" valign="top">🏃 <strong>Se ve en marcha cuando el agente sigue por su cuenta</strong><br/>Cuando termina un comando o un subagente en segundo plano, Claude Code sigue trabajando por su cuenta, y Codex también puede empezar su siguiente turno solo. Ahora la conversación aparece en marcha mientras tanto, con botón de detener, y solo pasa a revisión y avisa cuando termina; lo que hace Codex en ese turno se muestra en directo, sin tener que pulsar «Cargar actividad en segundo plano».</td>
-  </tr>
-  <tr>
-    <td colspan="2" valign="top">🔄 <strong>Al día con el original</strong><br/>Los cambios del proyecto original se incorporan con regularidad; lo que no aparece aquí funciona igual que en la versión oficial. Kiro CLI integrado, lo primero que añadió esta versión, forma parte de la versión oficial desde la 0.36.0. Los resúmenes del razonamiento de Claude Code usan desde la 0.41.3-1 el interruptor de la versión oficial: «Mostrar resúmenes del razonamiento de Claude» en Ajustes → Agentes → Claude Code, desactivado por defecto. Desde la 0.46.0-1, el siguiente mensaje sugerido se rellena como en la versión oficial: con Tab en el ordenador y con el botón de la bombilla junto a Enviar en el móvil.</td>
+    <td colspan="2" valign="top">🔄 <strong>Al día con el original</strong><br/>Los cambios del proyecto original se incorporan con regularidad; lo que no aparece aquí funciona igual que en la versión oficial. Kiro CLI integrado, lo primero que añadió esta versión, forma parte de la versión oficial desde la 0.36.0. Los resúmenes del razonamiento de Claude Code usan desde la 0.41.3-1 el interruptor de la versión oficial: «Mostrar resúmenes del razonamiento de Claude» en Ajustes → Agentes → Claude Code, desactivado por defecto. Desde la 0.46.0-1, el siguiente mensaje sugerido se rellena como en la versión oficial: con Tab en el ordenador y con el botón de la bombilla junto a Enviar en el móvil. Desde la 0.49.0, la creación y edición de asistentes usa los asistentes personales de la versión oficial (creación y cambios en lenguaje natural con tarjeta de confirmación y deshacer).</td>
   </tr>
 </table>
 
@@ -203,18 +200,6 @@
 </details>
 
 <details>
-<summary><strong>Los agentes te preparan asistentes @</strong>: detalles</summary>
-<br/>
-
-- En la versión oficial, los asistentes @ (preajustes de delegación que puedes mencionar con @: un agente, cada una de sus opciones e instrucciones permanentes) solo se rellenan campo a campo en Ajustes → Colaboración → Colaboración multiagente → Asistentes; un agente no puede ayudar.
-- Esta versión da a los agentes dos herramientas, `create_assistant` y `update_assistant`. Dile al agente qué asistente quieres (por ejemplo, «añade un revisor con Codex, GPT-5.5, razonamiento alto, solo lectura, para revisar diffs») y lo crea; di «cambia el revisor a GPT-5.4» o «añade una regla a las instrucciones del revisor» y lo cambia.
-- Al crearlo, Codeg arranca ese agente un momento para leer sus opciones reales (tarda unos segundos). Las opciones que nombras quedan como dijiste y el resto con los valores por defecto del propio agente (los que el editor marca como Recomendado); al cambiarlo, las opciones que no nombras quedan como estaban. Si un modelo o una opción no coincide, no se guarda nada y se le dice al agente qué hay disponible.
-- La conversación muestra una fila «Creando el asistente …»; al desplegarla ves el agente, las opciones y las instrucciones del asistente, y Editar abre el mismo editor que en Ajustes. El asistente nuevo aparece enseguida en el menú @ y se le puede delegar al momento.
-- El interruptor es «Crear asistentes» en Ajustes → Colaboración → Herramientas en la conversación, activado por defecto; apagado, los agentes no ven las dos herramientas. Un agente configurado para manejar archivos y comandos por sí mismo no las recibe, igual que no recibe las de delegación.
-
-</details>
-
-<details>
 <summary><strong>Ajustes agrupados</strong>: detalles</summary>
 <br/>
 
@@ -280,7 +265,7 @@
 - <strong>Línea en vivo y plegado automático</strong>: mientras el agente trabaja, «Trabajando durante Xs» es un temporizador con un destello que lo recorre; cada grupo de herramientas terminado se resume en una línea («Leyó 2 archivos, buscó una vez»), el texto intermedio sigue en su sitio y el paso en curso tiene su propia línea con destello: al pulsarla se abre ese grupo. Al terminar, la misma línea pasa a «Trabajó durante Xs ›» y lo anterior a la respuesta se pliega; al abrirla vuelven esas líneas de resumen, y cada grupo abre sus pasos en una caja corta con desplazamiento propio y bordes difuminados. Abrir o cerrar mantiene en su sitio la línea pulsada. Los errores sin resolver, permisos pendientes, preguntas, planes, subagentes activos e imágenes generadas siempre quedan fuera del pliegue; una ronda que abriste mientras se ejecutaba sigue abierta.
 - <strong>Cuatro niveles de herramientas</strong>: Mostrar todo, Ocultar exitosas, Ocultar todo y Modo zen en Ajustes o en el menú «…» de la cabecera.
 - <strong>Árbol de archivos y panel diff</strong>: directorios encadenados compactados, desplegado hasta 8 archivos y virtualizado sobre 250 filas. Clic abre el diff; nuevos HTML/Markdown/imágenes tienen vista previa integrada; las filas de edición también abren el diff en un clic.
-- <strong>Burbujas agrupadas y pie al pasar el cursor</strong>: mensajes seguidos agrupados, collage de imágenes dentro de la burbuja, plegado solo sobre 22rem y acciones al pasar el cursor (hora, copiar, editar en compositor sin revertir archivos). El pie de respuesta aparece al pasar el cursor (siempre visible en la última); tok/s oculto por defecto. Enviar fija tu mensaje a 24px del borde superior.
+- <strong>Burbujas agrupadas y pie al pasar el cursor</strong>: mensajes seguidos agrupados, collage de imágenes dentro de la burbuja, plegado solo sobre 22rem y acciones al pasar el cursor (hora, copiar y edición en línea con reenvío de la versión oficial en agentes compatibles). El pie de respuesta aparece al pasar el cursor (siempre visible en la última); tok/s oculto por defecto. Enviar fija tu mensaje a 24px del borde superior.
 - <strong>Minimapa, búsqueda total, citas y tema Carbón</strong>: minimapa en escritorio, ⌘/Ctrl+F busca en todo el historial (cargando turnos antiguos y abriendo pliegues), citas clicables que saltan y resaltan 2s el origen, ajuste de líneas y pegado en nueva terminal sin ejecutar en bloques shell, y tema negro puro «Carbón».
 
 </details>
@@ -340,8 +325,8 @@
 
 - La versión oficial solo cuenta como en marcha los turnos que envía codeg. Un turno que empieza el propio agente —Claude Code retomando el trabajo al terminar un comando en segundo plano (`run_in_background`), un Monitor o un subagente en segundo plano, o Codex siguiendo con un `/goal` sin terminar— deja la conversación como si hubiera terminado (Revisión): el cuadro de mensaje muestra Enviar, no hay forma de detener el turno y no llega aviso al acabar. Además, el turno de Codex se descarta y solo queda un botón «Cargar actividad en segundo plano».
 - Esta versión trata esos turnos como cualquier otro: al empezar, la conversación pasa a En progreso, su pestaña y la barra lateral la muestran en marcha y el cuadro de mensaje ofrece Detener; al terminar pasa a Revisión y avisa como cualquier turno, y se envían los mensajes en cola.
-- Claude Code: el contenido del turno se sigue leyendo de su registro de conversación y se muestra en directo, como antes. El botón de detener de la fila «Claude Code está trabajando» en la lista de tareas en segundo plano hace lo mismo que el del cuadro de mensaje. Requiere claude-agent-acp 0.97.0 o posterior (esta versión trae 0.110.1).
-- Codex: el contenido del turno se muestra en directo. El inicio y el final se toman del estado del hilo que informa Codex, lo que requiere codex-acp 2.3.0 o posterior (esta versión trae 2.10.0).
+- Claude Code: el contenido del turno se sigue leyendo de su registro de conversación y se muestra en directo, como antes. El botón de detener de la fila «Claude Code está trabajando» en la lista de tareas en segundo plano hace lo mismo que el del cuadro de mensaje. Requiere claude-agent-acp 0.97.0 o posterior (esta versión trae 0.113.0).
+- Codex: el contenido del turno se muestra en directo. El inicio y el final se toman del estado del hilo que informa Codex, lo que requiere codex-acp 2.3.0 o posterior (esta versión trae 2.12.1).
 - Si envías un mensaje mientras corre uno de esos turnos, primero se cierra ese turno y luego el mensaje pasa al agente: Claude Code lo incorpora al turno en curso y lo responde ahí, y Codex también sigue con él.
 - El turno que Grok empieza solo al acabar un flujo de trabajo en segundo plano ya se veía en marcha en la versión oficial; esta versión también pasa la conversación a En progreso.
 

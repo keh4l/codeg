@@ -10,6 +10,7 @@ import {
   Languages,
   ListTodo,
   Loader2,
+  ShieldCheck,
   Split,
 } from "lucide-react"
 import { useLocale, useTranslations } from "next-intl"
@@ -55,6 +56,9 @@ interface TurnStatsProps {
    * name the backend can resolve yet (`unnamed` — the post-turn reparse fills
    * it in a moment later). Only read while `forkDisabled`. */
   forkDisabledReason?: "busy" | "unnamed"
+  /** "Is this right?" (10.3): have the assistant check this reply. Undefined
+   *  hides it — nobody to ask, or nothing stored to check. */
+  onCheck?: () => void
 }
 
 const EMPTY_TEXTS: string[] = []
@@ -76,10 +80,12 @@ export function TurnStats({
   onForkFromHere,
   forkDisabled = false,
   forkDisabledReason = "busy",
+  onCheck,
 }: TurnStatsProps) {
   const locale = useLocale()
   const t = useTranslations("Folder.chat.messageList")
   const tTasks = useTranslations("Tasks")
+  const tCheck = useTranslations("MessageCheck")
   const scroll = useMessageScroll()
   const chatAnimations = useChatAnimationsEnabled()
   const modelLabel = useModelLabel()
@@ -276,6 +282,22 @@ export function TurnStats({
             <TooltipContent side="top">
               {translation.translated ? t("showOriginal") : t("translateReply")}
             </TooltipContent>
+          </Tooltip>
+        )}
+        {hasCopy && onCheck && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={onCheck}
+                className={iconButtonClass}
+                aria-label={tCheck("action")}
+                data-check-message
+              >
+                <ShieldCheck aria-hidden="true" className="h-3.5 w-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top">{tCheck("action")}</TooltipContent>
           </Tooltip>
         )}
         {onForkFromHere && (

@@ -69,6 +69,7 @@ fn refused(
         blocked_on: None,
         assistant_id: None,
         assistant_name: None,
+        bot: None,
         progress: None,
     }
 }
@@ -159,6 +160,7 @@ impl DelegationBroker {
                     blocked_on: None,
                     assistant_id: row.assistant_id,
                     assistant_name: row.assistant_name.clone(),
+                    bot: None,
                     progress: None,
                 };
             }
@@ -189,6 +191,7 @@ impl DelegationBroker {
             blocked_on: None,
             assistant_id: row.assistant_id,
             assistant_name: row.assistant_name.clone(),
+            bot: None,
             progress: None,
         }
     }
@@ -473,7 +476,11 @@ impl DelegationBroker {
         }
 
         let assistant = match (source.assistant_id, source.assistant_name.clone()) {
-            (Some(id), Some(name)) => Some(AssistantRef { id, name }),
+            (Some(id), Some(name)) => Some(AssistantRef {
+                id,
+                name,
+                bot_uid: None,
+            }),
             _ => None,
         };
         let task_preview = truncate_on_char_boundary(&task, TASK_PREVIEW_CAP);
@@ -588,6 +595,7 @@ impl DelegationBroker {
             blocked_on: None,
             assistant_id: assistant.as_ref().map(|a| a.id),
             assistant_name: assistant.as_ref().map(|a| a.name.clone()),
+            bot: assistant.as_ref().and_then(|a| a.bot_uid.clone()),
             progress: None,
         }
     }
@@ -919,6 +927,7 @@ mod tests {
             external_handle: None,
             assistant: None,
             fork,
+            asked: None,
         }
     }
 

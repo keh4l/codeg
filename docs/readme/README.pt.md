@@ -50,26 +50,23 @@
     <td width="50%" valign="top">⏯️ <strong>Subagentes continuam de onde um erro os parou</strong><br/>Quando um subagente delegado para porque a rede caiu, a cota acabou, o login expirou ou o provedor devolveu um erro, o agente principal pode fazê-lo continuar na sessão original, com o contexto e o trabalho pela metade intactos, em vez de começar do zero numa nova.</td>
   </tr>
   <tr>
-    <td width="50%" valign="top">🧑‍💼 <strong>Os agentes montam seus assistentes @</strong><br/>Diga “adicione um assistente revisor no Codex com raciocínio alto” numa conversa e o agente cria ou altera o assistente @: nome, agente, modelo e instruções permanentes como você disse, e cada opção que você não citou no padrão do agente. Clique em Editar na própria conversa para ajustar.</td>
     <td width="50%" valign="top">🧭 <strong>Configurações agrupadas</strong><br/>A navegação das Configurações fica sob cinco títulos; páginas cheias reúnem as opções relacionadas num só cartão, toda página tem título e, no celular, um menu suspenso não espreme mais a descrição.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">↩️ <strong>Subagentes acordam o agente principal ao terminar</strong><br/>Quando um subagente delegado termina, o resultado volta sozinho para o agente principal: se ele está livre, começa um turno novo e segue; se está ocupado, recebe no turno atual; e se você está mandando uma mensagem bem na hora, o resultado vai junto. O agente principal pode encerrar o turno assim que distribui o trabalho, sem ficar esperando para conferir os resultados.</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">🌿 <strong>Subagentes trabalham no próprio worktree</strong><br/>O agente principal pode fazer um subagente mudar código num worktree e numa branch do git separados, para que vários em paralelo não atrapalhem uns aos outros; cada delegação pode definir o próprio modelo e nível de raciocínio, e um subagente que já terminou pode receber mais trabalho na mesma sessão.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">🗣️ <strong>Intervir a qualquer momento</strong><br/>Enquanto o agente responde, a tecla de enviar coloca a sua mensagem no turno em andamento, e o agente a lê depois da etapa atual; com ⌘/Ctrl ela vai para a fila, para depois do turno. Dá para intervir com qualquer agente. A fila fica no servidor, então sobrevive a um recarregamento e acompanha você em outro dispositivo; parar ou um erro pausam a fila até você mandar continuar.</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">✨ <strong>Visualização compacta estilo T3</strong><br/>Recolhe o trabalho de cada resposta em uma linha “Trabalhou por Xs” e exibe apenas o passo atual durante a execução; troca os cartões por uma árvore de arquivos alterados e mostra o rodapé ao passar o mouse. Inclui quatro níveis de ferramentas, minimapa lateral, busca ⌘/Ctrl+F em toda a conversa, citações clicáveis de volta à origem, quebra de linha e “Executar no terminal” em código, e tema preto puro “Carbono”.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">🛰️ <strong>Acesso remoto mais ágil</strong><br/>Usando a versão web por um IP público: cerca de um segundo do recarregamento até poder digitar, o último turno de uma conversa longa visível em menos de um segundo, e voltar a uma conversa que você acabou de ver não fica mais em “Conectando”. Uma oscilação da rede é compensada sozinha: sem aviso de reconexão, sem perder texto.</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">⚡ <strong>Botões reagem na hora, respostas saem em ritmo constante</strong><br/>Aprovar permissões, renomear, excluir, parar e intervir valem no instante do clique. Uma solicitação que não chegou é repetida e nunca é executada duas vezes; só uma falha real desfaz a mudança, com um aviso. Numa conexão lenta, a resposta não pula mais aos trancos: aparece em ritmo constante.</td>
+    <td width="50%" valign="top">🏃 <strong>Aparece em andamento quando o agente continua sozinho</strong><br/>Quando um comando ou subagente em segundo plano termina, o Claude Code continua o trabalho sozinho, e o Codex também pode começar o próximo turno por conta própria. Agora a conversa aparece em andamento durante esse tempo, com botão de parar, e só vai para revisão e avisa quando termina; o que o Codex faz nesse turno aparece ao vivo, sem precisar clicar em “Carregar atividade em segundo plano”.</td>
   </tr>
   <tr>
-    <td colspan="2" valign="top">🏃 <strong>Aparece em andamento quando o agente continua sozinho</strong><br/>Quando um comando ou subagente em segundo plano termina, o Claude Code continua o trabalho sozinho, e o Codex também pode começar o próximo turno por conta própria. Agora a conversa aparece em andamento durante esse tempo, com botão de parar, e só vai para revisão e avisa quando termina; o que o Codex faz nesse turno aparece ao vivo, sem precisar clicar em “Carregar atividade em segundo plano”.</td>
-  </tr>
-  <tr>
-    <td colspan="2" valign="top">🔄 <strong>Acompanha o original</strong><br/>O projeto original é mesclado regularmente; o que não está listado aqui funciona como na versão oficial. O Kiro CLI integrado, a primeira coisa que esta versão adicionou, faz parte da versão oficial desde a 0.36.0. Os resumos do raciocínio do Claude Code usam, desde a 0.41.3-1, o interruptor da versão oficial: “Mostrar resumos do raciocínio do Claude” em Configurações → Agentes → Claude Code, desativado por padrão. A partir da 0.46.0-1, a próxima mensagem sugerida é preenchida como na versão oficial: Tab no computador e o botão de lâmpada ao lado de Enviar no celular.</td>
+    <td colspan="2" valign="top">🔄 <strong>Acompanha o original</strong><br/>O projeto original é mesclado regularmente; o que não está listado aqui funciona como na versão oficial. O Kiro CLI integrado, a primeira coisa que esta versão adicionou, faz parte da versão oficial desde a 0.36.0. Os resumos do raciocínio do Claude Code usam, desde a 0.41.3-1, o interruptor da versão oficial: “Mostrar resumos do raciocínio do Claude” em Configurações → Agentes → Claude Code, desativado por padrão. A partir da 0.46.0-1, a próxima mensagem sugerida é preenchida como na versão oficial: Tab no computador e o botão de lâmpada ao lado de Enviar no celular. A partir da 0.49.0, criar e editar assistentes usa os assistentes pessoais da versão oficial (em linguagem natural, com cartão de confirmação e desfazer).</td>
   </tr>
 </table>
 
@@ -203,18 +200,6 @@
 </details>
 
 <details>
-<summary><strong>Os agentes montam seus assistentes @</strong>: detalhes</summary>
-<br/>
-
-- Na versão oficial, os assistentes @ (predefinições de delegação que você menciona com @ numa mensagem: um agente, cada uma das opções dele e instruções permanentes) só são preenchidos campo a campo em Configurações → Colaboração → Colaboração multiagente → Assistentes; um agente não consegue ajudar.
-- Esta versão dá aos agentes duas ferramentas, `create_assistant` e `update_assistant`. Diga ao agente que assistente você quer (por exemplo, “adicione um revisor: Codex, GPT-5.5, raciocínio alto, somente leitura, para revisar diffs”) e ele cria; diga “troque o revisor para GPT-5.4” ou “acrescente uma regra às instruções do revisor” e ele altera.
-- Ao criar, o Codeg inicia esse agente por um instante para ler as opções reais dele (leva alguns segundos). As opções que você cita ficam como você disse e as demais nos padrões do próprio agente (os que o editor marca como Recomendado); ao alterar, as opções não citadas continuam como estavam. Se um modelo ou uma opção não bater, nada é salvo e o agente fica sabendo o que está disponível.
-- A conversa mostra uma linha “Criando o assistente …”; expandida, ela mostra o agente, as opções e as instruções do assistente, e Editar abre o mesmo editor das Configurações. O assistente novo aparece na hora no menu @ e já pode receber tarefas delegadas.
-- O interruptor é “Criar assistentes” em Configurações → Colaboração → Ferramentas na conversa, ativado por padrão; desligado, os agentes não veem as duas ferramentas. Um agente configurado para cuidar sozinho de arquivos e comandos não as recebe, assim como não recebe as de delegação.
-
-</details>
-
-<details>
 <summary><strong>Configurações agrupadas</strong>: detalhes</summary>
 <br/>
 
@@ -280,7 +265,7 @@
 - <strong>Linha ao vivo e recolhimento automático</strong>: enquanto o agente trabalha, “Trabalhando há Xs” é uma linha de tempo com um brilho que a percorre; cada grupo de ferramentas concluído vira uma linha de resumo (“Leu 2 arquivos, buscou uma vez”), o texto intermediário fica no lugar e o passo em andamento tem sua própria linha com brilho — clicar nela abre esse grupo. Ao terminar, a mesma linha vira ali mesmo “Trabalhou por Xs ›” e tudo antes da resposta se recolhe; ao abrir, voltam essas linhas de resumo, e cada grupo mostra seus passos numa caixa curta com rolagem própria e bordas esmaecidas. Abrir ou fechar mantém a linha clicada no lugar. Falhas não recuperadas, aprovações pendentes, perguntas, planos, subagentes ativos e imagens geradas ficam sempre fora do recolhimento; um turno aberto durante a execução continua aberto.
 - <strong>Quatro níveis de ferramentas</strong>: Mostrar tudo, Ocultar bem-sucedidas, Ocultar tudo e Modo zen nas Configurações ou no menu “…” do cabeçalho.
 - <strong>Árvore de arquivos e diff</strong>: diretórios únicos mesclados, expandido até 8 arquivos, virtualizado acima de 250 linhas; clique abre o painel de diff, novos HTML/Markdown/imagens têm pré-visualização inline e linhas de edição também abrem o diff diretamente.
-- <strong>Balões agrupados e rodapé no hover</strong>: mensagens seguidas agrupadas, colagem de imagens dentro do balão, recolhimento só acima de 22rem e ações no hover (hora, copiar, editar no compositor sem reverter arquivos). O rodapé da resposta aparece no hover (sempre visível na última); tok/s desativado por padrão. Enviar fixa sua mensagem a 24px do topo.
+- <strong>Balões agrupados e rodapé no hover</strong>: mensagens seguidas agrupadas, colagem de imagens dentro do balão, recolhimento só acima de 22rem e ações no hover (hora, copiar e edição inline com reenvio da versão oficial nos agentes compatíveis). O rodapé da resposta aparece no hover (sempre visível na última); tok/s desativado por padrão. Enviar fixa sua mensagem a 24px do topo.
 - <strong>Minimapa, busca completa, citações e tema Carbono</strong>: minimapa no desktop, ⌘/Ctrl+F pesquisa todo o histórico (carregando turnos antigos e abrindo seções recolhidas), citações clicáveis que saltam e destacam por 2s, quebra de linha e colagem sem executar em novo terminal para blocos shell, e tema preto puro “Carbono”.
 
 </details>
@@ -340,8 +325,8 @@
 
 - A versão oficial só conta como em andamento os turnos que o codeg envia. Um turno que o próprio agente começa — o Claude Code retomando quando um comando em segundo plano (`run_in_background`), um Monitor ou um subagente em segundo plano termina, ou o Codex continuando um `/goal` inacabado — deixa a conversa como se tivesse acabado (Revisão): a caixa de mensagem mostra Enviar, nada para o turno e não chega aviso no fim. Além disso, o turno do Codex é descartado, e fica só um botão “Carregar atividade em segundo plano”.
 - Esta versão trata esses turnos como qualquer outro: ao começar, a conversa passa para Em andamento, a aba e a barra lateral mostram que está rodando e a caixa de mensagem oferece Parar; ao terminar, vai para Revisão e avisa como qualquer turno, e as mensagens na fila são enviadas.
-- Claude Code: o conteúdo do turno continua sendo lido do registro da conversa e mostrado ao vivo, como antes. O botão de parar da linha “Claude Code está trabalhando” na lista de tarefas em segundo plano faz o mesmo que o da caixa de mensagem. Requer claude-agent-acp 0.97.0 ou mais recente (esta versão traz 0.110.1).
-- Codex: o conteúdo do turno aparece ao vivo. O início e o fim vêm do estado da thread que o Codex informa, o que requer codex-acp 2.3.0 ou mais recente (esta versão traz 2.10.0).
+- Claude Code: o conteúdo do turno continua sendo lido do registro da conversa e mostrado ao vivo, como antes. O botão de parar da linha “Claude Code está trabalhando” na lista de tarefas em segundo plano faz o mesmo que o da caixa de mensagem. Requer claude-agent-acp 0.97.0 ou mais recente (esta versão traz 0.113.0).
+- Codex: o conteúdo do turno aparece ao vivo. O início e o fim vêm do estado da thread que o Codex informa, o que requer codex-acp 2.3.0 ou mais recente (esta versão traz 2.12.1).
 - Se você envia uma mensagem enquanto um desses turnos roda, primeiro esse turno é encerrado e depois a mensagem vai para o agente: o Claude Code a incorpora ao turno em andamento e responde nele, e o Codex também segue com ela.
 - O turno que o Grok começa sozinho depois de um workflow em segundo plano já aparecia em andamento na versão oficial; esta versão também passa a conversa para Em andamento.
 

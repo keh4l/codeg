@@ -8,6 +8,7 @@ import {
   Languages,
   ListTodo,
   Loader2,
+  ShieldCheck,
   Split,
 } from "lucide-react"
 import { useLocale, useTranslations } from "next-intl"
@@ -40,6 +41,7 @@ export interface ReplyMetaFooterProps {
   completedAt?: string | null
   onForkFromHere?: () => void
   forkDisabled?: boolean
+  onCheck?: () => void
   forkDisabledReason?: "busy" | "unnamed"
   /** The last reply in the thread keeps its footer visible without hover. */
   alwaysVisible?: boolean
@@ -72,11 +74,13 @@ export const ReplyMetaFooter = memo(function ReplyMetaFooter({
   onForkFromHere,
   forkDisabled = false,
   forkDisabledReason = "busy",
+  onCheck,
   alwaysVisible = false,
   touchRevealed = false,
 }: ReplyMetaFooterProps) {
   const locale = useLocale()
   const t = useTranslations("Folder.chat.messageList")
+  const tCheck = useTranslations("MessageCheck")
   const tTasks = useTranslations("Tasks")
   const scroll = useMessageScroll()
   const chatAnimations = useChatAnimationsEnabled()
@@ -245,6 +249,22 @@ export const ReplyMetaFooter = memo(function ReplyMetaFooter({
                   ? t("showOriginal")
                   : t("translateReply")}
               </TooltipContent>
+            </Tooltip>
+          )}
+          {hasCopy && onCheck && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={onCheck}
+                  className={compactActionClass}
+                  aria-label={tCheck("action")}
+                  data-check-message
+                >
+                  <ShieldCheck aria-hidden="true" className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">{tCheck("action")}</TooltipContent>
             </Tooltip>
           )}
           {onForkFromHere && (

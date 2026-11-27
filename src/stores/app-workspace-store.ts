@@ -464,10 +464,15 @@ export const useAppWorkspaceStore = create<AppWorkspaceStoreState>()(
     },
 
     // Insert-or-replace a conversation by id (create + field updates). Root-only:
-    // delegation children (parent_id set) are not sidebar rows. New rows prepend
-    // (most-recent-first); existing rows replace in place to keep their position.
+    // children (parent_id set) — delegation sub-sessions and ask conversations
+    // — are not root rows; `useSubsessionSync` nests them under their parent.
+    // New rows prepend (most-recent-first); existing rows replace in place to
+    // keep their position.
     applyConversationUpsert: (incoming) => {
       if (incoming.parent_id != null) return
+      // The personal agent's own sessions live on its page, never in the
+      // sidebar (the backend's list leaves them out too).
+      if (incoming.kind === "personal") return
       if (deletedIds.has(incoming.id)) return
       // keh4l build: changes made here and not yet confirmed stay on screen.
       const summary = overlayConversation(incoming)
@@ -603,7 +608,9 @@ export const useAppWorkspaceStore = create<AppWorkspaceStoreState>()(
       // lookups). Seeding a chat folder into `folders` would render a "Chat"
       // header row in the sidebar until the next refetch.
       set({
-        ...(detail.kind !== "chat" ? { folders: upsert(folders) } : {}),
+        ...(detail.kind !== "chat" && detail.kind !== "personal"
+          ? { folders: upsert(folders) }
+          : {}),
         allFolders: upsert(allFolders),
       })
     },

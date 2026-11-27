@@ -368,11 +368,14 @@ async fn async_main(
         chat_authoring_config,
         browser_tools_config,
         computer_tools_config,
-    ) = codeg_lib::app_state::build_delegation_stack(
-        &connection_manager,
-        db.conn.clone(),
-        data_dir.clone(),
-    );
+    ) = {
+        codeg_lib::personal_agent::host::pin_data_dir(data_dir.clone());
+        codeg_lib::app_state::build_delegation_stack(
+            &connection_manager,
+            db.conn.clone(),
+            data_dir.clone(),
+        )
+    };
     let state = Arc::new(AppState {
         db,
         connection_manager,
@@ -463,18 +466,7 @@ async fn async_main(
     .await;
     // Image generation: the services agents may use, before any agent starts.
     codeg_lib::commands::image_gen::apply_persisted_image_gen_settings(&state.db.conn).await;
-    // keh4l build: `create_assistant` / `update_assistant` — the switch, and
-    // what they probe agents and save with.
-    codeg_lib::assistant_tools::apply_persisted_settings(&state.db.conn).await;
     codeg_lib::acp::delegation::delivery::apply_persisted_settings(&state.db.conn).await;
-    codeg_lib::assistant_tools::install(codeg_lib::assistant_tools::Runtime {
-        db: Arc::new(codeg_lib::db::AppDatabase {
-            conn: state.db.conn.clone(),
-        }),
-        emitter: state.emitter.clone(),
-        manager: Arc::new(state.connection_manager.clone_ref()),
-        data_dir: state.data_dir.clone(),
-    });
     // The generative-UI skill's central copy, and the move from 0.35.0's
     // `json-render`: before the server takes a request, so the move can never
     // undo a change made on the settings page.
@@ -718,6 +710,19 @@ async fn async_main(
         state.data_dir.clone(),
     ) {
         tokio::spawn(codeg_lib::work_task::run_task_engine(engine));
+        // The personal agent (mirrors lib.rs setup): next to the task engine
+        // whose tasks it dispatches.
+        if let Some(host) = codeg_lib::personal_agent::host::build(
+            codeg_lib::db::AppDatabase {
+                conn: state.db.conn.clone(),
+            },
+            state.connection_manager.clone_ref(),
+            state.emitter.clone(),
+            state.acp_event_bus.clone(),
+            state.data_dir.clone(),
+        ) {
+            tokio::spawn(codeg_lib::personal_agent::host::run(host));
+        }
         // Repository-panel auto-processing (mirrors lib.rs setup): only where
         // the task engine runs, since it mints tasks unattended.
         if let Some(processor) = codeg_lib::forge::auto::build(

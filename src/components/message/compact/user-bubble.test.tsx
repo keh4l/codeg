@@ -18,14 +18,13 @@ vi.mock("../translation-context", () => ({
   useSentOriginal: () => ({ original: null, showing: false, toggle: vi.fn() }),
 }))
 
-function wrap(ui: React.ReactNode, onEditUserMessage?: (text: string) => void) {
+function wrap(ui: React.ReactNode) {
   return (
     <NextIntlClientProvider locale="en" messages={enMessages}>
       <CompactThreadProvider
         value={{
           round: { open: false, setOpen: () => {} },
           liveMessage: null,
-          onEditUserMessage,
         }}
       >
         {ui}
@@ -39,9 +38,9 @@ function makeImg(n: number): UserImageDisplay {
 }
 
 describe("CompactUserBubble", () => {
-  it("applies grouped corner radii and invokes edit-in-composer", async () => {
+  it("applies grouped corner radii and invokes edit-and-resend", async () => {
     const user = userEvent.setup()
-    const onEdit = vi.fn()
+    const onStartEdit = vi.fn()
     const parts: AdaptedContentPart[] = [{ type: "text", text: "Fix login" }]
 
     const { container } = render(
@@ -52,8 +51,8 @@ describe("CompactUserBubble", () => {
           resources={[]}
           timestamp="2026-11-22T10:05:00Z"
           groupPos="middle"
-        />,
-        onEdit
+          onStartEdit={onStartEdit}
+        />
       )
     )
 
@@ -61,9 +60,11 @@ describe("CompactUserBubble", () => {
     expect(bubble.className).toContain("rounded-tr-md")
     expect(bubble.className).toContain("rounded-br-md")
 
-    const editBtn = screen.getByRole("button", { name: /edit in composer/i })
+    const editBtn = screen.getByRole("button", {
+      name: enMessages.Folder.chat.messageList.editMessage,
+    })
     await user.click(editBtn)
-    expect(onEdit).toHaveBeenCalledWith("Fix login")
+    expect(onStartEdit).toHaveBeenCalledTimes(1)
   })
 
   it("renders a media collage with +N overflow when more than 4 images are attached", () => {

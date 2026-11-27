@@ -42,7 +42,6 @@ import { ImageActions, useImageActions } from "../image-actions"
 import { useSentOriginal } from "../translation-context"
 import { useCreateTaskFromMessage } from "../use-create-task-from-message"
 import { UserResourceLinks } from "../user-resource-links"
-import { useCompactThread } from "./compact-thread"
 import { imageSrc } from "@/lib/conversation-images"
 
 export type UserBubbleGroupPosition = "solo" | "first" | "middle" | "last"
@@ -267,7 +266,7 @@ const userActionBtnClass =
  * Right-aligned (`max-w-[80%]`), `rounded-2xl`, `bg-[var(--message)]`,
  * consecutive messages grouped tightly with softened inner corners, media
  * collage inside the bubble, folds only past 22rem to `max-h-44`, and shows a
- * quiet hover footer below (timestamp, copy, edit-into-composer, create task).
+ * quiet hover footer below (timestamp, copy, edit-and-resend, create task).
  */
 export const CompactUserBubble = memo(function CompactUserBubble({
   parts,
@@ -277,6 +276,8 @@ export const CompactUserBubble = memo(function CompactUserBubble({
   groupPos = "solo",
   risesIn = false,
   dimmed = false,
+  editDisabled = false,
+  onStartEdit,
 }: {
   parts: AdaptedContentPart[]
   images: UserImageDisplay[]
@@ -285,12 +286,12 @@ export const CompactUserBubble = memo(function CompactUserBubble({
   groupPos?: UserBubbleGroupPosition
   risesIn?: boolean
   dimmed?: boolean
+  editDisabled?: boolean
+  onStartEdit?: () => void
 }) {
   const locale = useLocale()
   const t = useTranslations("Folder.chat.messageList")
-  const tCompact = useTranslations("CompactView")
   const tTasks = useTranslations("Tasks")
-  const { onEditUserMessage } = useCompactThread()
   const [isCopied, setIsCopied] = useState(false)
   const [touchRevealed, setTouchRevealed] = useState(false)
   const timeoutRef = useRef<number>(0)
@@ -343,11 +344,6 @@ export const CompactUserBubble = memo(function CompactUserBubble({
     setIsCopied(true)
     timeoutRef.current = window.setTimeout(() => setIsCopied(false), 2000)
   }, [isCopied, plainText])
-
-  const handleEdit = useCallback(() => {
-    if (!onEditUserMessage || !plainText) return
-    onEditUserMessage(plainText)
-  }, [onEditUserMessage, plainText])
 
   useEffect(
     () => () => {
@@ -462,21 +458,28 @@ export const CompactUserBubble = memo(function CompactUserBubble({
             </Tooltip>
           ) : null}
 
-          {onEditUserMessage && plainText ? (
+          {onStartEdit ? (
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
                   type="button"
                   data-compact-user-edit=""
-                  onClick={handleEdit}
-                  aria-label={tCompact("editMessage")}
-                  className={userActionBtnClass}
+                  onClick={editDisabled ? undefined : onStartEdit}
+                  aria-disabled={editDisabled || undefined}
+                  aria-label={
+                    editDisabled ? t("editMessageBusy") : t("editMessage")
+                  }
+                  className={cn(
+                    userActionBtnClass,
+                    editDisabled &&
+                      "cursor-not-allowed opacity-50 hover:bg-transparent hover:text-muted-foreground"
+                  )}
                 >
                   <Pencil className="size-3" />
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom">
-                {tCompact("editMessage")}
+                {editDisabled ? t("editMessageBusy") : t("editMessage")}
               </TooltipContent>
             </Tooltip>
           ) : null}

@@ -50,26 +50,23 @@
     <td width="50%" valign="top">⏯️ <strong>Sub-agents pick up where an error stopped them</strong><br/>When a delegated sub-agent stops because the network dropped, its quota ran out, its sign-in expired or the provider returned an error, the main agent can have it carry on in its original session, with its context and half-done work intact, instead of starting over in a new one.</td>
   </tr>
   <tr>
-    <td width="50%" valign="top">🧑‍💼 <strong>Agents set up @ assistants for you</strong><br/>Say “add a reviewer assistant on Codex with high effort” in a conversation and the agent creates or changes the @ assistant: name, agent, model and standing instructions as you said, every option you didn't mention at the agent's default. Click Edit right in the conversation to adjust it.</td>
     <td width="50%" valign="top">🧭 <strong>Grouped Settings</strong><br/>The Settings nav sits under five headings; busy pages gather related options on one card, every page has a title, and on a phone a dropdown no longer squeezes its description into a sliver.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">↩️ <strong>Sub-agents wake the main agent when done</strong><br/>When a delegated sub-agent finishes, its result goes back to the main agent by itself: an idle main agent starts a new turn and carries on, a busy one gets it in the current turn, and if you are just sending a message, it goes along with that. The main agent can end its turn once it has handed out the work instead of waiting around to check for results.</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">🌿 <strong>Sub-agents work in their own worktree</strong><br/>The main agent can have a sub-agent change code in a separate git worktree and branch, so several working side by side stay out of each other's way; each delegation can set its own model and reasoning effort, and a sub-agent that has finished can be given more work in the same session.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">🗣️ <strong>Steer while the agent works</strong><br/>While the agent replies, the send key puts your message into the running turn, and the agent reads it after the step at hand; hold ⌘/Ctrl to queue it for after the turn instead. Every agent can be steered. Queued messages live on the server, so they survive a reload and follow you to another device; a stop or an error pauses the queue until you say go.</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">✨ <strong>T3-style compact conversation view</strong><br/>Each reply’s work folds into a single “Worked for Xs” line, showing only the live step while running; a changed-files tree replaces artifact cards and the reply footer appears on hover. Adds four tool-visibility levels, a timeline minimap, whole-thread ⌘/Ctrl+F find, clickable backlink citations, code-block wrap &amp; “Run in terminal”, and a pure-black Carbon theme. Switch back to Timeline anytime in Settings.</td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">🛰️ <strong>Snappy over a remote link</strong><br/>Using the web app over a public IP: about a second from reload to typing, the last round of a long conversation visible within a second, and no more “Connecting” when you switch back to a conversation you just saw. A network hiccup is caught up on its own: no reconnect notice, no lost text.</td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">⚡ <strong>Buttons react at once, replies flow evenly</strong><br/>Approve, rename, delete, stop and steer take effect the moment you press them. A request that didn't get through is retried and never runs twice; only a real failure undoes the change, with a notice. On a slow link a reply no longer jumps in bursts but appears at a steady pace.</td>
+    <td width="50%" valign="top">🏃 <strong>Shown as running when the agent carries on by itself</strong><br/>When a background command or background sub-agent finishes, Claude Code carries on by itself, and Codex can start its next turn on its own. The conversation now shows as running while it does, with a Stop button, and is marked for review and notified only when it is done; what Codex does in that turn streams live, with no “Load background activity” to click.</td>
   </tr>
   <tr>
-    <td colspan="2" valign="top">🏃 <strong>Shown as running when the agent carries on by itself</strong><br/>When a background command or background sub-agent finishes, Claude Code carries on by itself, and Codex can start its next turn on its own. The conversation now shows as running while it does, with a Stop button, and is marked for review and notified only when it is done; what Codex does in that turn streams live, with no “Load background activity” to click.</td>
-  </tr>
-  <tr>
-    <td colspan="2" valign="top">🔄 <strong>Follows upstream</strong><br/>Upstream is merged in regularly; anything not listed here works exactly as in the official build. The built-in Kiro CLI, the first thing this build added, has been part of the official build since 0.36.0. Claude Code thinking summaries use the official build's switch from 0.41.3-1 on: “Show Claude's thinking summaries” in Settings → Agents → Claude Code, off by default. From 0.46.0-1 the suggested next message is filled in the official way: Tab on a computer, the lightbulb button beside Send on a phone.</td>
+    <td colspan="2" valign="top">🔄 <strong>Follows upstream</strong><br/>Upstream is merged in regularly; anything not listed here works exactly as in the official build. The built-in Kiro CLI, the first thing this build added, has been part of the official build since 0.36.0. Claude Code thinking summaries use the official build's switch from 0.41.3-1 on: “Show Claude's thinking summaries” in Settings → Agents → Claude Code, off by default. From 0.46.0-1 the suggested next message is filled in the official way: Tab on a computer, the lightbulb button beside Send on a phone. From 0.49.0 on, creating and editing assistants uses the official build's Personal Assistants (built-in natural-language creation and updates with confirmation cards and undo).</td>
   </tr>
 </table>
 
@@ -203,18 +200,6 @@
 </details>
 
 <details>
-<summary><strong>Agents set up @ assistants for you</strong>: details</summary>
-<br/>
-
-- In the official build, @ assistants (delegation presets you can @ in a message: an agent, every one of its options, and standing instructions) can only be filled in field by field under Settings → Collaboration → Multi-Agent Collaboration → Assistants; an agent can't help.
-- This build gives agents two tools, `create_assistant` and `update_assistant`. Tell the agent what assistant you want (say, “add a reviewer on Codex, GPT-5.5, high effort, read-only, for reviewing diffs”) and it creates it; say “switch the reviewer to GPT-5.4” or “add a rule to the reviewer's instructions” and it changes it.
-- When creating one, Codeg starts that agent briefly to read its real options (a few seconds). Options you name are set as you said, the rest take the agent's own defaults (the ones the editor marks Recommended); when changing one, options you don't name stay as they are. If a model or option doesn't match, nothing is saved and the agent is told what is available.
-- The conversation shows a “Creating assistant …” row; expand it to see the assistant's agent, options and instructions, and click Edit to open the same editor as in Settings. The new assistant is in the @ menu right away and can be delegated to at once.
-- The switch is “Create assistants” under Settings → Collaboration → In-conversation tools, on by default; turned off, agents don't see the two tools. An agent switched to “handles files and commands itself” doesn't get them, just as it doesn't get the delegation tools.
-
-</details>
-
-<details>
 <summary><strong>Grouped Settings</strong>: details</summary>
 <br/>
 
@@ -280,7 +265,7 @@
 - <strong>Live line &amp; auto-fold</strong>: while the agent works, “Working for Xs” is a timer line with a light running across it; each finished group of tool calls is one summary line (“Read 2 files, searched once”), prose in between stays in place, and the step under way gets a shining line of its own — click it to open that group. When the reply ends, the same line turns into “Worked for Xs ›” and everything above the answer folds under it; opening it shows those summary lines again, and each group opens its steps in a short self-scrolling box that fades at its edges. Opening or closing anything keeps the clicked line where it is. Unrecovered failures, pending approvals, questions, plans, running sub-agents and generated images always stay outside the fold; a round you opened while it was running stays open.
 - <strong>Four tool-call visibility levels</strong>: switch between Show all, Hide successful, Hide all, and Zen mode in Settings or the conversation header “…” menu.
 - <strong>Changed-files tree &amp; diff panel</strong>: replaces reply file cards with a sticky-header directory tree (single-child directory chains merged, auto-expanded up to 8 files, virtualized past 250 rows). Clicking any file opens its diff panel, previewable new files (HTML/Markdown/images) preview inline, and edit rows also offer a hover button to open the diff panel.
-- <strong>Quieter bubbles &amp; hover footer</strong>: consecutive user messages group tightly, images render as an in-bubble collage, long prompts fold only past 22rem, and hover reveals timestamp, copy, and Edit in composer (no file revert). Reply actions (copy, translate, fork, create task, model, tokens, time) appear on hover (always shown on the last reply); live tok/s speed is off by default. Sending pins your message 24px from the top so the reply grows downward.
+- <strong>Quieter bubbles &amp; hover footer</strong>: consecutive user messages group tightly, images render as an in-bubble collage, long prompts fold only past 22rem, and hover reveals timestamp, copy, and the official inline edit-and-resend (on agents that support rewind). Reply actions (copy, translate, fork, create task, model, tokens, time) appear on hover (always shown on the last reply); live tok/s speed is off by default. Sending pins your message 24px from the top so the reply grows downward.
 - <strong>Minimap, whole-thread find, citations &amp; Carbon theme</strong>: desktop shows a left-edge timeline minimap with hover preview and click-to-jump; ⌘/Ctrl+F (or header “…” menu) searches the entire conversation including unloaded history and auto-expands folded hits; quoting creates composer citation chips whose sent cards jump back and highlight for 2s; code blocks gain a line-wrap toggle and shell blocks add “Run in terminal” (pastes without executing); Appearance adds the pure-black “Carbon” theme preset.
 
 </details>
@@ -340,8 +325,8 @@
 
 - The official build counts only the turns codeg sends as running. A turn the agent starts itself — Claude Code picking up after a background command (`run_in_background`), a Monitor or a background sub-agent finishes, or Codex going on with an unfinished `/goal` — leaves the conversation looking finished (Review): the composer shows Send, nothing can stop the turn, and no notification comes when it ends. Codex's turn is also dropped, leaving only a “Load background activity” button.
 - This build runs such a turn like any other: the conversation turns In Progress, its tab and sidebar entry show it running, and the composer offers Stop; when it ends it is marked Review and notified like any turn, and queued messages go out.
-- Claude Code: the turn's content is still read from its transcript and shown live, as before. The Stop on the “Claude Code is working” row in the background task list does the same as the composer's Stop. Needs claude-agent-acp 0.97.0 or later (this build ships 0.110.1).
-- Codex: the turn's content streams live. Its start and end come from the thread status Codex reports, which needs codex-acp 2.3.0 or later (this build ships 2.10.0).
+- Claude Code: the turn's content is still read from its transcript and shown live, as before. The Stop on the “Claude Code is working” row in the background task list does the same as the composer's Stop. Needs claude-agent-acp 0.97.0 or later (this build ships 0.113.0).
+- Codex: the turn's content streams live. Its start and end come from the thread status Codex reports, which needs codex-acp 2.3.0 or later (this build ships 2.12.1).
 - A message you send while such a turn runs ends that turn first, then goes to the agent: Claude Code folds it into the turn it is running and answers it there, and Codex takes it on the same way.
 - The turn Grok starts by itself after a background workflow already showed as running in the official build; this build also moves the conversation to In Progress for it.
 

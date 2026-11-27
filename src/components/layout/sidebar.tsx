@@ -67,6 +67,7 @@ import {
   loadNavItemVisibility,
   loadTagFilter,
   saveTagFilter,
+  loadShowAssistant,
   loadShowCompleted,
   loadShowRecent,
   loadShowWorktrees,
@@ -74,6 +75,7 @@ import {
   loadSectionOrder,
   moveSectionInOrder,
   saveNavItemVisibility,
+  saveShowAssistant,
   saveShowCompleted,
   saveShowRecent,
   saveShowWorktrees,
@@ -143,6 +145,7 @@ const NAV_ITEM_ICONS: Record<SidebarNavItemId, LucideIcon> = {
  */
 function SidebarNavButton({
   icon: Icon,
+  leading,
   label,
   onClick,
   active,
@@ -150,6 +153,10 @@ function SidebarNavButton({
   trailing,
 }: {
   icon: LucideIcon
+  /** Drawn in the icon's place (the personal agent's avatar). It takes the
+   *  icon's width in the row, whatever its own, so every label starts on
+   *  the same line. */
+  leading?: ReactNode
   label: string
   onClick: () => void
   active?: boolean
@@ -171,7 +178,13 @@ function SidebarNavButton({
         active && "bg-sidebar-primary/8"
       )}
     >
-      <Icon className="h-[0.875rem] w-[0.875rem] shrink-0 text-muted-foreground" />
+      {leading ? (
+        <span className="flex w-[0.875rem] shrink-0 justify-center">
+          {leading}
+        </span>
+      ) : (
+        <Icon className="h-[0.875rem] w-[0.875rem] shrink-0 text-muted-foreground" />
+      )}
       {hint ? (
         <LabelWithHint label={label} hint={hint} />
       ) : (
@@ -181,6 +194,10 @@ function SidebarNavButton({
     </button>
   )
 }
+
+// The assistants' badge lives with the assistants; the window title reads
+// it from here as before.
+export { useAssistantsBadge } from "@/components/personal-agent/use-assistants-badge"
 
 export function Sidebar() {
   const t = useTranslations("Folder.sidebar")
@@ -207,11 +224,13 @@ export function Sidebar() {
   // rem-sized overlay buttons. Mobile has no overlay (the sidebar is a Drawer).
   const leftReserve = leftChromeReserve(platformIsMac && isDesktop(), zoomLevel)
 
-  // `showCompleted` defaults OFF; `showWorktrees` and `showRecent` default ON
+  // `showCompleted` and `showAssistant` default OFF; `showWorktrees` and
+  // `showRecent` default ON
   // (the mount effect below reconciles a persisted override). Each initial
   // value matches its own default so the pre-hydration render doesn't flash as
   // the stored preference is applied.
   const [showCompleted, setShowCompleted] = useState(false)
+  const [showAssistant, setShowAssistant] = useState(false)
   const [showWorktrees, setShowWorktrees] = useState(true)
   const [showRecent, setShowRecent] = useState(true)
   // Empty = every nav row shown, which is also the hydrated default — so the
@@ -260,6 +279,7 @@ export function Sidebar() {
     // Hydrate from localStorage after mount to keep SSR/CSR markup consistent.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setShowCompleted(loadShowCompleted())
+    setShowAssistant(loadShowAssistant())
     setShowWorktrees(loadShowWorktrees())
     setShowRecent(loadShowRecent())
     setNavItems(loadNavItemVisibility())
@@ -278,6 +298,11 @@ export function Sidebar() {
   const handleSetShowCompleted = useCallback((value: boolean) => {
     setShowCompleted(value)
     saveShowCompleted(value)
+  }, [])
+
+  const handleSetShowAssistant = useCallback((value: boolean) => {
+    setShowAssistant(value)
+    saveShowAssistant(value)
   }, [])
 
   const handleSetShowWorktrees = useCallback((value: boolean) => {
@@ -498,6 +523,13 @@ export function Sidebar() {
                     {t("showCompleted")}
                   </DropdownMenuCheckboxItem>
                   <DropdownMenuCheckboxItem
+                    checked={showAssistant}
+                    onCheckedChange={handleSetShowAssistant}
+                    onSelect={(event) => event.preventDefault()}
+                  >
+                    {t("showAssistant")}
+                  </DropdownMenuCheckboxItem>
+                  <DropdownMenuCheckboxItem
                     checked={showWorktrees}
                     onCheckedChange={handleSetShowWorktrees}
                     onSelect={(event) => event.preventDefault()}
@@ -709,12 +741,29 @@ export function Sidebar() {
           keh4l: a moment later, so a double tap can keep it (#12). */}
       <div
         className="flex flex-col flex-1 min-h-0 overflow-hidden pt-1.5"
-        onClick={isMobile ? handleMobileConversationTap : undefined}
+        onClick={
+          isMobile
+            ? (e) => {
+                const target = e.target as HTMLElement
+                // An assistant on its group's row (`data-pa-roster-bot`, its
+                // set-up row too) closes the drawer right away; conversation
+                // rows wait briefly so a double tap can pin them (#12).
+                if (
+                  target.closest("[data-pa-roster-bot], [data-pa-roster-setup]")
+                ) {
+                  toggle()
+                  return
+                }
+                handleMobileConversationTap(e)
+              }
+            : undefined
+        }
       >
         <SidebarTagFilterBar filter={tagFilter} onChange={handleSetTagFilter} />
         <SidebarConversationList
           ref={listRef}
           showCompleted={showCompleted}
+          showAssistant={showAssistant}
           showWorktrees={showWorktrees}
           showRecent={showRecent}
           sortMode={sortMode}

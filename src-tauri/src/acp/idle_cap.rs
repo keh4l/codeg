@@ -275,7 +275,10 @@ mod tests {
             .unwrap()
             .write()
             .await
-            .remote_control = Some(crate::acp::types::RemoteControlInfo { session_url: None });
+            .remote_control = Some(crate::acp::types::RemoteControlInfo {
+            session_url: None,
+            at_startup: false,
+        });
         add(&mgr, "x", 900, true).await;
         add(&mgr, "y", 800, true).await;
         add(&mgr, "z", 700, true).await;

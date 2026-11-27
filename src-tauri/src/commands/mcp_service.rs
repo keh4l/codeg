@@ -194,8 +194,6 @@ pub async fn codeg_mcp_service_status_core(
         ),
         CodegMcpToolGroup::group("computer", sources.computer.is_enabled().await),
         CodegMcpToolGroup::group("image", crate::image_gen::runtime_settings().enabled),
-        // keh4l build: `create_assistant` / `update_assistant`.
-        CodegMcpToolGroup::group("assistants", crate::assistant_tools::is_enabled()),
     ];
     // Only the groups proper. A dependent switch cannot be on with its group
     // off, so counting them changes nothing today — but "is anything live"
@@ -347,9 +345,6 @@ pub async fn set_codeg_mcp_tool_group_core(
         }
         "image" => {
             crate::commands::image_gen::set_image_gen_enabled_core(conn, emitter, enabled).await?;
-        }
-        "assistants" => {
-            crate::assistant_tools::set_enabled_core(conn, emitter, enabled).await?;
         }
         // A slug the backend never reports. Refusing beats writing nothing and
         // returning success, which would leave the popover's switch stuck in a
@@ -662,12 +657,9 @@ mod tests {
         assert!(!row(&status, "browser_eval").enabled);
         // And a dependent switch does not by itself make the service "live".
         assert_eq!(status.state, CodegMcpServiceState::Stopped);
-        // keh4l build: `assistants` reads a process-wide switch that is on
-        // unless the user turns it off, not this fixture.
         assert!(status
             .tool_groups
             .iter()
-            .filter(|g| g.key != "assistants")
             .all(|g| !(g.requires.is_none() && g.enabled)));
     }
 
