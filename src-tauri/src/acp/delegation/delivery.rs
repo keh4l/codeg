@@ -28,9 +28,11 @@
 //! - A parent session launched while the switch was off is never pushed to:
 //!   its tool descriptions say to poll, so it polls.
 //!
-//! The parent's turn failing no longer cancels its delegations (it used to
-//! for any non-`end_turn` end); only the user stopping it does —
-//! [`turn_end_cancels_children`].
+//! A parent turn that ends without `end_turn` (stopped, failed, interrupted)
+//! no longer cancels its delegations: since upstream 0.50.0 the connection
+//! loop only detaches the turn (`DelegationBroker::detach_parent_turn`), and
+//! only an explicit stop of the connection's work (`StopWork`, the live-runs
+//! "stop" buttons, `cancel_delegation`) or a connection teardown stops them.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -141,14 +143,6 @@ fn forget_connection(connection_id: &str) {
         .remove(connection_id);
 }
 
-/// Whether a parent turn that ended with `stop_reason` cancels the
-/// delegations it owns. Only the user stopping it does: a turn that failed
-/// (rate limit, refusal, max tokens…) leaves them running, and their results
-/// reach the parent with the next prompt.
-pub fn turn_end_cancels_children(stop_reason: &str) -> bool {
-    stop_reason == "cancelled"
-}
-
 // ── What the broker reports ──────────────────────────────────────────────────
 
 /// Why a task stopped, as far as delivery cares.
@@ -158,7 +152,8 @@ pub enum TerminalCause {
     Finished,
     /// Its connection died under it.
     ChildFailed,
-    /// The user canceled it (stopping the parent, or the child itself).
+    /// The user canceled it (an explicit stop of the parent's work, or the
+    /// child itself).
     UserCanceled,
 }
 
@@ -1136,20 +1131,5 @@ mod tests {
         *parent.wake_result.lock().unwrap() = None;
         settle().await;
         assert_eq!(parent.wakes().len(), 1);
-    }
-
-    #[test]
-    fn only_the_user_stopping_a_turn_cancels_its_delegations() {
-        assert!(turn_end_cancels_children("cancelled"));
-        for reason in [
-            "end_turn",
-            "max_tokens",
-            "refusal",
-            "rejected",
-            "auth_required",
-            "empty",
-        ] {
-            assert!(!turn_end_cancels_children(reason), "{reason}");
-        }
     }
 }

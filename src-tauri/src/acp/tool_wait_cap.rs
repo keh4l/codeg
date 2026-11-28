@@ -10,8 +10,8 @@
 //! "still waiting" with an id the agent passes to the matching collect tool.
 //!
 //! The values are each agent's deadline minus a margin, read from the source
-//! (or binary) of the version codeg pins, as of 2026-10 (DeepSeek: 0.12.0,
-//! 2026-11):
+//! (or binary) of the version codeg pins, as of 2026-10 (DeepSeek: 0.12.0 and
+//! Antigravity: the `agy` 1.5.19 CLI's `callToolRaw`, 2026-11):
 //!
 //! | Agent | Deadline | Cap |
 //! |---|---|---|
@@ -20,7 +20,7 @@
 //! | CommandCode 1.84 | 80 s idle, restarted by progress | 60 s |
 //! | MiniMax Code 0.7 | 120 s wall clock, progress does not extend it | 90 s |
 //! | Kiro, Trae | not established (Kiro documents 120 s) | 90 s |
-//! | Antigravity 1.4 | 180 s | 150 s |
+//! | Antigravity (`agy acp` 1.5.19; the old standalone server 1.4 too) | 180 s wall clock (an MCP server's `timeoutSeconds`, unset over ACP) | 150 s |
 //! | Codex (codex-acp 2.2), Hermes 0.22 | 300 s | 240 s |
 //! | Gemini CLI 0.60 | 600 s | 480 s |
 //! | OpenCode 2.x | 12 h wall clock (1.x: 60 s, restarted by progress) | none |

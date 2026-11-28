@@ -341,11 +341,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn interrupting_the_parent_announces_nothing() {
+        let (broker, mock, sink) = broker_with_sink().await;
+        start(&broker, &mock, "child-1").await;
+        broker.detach_parent_turn("parent-conn").await;
+        assert!(sink.terminals.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn stopping_the_parent_announces_user_cancels() {
         let (broker, mock, sink) = broker_with_sink().await;
         let a = start(&broker, &mock, "child-1").await;
         let b = start(&broker, &mock, "child-2").await;
-        broker.cancel_by_parent_turn("parent-conn").await;
+        broker.cancel_children_of_parent("parent-conn").await;
         let terminals = sink.terminals.lock().unwrap().clone();
         let mut ids: Vec<String> = terminals.iter().map(|e| e.task.task_id.clone()).collect();
         ids.sort();

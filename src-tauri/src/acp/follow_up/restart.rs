@@ -5,9 +5,10 @@
 //! `restart_active`). That cancel is not the user's stop, so while a restart is
 //! under way:
 //!
-//! - the conversation loop's cancel leaves delegated sub-agents running
-//!   ([`cancel_is_restart`], checked at the top of both `Cancel` arms in
-//!   `connection.rs`);
+//! - the conversation loop's cancel leaves delegated sub-agents running —
+//!   it is a plain `ConnectionCommand::Cancel`, which (like every turn
+//!   interrupt since upstream 0.50.0) only detaches the turn's delegation
+//!   bookkeeping; only `StopWork` stops them;
 //! - the delegation push does not pause (`delegation::delivery`);
 //! - the follow-up queue is not held (`super::Engine::on_turn_complete`);
 //!   both ask [`turn_end_is_restart`].
@@ -85,18 +86,6 @@ pub fn begin(conn_id: &str, pending: PendingRestart) -> Begin {
             map.insert(conn_id.to_string(), Phase::Cancelling(pending));
             Begin::Started
         }
-    })
-}
-
-/// Whether the cancel the conversation loop is handling now is a steer
-/// restart's. The restart sends its cancel while `Cancelling`, and its prompt
-/// queues behind that cancel, so the loop never reads it later than `Sending`.
-pub fn cancel_is_restart(conn_id: &str) -> bool {
-    with(|map| {
-        matches!(
-            map.get(conn_id),
-            Some(Phase::Cancelling(_)) | Some(Phase::Sending)
-        )
     })
 }
 
@@ -179,16 +168,14 @@ mod tests {
     #[test]
     fn walks_cancelling_sending_done() {
         let c = "restart-walk";
-        assert!(!cancel_is_restart(c));
         assert!(!turn_end_is_restart(c, "cancelled"));
         assert_eq!(begin(c, steer("s1", "use env.ts")), Begin::Started);
-        assert!(cancel_is_restart(c));
         assert!(turn_end_is_restart(c, "cancelled"));
         assert_eq!(pending(c).unwrap().steer_id, "s1");
         let taken = take_for_send(c).unwrap();
         assert_eq!(taken.text, "use env.ts");
         assert!(
-            cancel_is_restart(c),
+            turn_end_is_restart(c, "cancelled"),
             "still a restart while its prompt goes out"
         );
         assert_eq!(begin(c, steer("s2", "x")), Begin::Busy);
@@ -197,10 +184,8 @@ mod tests {
             turn_end_is_restart(c, "cancelled"),
             "a late reader still sees the cut-off turn end"
         );
-        assert!(!cancel_is_restart(c), "a cancel now is the user's");
         assert_eq!(begin(c, steer("s3", "y")), Begin::Started);
         forget(c);
-        assert!(!cancel_is_restart(c));
         assert!(!turn_end_is_restart(c, "cancelled"));
     }
 
@@ -225,7 +210,6 @@ mod tests {
         // Stopped while the steer's prompt was going out.
         assert!(stop(c).is_none());
         finish(c);
-        assert!(!cancel_is_restart(c));
         assert!(!turn_end_is_restart(c, "cancelled"));
         // Stopped during the grace.
         begin(c, steer("s2", "again"));
@@ -252,7 +236,7 @@ mod tests {
         let c = "restart-abort";
         begin(c, steer("s1", "first"));
         assert_eq!(stop(c).unwrap().steer_id, "s1");
-        assert!(!cancel_is_restart(c));
+        assert!(!turn_end_is_restart(c, "cancelled"));
         assert!(take_for_send(c).is_none());
         // Too late once it is being sent.
         begin(c, steer("s2", "again"));
